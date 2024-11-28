@@ -16,14 +16,27 @@ class InstagramParser:
     """Handles Instagram data extraction using Instaloader."""
     
     def __init__(self, username: Optional[str] = None, password: Optional[str] = None,
-                 session_file: Optional[str] = None):
+                 session_file: str = "instagram_session",
+                 cache_dir: str = "data/cache",
+                 downloads_dir: str = "data/downloads/instagram"):
         """Initialize Instagram parser.
         
         Args:
             username: Instagram username
             password: Instagram password
-            session_file: Path to session file for cached login
+            session_file: Name of session file (without path)
+            cache_dir: Directory for cache files (sessions)
+            downloads_dir: Directory for downloaded media files
         """
+        # Create cache and downloads directories
+        self._cache_dir = Path(cache_dir)
+        self._downloads_dir = Path(downloads_dir)
+        self._cache_dir.mkdir(parents=True, exist_ok=True)
+        self._downloads_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Full path to session file
+        session_path = self._cache_dir / session_file
+        
         self._loader = instaloader.Instaloader(
             sleep=True,  # Enable sleep between requests
             quiet=False,  # Show progress
@@ -33,10 +46,11 @@ class InstagramParser:
             download_geotags=False,
             download_comments=False,
             save_metadata=False,
-            max_connection_attempts=3  # Limit retry attempts
+            max_connection_attempts=3,  # Limit retry attempts
+            dirname_pattern=str(self._downloads_dir / "{target}")  # Set download directory
         )
         self._username = username
-        self._session_file = session_file
+        self._session_file = session_path
         self._request_count = 0
         self._last_request_time = 0
         self.__login(password)

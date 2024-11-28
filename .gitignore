@@ -87,4 +87,5 @@ target/
 
 # Mypy cache
 .mypy_cache/
-.venv/pyvenv.cfg
+.venv/*
+.venv/Scripts/Activate.ps1

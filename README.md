@@ -311,3 +311,163 @@ WHERE media_urls IS NOT NULL;
 ## License
 
 MIT License - see LICENSE file for details.
+
+## File Structure
+
+The package maintains a clean and organized file structure for cache files and downloaded media:
+
+```
+data/
+├── cache/                 # Session and cache files
+│   ├── instagram_session  # Instagram login session
+│   └── telegram_session  # Telegram login session
+└── downloads/            # Downloaded media files
+    ├── instagram/        # Instagram media
+    │   └── [username]/   # Per-user directories
+    │       └── saved/    # Saved posts
+    │           └── YYYY-MM-DD_shortcode/  # Post media and metadata
+    └── telegram/         # Telegram media (organized by message creation date)
+        └── YYYY/         # Year from message date
+            └── MM/       # Month from message date (01-12)
+                └── DD/   # Day from message date (01-31)
+                    └── [message_id]_[filename]  # Media files
+```
+
+### Cache Directory
+- `data/cache/`: Stores session files and other cache data
+  - `instagram_session`: Instagram login session (managed by Instaloader)
+  - `telegram_session`: Telegram login session (managed by Telethon)
+
+### Downloads Directory
+- `data/downloads/`: Root directory for all downloaded media
+  - **Instagram**:
+    - Organized by username and post type
+    - Each post gets its own directory with timestamp and shortcode
+    - Media files retain original names when possible
+  - **Telegram**:
+    - Organized by message creation date (not download date)
+    - Directory structure reflects when messages were sent
+    - Files prefixed with message ID for uniqueness
+    - Original filenames preserved when possible
+    - Automatic file type detection for photos/documents
+
+### File Naming
+- **Instagram Posts**: `[YYYY-MM-DD]_[shortcode]/[media_files]`
+- **Telegram Messages**: `[message_id]_[original_filename]`
+  - Photos without names: `[message_id]_media_[message_timestamp].jpg`
+  - Documents: `[message_id]_[cleaned_original_name]`
+  - All files stored in directories matching message creation date
+
+### Path Configuration
+You can customize the storage locations when initializing the parsers:
+
+```python
+# Custom paths for Instagram
+instagram_parser = InstagramParser(
+    username="your_username",
+    password="your_password",
+    session_file="instagram_session",  # Just the filename
+    cache_dir="path/to/cache",         # Custom cache directory
+    downloads_dir="path/to/downloads"   # Custom downloads directory
+)
+
+# Custom paths for Telegram
+saved_count = save_telegram_messages(
+    api_id="your_api_id",
+    api_hash="your_api_hash",
+    phone="your_phone",
+    session_file="telegram_session",    # Just the filename
+    cache_dir="path/to/cache",          # Custom cache directory
+    downloads_dir="path/to/downloads",   # Custom downloads directory
+    limit=10
+)
+```
+
+### File Cleaning
+- All filenames are cleaned to ensure compatibility:
+  - Only alphanumeric characters, dots, underscores, and hyphens allowed
+  - Spaces preserved but controlled
+  - Special characters removed
+  - Unique identifiers (message_id, shortcode) prevent conflicts
+
+### Directory Setup
+
+The package will automatically create the necessary directories, but you can also set them up manually:
+
+```python
+from pathlib import Path
+
+# Create base directories
+Path("data/cache").mkdir(parents=True, exist_ok=True)
+Path("data/downloads/instagram").mkdir(parents=True, exist_ok=True)
+Path("data/downloads/telegram").mkdir(parents=True, exist_ok=True)
+```
+
+### Default Paths
+If not specified, the package uses these default paths:
+- Cache files: `./data/cache/`
+  - Instagram session: `./data/cache/instagram_session`
+  - Telegram session: `./data/cache/telegram_session`
+- Downloads:
+  - Instagram media: `./data/downloads/instagram/`
+  - Telegram media: `./data/downloads/telegram/`
+
+### Storage Considerations
+- **Session Files**: Small (~KB), but important for maintaining login state
+- **Media Files**: Can grow large depending on content
+  - Photos: ~100KB-5MB each
+  - Videos: ~1MB-100MB each
+  - Documents: Varies significantly
+- Consider periodic cleanup of old media files if storage is a concern
+- Session files should be preserved to avoid frequent re-authentication
+
+### Backup Recommendations
+- **Always Backup**:
+  - Session files (to avoid re-authentication)
+  - Database file (contains all metadata)
+- **Optional Backup**:
+  - Downloaded media (can be re-downloaded if needed)
+  - Consider backing up specific media based on importance
+
+### Git Configuration
+
+#### Recommended .gitignore
+Add these entries to your .gitignore to avoid committing sensitive data:
+
+```gitignore
+# Cache and session files
+data/cache/
+*.session
+*.session-journal
+
+# Downloaded media
+data/downloads/
+
+# Database
+*.db
+*.db-journal
+
+# Environment variables
+.env
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+*.so
+```
+
+#### Environment Variables
+Store sensitive information in a `.env` file:
+
+```env
+# Instagram credentials
+INSTAGRAM_USERNAME=your_username
+INSTAGRAM_PASSWORD=your_password
+
+# Telegram credentials (from https://my.telegram.org)
+TELEGRAM_API_ID=your_api_id
+TELEGRAM_API_HASH=your_api_hash
+TELEGRAM_PHONE=your_phone_number  # In international format (e.g., +1234567890)
+```

@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "postparse"
+version = "0.1.0"
+authors = [
+    { name = "Sebastian Pachl"}
+]
+description = "A package for parsing and analyzing data"
+readme = "README.md"
+requires-python = ">=3.6"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "xgboost",
+    "matplotlib",
+    "numpy",
+    "pandas",
+    "optuna",
+    "optuna-integration",
+    "pytest",
+    "scikit-learn",
+    "scipy",
+    "toml",
+    "tqdm",
+    "mkdocs",
+    "ipywidgets",
+    "python-dotenv",
+]
+
+[project.urls]
+Homepage = "https://github.com/sebpachl/postparse"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"] 

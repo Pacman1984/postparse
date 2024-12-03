@@ -360,3 +360,35 @@ class SocialMediaDatabase:
                 
                 return msg_dict
             return None
+    
+    def post_exists(self, shortcode: str) -> bool:
+        """Check if a post already exists in the database.
+        
+        Args:
+            shortcode: Instagram post shortcode
+            
+        Returns:
+            bool: True if post exists, False otherwise
+        """
+        with self as db:
+            db._cursor.execute("""
+                SELECT COUNT(*) FROM instagram_posts WHERE shortcode = ?
+            """, (shortcode,))
+            count = db._cursor.fetchone()[0]
+            return count > 0
+    
+    def message_exists(self, message_id: int) -> bool:
+        """Check if a Telegram message already exists in the database.
+        
+        Args:
+            message_id: Telegram message ID
+            
+        Returns:
+            bool: True if message exists, False otherwise
+        """
+        with self as db:
+            db._cursor.execute("""
+                SELECT COUNT(*) FROM telegram_messages WHERE message_id = ?
+            """, (message_id,))
+            count = db._cursor.fetchone()[0]
+            return count > 0

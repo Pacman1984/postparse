@@ -89,3 +89,5 @@ target/
 .mypy_cache/
 .venv/*
 .venv/Scripts/Activate.ps1
+instagram_session
+telegram_session

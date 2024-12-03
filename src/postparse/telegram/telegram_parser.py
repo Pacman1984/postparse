@@ -13,6 +13,7 @@ from pathlib import Path
 from telethon import TelegramClient
 from telethon.errors import SessionPasswordNeededError
 from telethon.tl.types import Message, MessageMediaPhoto, MessageMediaDocument
+from tqdm import tqdm
 
 from ..data.database import SocialMediaDatabase
 
@@ -223,80 +224,177 @@ class TelegramParser:
         self._last_request_time = current_time
     
     async def get_saved_messages(self, limit: Optional[int] = None,
-                               max_requests_per_session: int = 100) -> Generator[Dict[str, Any], None, None]:
+                               max_requests_per_session: Optional[int] = None,
+                               db: Optional[SocialMediaDatabase] = None,
+                               force_update: bool = False) -> Generator[Dict[str, Any], None, None]:
         """Extract saved messages from Telegram.
         
         Args:
             limit: Maximum number of messages to extract (None for all)
-            max_requests_per_session: Maximum number of API requests per session
+            max_requests_per_session: Maximum number of API requests per session (None for no limit)
+            db: Optional database to check for existing messages
+            force_update: If True, fetch all messages regardless of database state
             
         Yields:
             Dict containing message data
         """
         self._request_count = 0
         message_count = 0
+        skipped_count = 0
+        total_messages = None
+        pbar = None
         
         try:
+            # Get all messages first to show progress
+            messages = []
             async for message in self._client.iter_messages('me', limit=limit):
-                # Check request limits
-                if self._request_count >= max_requests_per_session:
+                messages.append(message)
+            
+            total_messages = len(messages)
+            desc = "Fetching messages (force update)" if force_update else "Fetching messages"
+            print(f"Found {total_messages} saved messages{' (force update)' if force_update else ''}")
+            pbar = tqdm(total=total_messages, desc=desc, unit="msg")
+            
+            for message in messages:
+                # Check request limits if they exist
+                if max_requests_per_session is not None and self._request_count >= max_requests_per_session:
                     print("Reached maximum requests per session. Please wait before making more requests.")
                     break
                 
                 try:
+                    # Only check database if not forcing update
+                    if db and not force_update:
+                        exists = db.message_exists(message.id)
+                        if exists:
+                            skipped_count += 1
+                            if pbar:
+                                pbar.set_postfix({
+                                    'processed': message_count,
+                                    'skipped': skipped_count,
+                                    'mode': 'force update' if force_update else 'normal'
+                                })
+                                pbar.update(1)
+                            continue
+                    
                     await self._wait_between_requests()
+                    
+                    # Update progress with current delay
+                    if pbar:
+                        delay = 2 + (self._request_count // 10) * 0.5  # Approximate delay
+                        pbar.set_description(f"{'Updating' if force_update else 'Fetching'} messages (delay: {delay:.1f}s)")
+                        pbar.set_postfix({
+                            'processed': message_count,
+                            'skipped': skipped_count,
+                            'mode': 'force update' if force_update else 'normal'
+                        })
+                    
                     message_data = await self._parse_message(message)
                     if message_data:
                         yield message_data
                         message_count += 1
+                        if pbar:
+                            pbar.update(1)
+                    
                 except Exception as e:
                     print(f"Error processing message {message.id}: {str(e)}")
+                    if pbar:
+                        pbar.update(1)
                     continue
+                
         except Exception as e:
             print(f"Error fetching messages: {str(e)}")
+            raise
+        finally:
+            if pbar:
+                pbar.close()
+            if total_messages:
+                status = "Force update" if force_update else "Normal fetch"
+                print(f"{status} completed. Processed: {message_count}, Skipped: {skipped_count}, Total: {total_messages}")
     
     async def save_messages_to_db(self, db: SocialMediaDatabase, limit: Optional[int] = None,
-                                max_requests_per_session: int = 100) -> int:
+                                max_requests_per_session: Optional[int] = None, force_update: bool = False) -> int:
         """Save Telegram messages to database.
         
         Args:
             db: Database instance
             limit: Maximum number of messages to save
-            max_requests_per_session: Maximum number of API requests per session
+            max_requests_per_session: Maximum number of API requests per session (None for no limit)
+            force_update: If True, will update existing messages. If False, skips existing messages.
             
         Returns:
             Number of messages saved
         """
         saved_count = 0
+        updated_count = 0
         
         try:
-            async for message_data in self.get_saved_messages(limit, max_requests_per_session):
-                try:
-                    msg_id = db._insert_telegram_message(
-                        message_id=message_data['message_id'],
-                        chat_id=message_data['chat_id'],
-                        content=message_data['content'],
-                        content_type=message_data['content_type'],
-                        media_urls=message_data['media_urls'],
-                        views=message_data['views'],
-                        forwards=message_data['forwards'],
-                        reply_to_msg_id=message_data['reply_to_msg_id'],
-                        created_at=message_data['created_at'],
-                        hashtags=message_data['hashtags']
-                    )
+            # Pass database to get_saved_messages to enable early skipping
+            messages = []
+            async for message_data in self.get_saved_messages(
+                limit=limit,
+                max_requests_per_session=max_requests_per_session,
+                db=db,
+                force_update=force_update
+            ):
+                messages.append(message_data)
+            
+            total_messages = len(messages)
+            if total_messages == 0:
+                print("No messages to process")
+                return 0
+            
+            action = "update" if force_update else "save"
+            print(f"Found {total_messages} messages to {action}")
+            
+            # Now show progress for database saving
+            with tqdm(total=total_messages, desc=f"{'Updating' if force_update else 'Saving'} to database", unit="msg") as pbar:
+                for message_data in messages:
+                    try:
+                        exists = db.message_exists(message_data['message_id'])
+                        msg_id = db._insert_telegram_message(
+                            message_id=message_data['message_id'],
+                            chat_id=message_data['chat_id'],
+                            content=message_data['content'],
+                            content_type=message_data['content_type'],
+                            media_urls=message_data['media_urls'],
+                            views=message_data['views'],
+                            forwards=message_data['forwards'],
+                            reply_to_msg_id=message_data['reply_to_msg_id'],
+                            created_at=message_data['created_at'],
+                            hashtags=message_data['hashtags']
+                        )
+                        
+                        if msg_id:
+                            if exists:
+                                updated_count += 1
+                            else:
+                                saved_count += 1
+                            pbar.set_postfix({
+                                'new': saved_count,
+                                'updated': updated_count,
+                                'total': total_messages
+                            })
+                        
+                        # Add small delay after save
+                        await asyncio.sleep(random.uniform(0.1, 0.3))
+                        
+                    except Exception as e:
+                        print(f"Error saving message {message_data['message_id']}: {str(e)}")
+                        continue
                     
-                    if msg_id:
-                        saved_count += 1
-                        # Add extra random delay after successful save
-                        await asyncio.sleep(random.uniform(1, 2))
-                except Exception as e:
-                    print(f"Error saving message {message_data['message_id']}: {str(e)}")
-                    continue
+                    pbar.update(1)
+                
         except Exception as e:
             print(f"Error during message saving: {str(e)}")
             print("Partial data may have been saved. Please check the database.")
         
-        return saved_count
+        # Final summary
+        if force_update:
+            print(f"Process completed. Updated: {updated_count}, New: {saved_count}, Total processed: {total_messages}")
+        else:
+            print(f"Process completed. Saved: {saved_count}, Total new messages: {total_messages}")
+        
+        return saved_count + updated_count
 
 
 def save_telegram_messages(api_id: str, api_hash: str, phone: str = None,
@@ -305,7 +403,8 @@ def save_telegram_messages(api_id: str, api_hash: str, phone: str = None,
                          cache_dir: str = "data/cache",
                          downloads_dir: str = "data/downloads/telegram",
                          limit: Optional[int] = None,
-                         max_requests_per_session: int = 100) -> int:
+                         max_requests_per_session: int = None,
+                         force_update: bool = False) -> int:
     """Helper function to save Telegram messages without dealing with async code.
     
     Args:
@@ -318,6 +417,7 @@ def save_telegram_messages(api_id: str, api_hash: str, phone: str = None,
         downloads_dir: Directory for downloaded media files
         limit: Maximum number of messages to save
         max_requests_per_session: Maximum number of API requests per session
+        force_update: If True, will update existing messages. If False, skips existing messages.
         
     Returns:
         Number of messages saved
@@ -332,7 +432,7 @@ def save_telegram_messages(api_id: str, api_hash: str, phone: str = None,
             cache_dir=cache_dir,
             downloads_dir=downloads_dir
         ) as parser:
-            return await parser.save_messages_to_db(db, limit, max_requests_per_session)
+            return await parser.save_messages_to_db(db, limit, max_requests_per_session, force_update)
     
     try:
         # Try to get the running event loop

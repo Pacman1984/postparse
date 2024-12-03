@@ -9,6 +9,8 @@ A Python package for parsing and storing social media content from various platf
 - Extract posts/messages from supported platforms
 - Platform-specific SQLite database schemas
 - Conservative rate limiting to protect accounts
+- Progress tracking with detailed statistics
+- Smart duplicate detection and handling
 - Hashtag and mention extraction
 - Media URL tracking
 - Comprehensive error handling
@@ -134,24 +136,19 @@ parser = InstagramParser(
     session_file="instagram_session"  # Optional: for caching login
 )
 
-# Save saved posts with conservative limits
+# Save saved posts with progress tracking
 saved_count = parser.save_posts_to_db(
     db=db,
     limit=10,  # Start with small batch
     max_requests_per_session=20,  # Limit API requests
-    is_saved=True,  # Mark as saved post
-    source='saved'  # Indicate source
+    force_update=False  # Skip existing posts by default
 )
-print(f"Saved {saved_count} posts")
 
-# Retrieve a specific post
-post = db.get_instagram_post(shortcode="ABC123")
-if post:
-    print(f"Post URL: {post['post_url']}")  # https://instagram.com/p/ABC123
-    print(f"Caption: {post['caption']}")
-    print(f"Source: {post['source']}")  # 'saved'
-    print(f"Hashtags: {post['hashtags']}")
-    print(f"Mentions: {post['mentions']}")
+# Force update all posts (including existing ones)
+saved_count = parser.save_posts_to_db(
+    db=db,
+    force_update=True  # Override existing posts
+)
 ```
 
 ### Telegram
@@ -163,22 +160,24 @@ from postparse.telegram.telegram_parser import save_telegram_messages
 api_id = "your_api_id"
 api_hash = "your_api_hash"
 
-# Save messages with conservative limits
+# Save messages with progress tracking
 saved_count = save_telegram_messages(
     api_id=api_id,
     api_hash=api_hash,
     db_path="social_media.db",
     session_file="telegram_session",  # Optional: for caching login
     limit=10,  # Start with small batch
-    max_requests_per_session=20  # Limit API requests
+    max_requests_per_session=20,  # Limit API requests
+    force_update=False  # Skip existing messages by default
 )
-print(f"Saved {saved_count} messages")
 
-# Retrieve a specific message
-message = db.get_telegram_message(message_id=12345)
-if message:
-    print(f"Content: {message['content']}")
-    print(f"Hashtags: {message['hashtags']}")
+# Force update all messages (including existing ones)
+saved_count = save_telegram_messages(
+    api_id=api_id,
+    api_hash=api_hash,
+    db_path="social_media.db",
+    force_update=True  # Override existing messages
+)
 ```
 
 ## Safety Features

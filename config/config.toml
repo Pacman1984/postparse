@@ -1,0 +1,82 @@
+[models]
+# Zero-shot classification models
+zero_shot_model = "qwen2.5:72b-instruct"
+default_llm_model = "llama2"
+
+# Model hosts and endpoints
+ollama_default_timeout = 30
+request_timeout = 60
+
+[classification]
+# Recipe classification labels
+recipe_positive_label = "this text contains a recipe with ingredients and/or cooking instructions"
+recipe_negative_label = "this text does not contain any recipe or cooking instructions"
+
+# Classification confidence thresholds
+min_confidence_threshold = 0.6
+max_confidence_threshold = 1.0
+
+[prompts]
+# LLM prompts for various classification tasks
+recipe_analysis_prompt = """Analyze if the following content is a recipe and extract key details.
+
+Content: {content}
+
+{format_instructions}
+
+Provide a detailed analysis focusing on recipe characteristics.
+If it's not a recipe, set is_recipe to false and leave other fields as null."""
+
+[database]
+# Database configuration
+default_db_path = "data/social_media.db"
+analysis_db_path = "data/analysis.db"
+
+[api]
+# API rate limiting and request management
+max_requests_per_session = 100
+request_delay_min = 1.0
+request_delay_max = 3.0
+max_retries = 3
+
+[paths]
+# Default directory paths
+cache_dir = "data/cache"
+downloads_dir = "data/downloads"
+telegram_downloads_dir = "data/downloads/telegram"
+instagram_downloads_dir = "data/downloads/instagram"
+models_dir = "models"
+reports_dir = "reports"
+
+[telegram]
+# Telegram-specific configuration
+connection_retries = 3
+retry_delay = 1
+auto_reconnect = true
+request_retries = 3
+media_timeout_image = 30
+media_timeout_document = 60
+connection_delay_min = 2.0
+connection_delay_max = 4.0
+request_delay_base = 2.0
+request_delay_increment = 0.5
+extra_delay_every_10_min = 10.0
+extra_delay_every_10_max = 15.0
+long_delay_every_50_min = 20.0
+long_delay_every_50_max = 30.0
+save_delay_min = 0.1
+save_delay_max = 0.3
+
+[instagram]
+# Instagram-specific configuration
+default_min_delay = 5.0
+default_max_delay = 30.0
+retry_multiplier = 5
+retry_min_wait = 5
+retry_max_wait = 60
+login_delay_min = 1.0
+login_delay_max = 2.0
+request_delay_min = 2.0
+request_delay_max = 4.0
+general_delay_min = 1.0
+general_delay_max = 2.0

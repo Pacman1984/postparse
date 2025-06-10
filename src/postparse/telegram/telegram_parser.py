@@ -16,6 +16,7 @@ from telethon.tl.types import Message, MessageMediaPhoto, MessageMediaDocument
 from tqdm import tqdm
 
 from ..data.database import SocialMediaDatabase
+from ..utils.config import get_config, get_paths_config
 
 # Enable nested event loops for Jupyter
 nest_asyncio.apply()
@@ -26,8 +27,9 @@ class TelegramParser:
     
     def __init__(self, api_id: str, api_hash: str, phone: str = None,
                  session_file: str = "telegram_session",
-                 cache_dir: str = "data/cache",
-                 downloads_dir: str = "data/downloads/telegram"):
+                 cache_dir: Optional[str] = None,
+                 downloads_dir: Optional[str] = None,
+                 config_path: Optional[str] = None):
         """Initialize Telegram parser.
         
         Args:
@@ -35,10 +37,19 @@ class TelegramParser:
             api_hash: Telegram API hash from https://my.telegram.org
             phone: Phone number in international format (e.g., +1234567890)
             session_file: Name of session file (without path)
-            cache_dir: Directory for cache files (sessions)
-            downloads_dir: Directory for downloaded media files
+            cache_dir: Directory for cache files (sessions). If None, uses config default.
+            downloads_dir: Directory for downloaded media files. If None, uses config default.
+            config_path: Path to configuration file. If None, uses default locations.
         """
+        # Load configuration
+        config = get_config(config_path)
+        paths_config = get_paths_config()
+        
         self._phone = phone
+        
+        # Use configuration for directories with fallbacks
+        cache_dir = cache_dir or config.get('paths.cache_dir', default='data/cache')
+        downloads_dir = downloads_dir or config.get('paths.telegram_downloads_dir', default='data/downloads/telegram')
         
         # Create cache and downloads directories
         self._cache_dir = Path(cache_dir)
@@ -49,19 +60,28 @@ class TelegramParser:
         # Full path to session file
         session_path = self._cache_dir / session_file
         
-        # Use conservative connection settings
+        # Load Telegram configuration
+        connection_retries = config.get('telegram.connection_retries', default=3)
+        retry_delay = config.get('telegram.retry_delay', default=1)
+        auto_reconnect = config.get('telegram.auto_reconnect', default=True)
+        request_retries = config.get('telegram.request_retries', default=3)
+        
+        # Use configured connection settings
         self._client = TelegramClient(
             str(session_path),
             api_id,
             api_hash,
-            connection_retries=3,  # Limit connection retries
-            retry_delay=1,  # Wait between retries
-            auto_reconnect=True,  # Enable auto reconnect
-            request_retries=3  # Limit request retries
+            connection_retries=connection_retries,
+            retry_delay=retry_delay,
+            auto_reconnect=auto_reconnect,
+            request_retries=request_retries
         )
         self._me = None
         self._request_count = 0
         self._last_request_time = 0
+        
+        # Store configuration for use in other methods
+        self._config = config
     
     def _get_media_path(self, message: Message, filename: str) -> Path:
         """Get path for downloaded media file.
@@ -136,12 +156,14 @@ class TelegramParser:
             if message.media:
                 if isinstance(message.media, MessageMediaPhoto):
                     content_type = 'image'
-                    path = await self._download_media(message, timeout=30)
+                    timeout = self._config.get('telegram.media_timeout_image', default=30)
+                    path = await self._download_media(message, timeout=timeout)
                     if path:
                         media_urls.append(str(path))
                 elif isinstance(message.media, MessageMediaDocument):
                     content_type = 'document'
-                    path = await self._download_media(message, timeout=60)
+                    timeout = self._config.get('telegram.media_timeout_document', default=60)
+                    path = await self._download_media(message, timeout=timeout)
                     if path:
                         media_urls.append(str(path))
             
@@ -194,8 +216,10 @@ class TelegramParser:
                 await self._client.sign_in(password=password)
         
         self._me = await self._client.get_me()
-        # Wait after connection to avoid suspicion
-        await asyncio.sleep(random.uniform(2, 4))
+        # Wait after connection to avoid suspicion (using configured delays)
+        delay_min = self._config.get('telegram.connection_delay_min', default=2.0)
+        delay_max = self._config.get('telegram.connection_delay_max', default=4.0)
+        await asyncio.sleep(random.uniform(delay_min, delay_max))
         return self
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -203,23 +227,32 @@ class TelegramParser:
         await self._client.disconnect()
     
     async def _wait_between_requests(self):
-        """Implement conservative rate limiting."""
-        # Ensure minimum 2-4 seconds between requests
+        """Implement conservative rate limiting using configured delays."""
+        # Get configured delay values
+        base_delay = self._config.get('telegram.request_delay_base', default=2.0)
+        delay_increment = self._config.get('telegram.request_delay_increment', default=0.5)
+        extra_delay_10_min = self._config.get('telegram.extra_delay_every_10_min', default=10.0)
+        extra_delay_10_max = self._config.get('telegram.extra_delay_every_10_max', default=15.0)
+        long_delay_50_min = self._config.get('telegram.long_delay_every_50_min', default=20.0)
+        long_delay_50_max = self._config.get('telegram.long_delay_every_50_max', default=30.0)
+        
+        # Ensure minimum configured delay between requests
         current_time = asyncio.get_event_loop().time()
         if self._last_request_time:
             elapsed = current_time - self._last_request_time
-            if elapsed < 4:
-                sleep_time = random.uniform(2, 4)
+            min_delay = base_delay + delay_increment
+            if elapsed < min_delay:
+                sleep_time = random.uniform(base_delay, min_delay)
                 await asyncio.sleep(sleep_time)
         
         # Add extra delay every 10 requests
         self._request_count += 1
         if self._request_count % 10 == 0:
-            await asyncio.sleep(random.uniform(10, 15))
+            await asyncio.sleep(random.uniform(extra_delay_10_min, extra_delay_10_max))
         
         # Add longer delay every 50 requests to avoid patterns
         if self._request_count % 50 == 0:
-            await asyncio.sleep(random.uniform(20, 30))
+            await asyncio.sleep(random.uniform(long_delay_50_min, long_delay_50_max))
         
         self._last_request_time = current_time
     
@@ -398,39 +431,48 @@ class TelegramParser:
 
 
 def save_telegram_messages(api_id: str, api_hash: str, phone: str = None,
-                         db_path: str = "social_media.db",
+                         db_path: Optional[str] = None,
                          session_file: str = "telegram_session",
-                         cache_dir: str = "data/cache",
-                         downloads_dir: str = "data/downloads/telegram",
+                         cache_dir: Optional[str] = None,
+                         downloads_dir: Optional[str] = None,
                          limit: Optional[int] = None,
-                         max_requests_per_session: int = None,
-                         force_update: bool = False) -> int:
+                         max_requests_per_session: Optional[int] = None,
+                         force_update: bool = False,
+                         config_path: Optional[str] = None) -> int:
     """Helper function to save Telegram messages without dealing with async code.
     
     Args:
         api_id: Telegram API ID
         api_hash: Telegram API hash
         phone: Phone number in international format (e.g., +1234567890)
-        db_path: Path to SQLite database
+        db_path: Path to SQLite database. If None, uses config default.
         session_file: Name of session file (without path)
-        cache_dir: Directory for cache files (sessions)
-        downloads_dir: Directory for downloaded media files
+        cache_dir: Directory for cache files (sessions). If None, uses config default.
+        downloads_dir: Directory for downloaded media files. If None, uses config default.
         limit: Maximum number of messages to save
         max_requests_per_session: Maximum number of API requests per session
         force_update: If True, will update existing messages. If False, skips existing messages.
+        config_path: Path to configuration file. If None, uses default locations.
         
     Returns:
         Number of messages saved
     """
     async def _save():
-        db = SocialMediaDatabase(db_path)
+        # Load configuration for default values
+        config = get_config(config_path)
+        
+        # Use configured defaults if not provided
+        final_db_path = db_path or config.get('database.default_db_path', default='social_media.db')
+        
+        db = SocialMediaDatabase(final_db_path)
         async with TelegramParser(
             api_id=api_id,
             api_hash=api_hash,
             phone=phone,
             session_file=session_file,
             cache_dir=cache_dir,
-            downloads_dir=downloads_dir
+            downloads_dir=downloads_dir,
+            config_path=config_path
         ) as parser:
             return await parser.save_messages_to_db(db, limit, max_requests_per_session, force_update)
     

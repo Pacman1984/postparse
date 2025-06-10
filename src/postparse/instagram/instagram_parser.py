@@ -16,6 +16,7 @@ import logging
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from ..data.database import SocialMediaDatabase
+from ..utils.config import get_config
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -93,25 +94,38 @@ class InstaloaderParser(BaseInstagramParser):
     """Instagram parser using Instaloader."""
     
     def __init__(self, username: str, password: str, session_file: str = "instagram_session",
-                 max_retries: int = 3, min_delay: float = 5.0, max_delay: float = 30.0):
+                 max_retries: Optional[int] = None, min_delay: Optional[float] = None, 
+                 max_delay: Optional[float] = None, config_path: Optional[str] = None):
         """Initialize Instagram parser.
         
         Args:
             username: Instagram username
             password: Instagram password
             session_file: Name of session file for caching login
-            max_retries: Maximum number of retry attempts for rate-limited requests
-            min_delay: Minimum delay between requests in seconds
-            max_delay: Maximum delay between requests in seconds
+            max_retries: Maximum number of retry attempts for rate-limited requests. If None, uses config default.
+            min_delay: Minimum delay between requests in seconds. If None, uses config default.
+            max_delay: Maximum delay between requests in seconds. If None, uses config default.
+            config_path: Path to configuration file. If None, uses default locations.
         """
+        # Load configuration
+        config = get_config(config_path)
+        
         self._username = username
         self._password = password
         self._session_file = session_file
-        self._max_retries = max_retries
-        self._min_delay = min_delay
-        self._max_delay = max_delay
         
-        # Initialize Instaloader with conservative settings
+        # Use configuration with fallbacks
+        self._max_retries = max_retries or config.get('api.max_retries', default=3)
+        self._min_delay = min_delay or config.get('instagram.default_min_delay', default=5.0)
+        self._max_delay = max_delay or config.get('instagram.default_max_delay', default=30.0)
+        
+        # Store configuration for other methods
+        self._config = config
+        
+        # Initialize Instaloader with configured settings
+        request_timeout = config.get('models.request_timeout', default=30)
+        max_connection_attempts = config.get('api.max_retries', default=3)
+        
         self._loader = instaloader.Instaloader(
             quiet=True,
             download_pictures=False,
@@ -121,8 +135,8 @@ class InstaloaderParser(BaseInstagramParser):
             download_comments=False,
             save_metadata=False,
             compress_json=False,
-            max_connection_attempts=3,
-            request_timeout=30
+            max_connection_attempts=max_connection_attempts,
+            request_timeout=request_timeout
         )
         
         self._login()
@@ -148,7 +162,9 @@ class InstaloaderParser(BaseInstagramParser):
         try:
             # Try to access profile to verify session
             profile = instaloader.Profile.from_username(self._loader.context, self._username)
-            time.sleep(random.uniform(1, 2))
+            delay_min = self._config.get('instagram.login_delay_min', default=1.0)
+            delay_max = self._config.get('instagram.login_delay_max', default=2.0)
+            time.sleep(random.uniform(delay_min, delay_max))
         except Exception:
             raise InstagramAPIError("Invalid session")
     

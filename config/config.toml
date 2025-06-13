@@ -1,7 +1,7 @@
 [models]
 # Zero-shot classification models
-zero_shot_model = "qwen2.5:72b-instruct"
-default_llm_model = "llama2"
+zero_shot_model = "qwen3:14b"
+default_llm_model = "qwen3:14b"
 
 # Model hosts and endpoints
 ollama_default_timeout = 30

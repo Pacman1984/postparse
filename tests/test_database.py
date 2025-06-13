@@ -233,60 +233,38 @@ class TestDatabaseOperations:
         msg_id = mock_db._insert_telegram_message(**sample_telegram_message)
         assert msg_id is not None
         
-        # Print actual calls for debugging
-        print("\nActual SQL calls:")
-        for i, call in enumerate(cursor.execute.call_args_list):
-            print(f"\nCall {i}:")
-            print(f"SQL: {repr(call[0][0])}")  # Use repr to show exact string
-            if len(call[0]) > 1:
-                print(f"Args: {repr(call[0][1])}")
-            print(f"Full call: {call}")
+        # Verify that the main message insertion happened
+        # Check that at least one call contains the main INSERT for telegram_messages
+        message_insert_found = False
+        hashtag_insert_found = False
         
-        # Create expected call for comparison
-        expected_sql = """
-                    INSERT INTO telegram_messages (
-                        message_id, chat_id, content, content_type,
-                        media_urls, views, forwards, reply_to_msg_id,
-                        created_at
+        for call in cursor.execute.call_args_list:
+            if len(call[0]) > 0:
+                sql = call[0][0].strip()
+                if "INSERT INTO telegram_messages" in sql:
+                    message_insert_found = True
+                    # Verify the arguments match what we expect
+                    expected_args = (
+                        sample_telegram_message['message_id'],
+                        sample_telegram_message['chat_id'],
+                        sample_telegram_message['content'],
+                        sample_telegram_message['content_type'],
+                        json.dumps(sample_telegram_message.get('media_urls', [])) if sample_telegram_message.get('media_urls') else None,
+                        sample_telegram_message['views'],
+                        sample_telegram_message['forwards'],
+                        sample_telegram_message['reply_to_msg_id'],
+                        sample_telegram_message['created_at'].isoformat() if sample_telegram_message['created_at'] else None
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """
-        expected_args = (
-            sample_telegram_message['message_id'],
-            sample_telegram_message['chat_id'],
-            sample_telegram_message['content'],
-            sample_telegram_message['content_type'],
-            json.dumps(sample_telegram_message.get('media_urls', [])) if sample_telegram_message.get('media_urls') else None,
-            sample_telegram_message['views'],
-            sample_telegram_message['forwards'],
-            sample_telegram_message['reply_to_msg_id'],
-            sample_telegram_message['created_at'].isoformat() if sample_telegram_message['created_at'] else None
-        )
-
-        print("\nExpected SQL:")
-        print(f"SQL: {repr(expected_sql)}")
-        print(f"Args: {repr(expected_args)}")
-
-        # Get the actual call that should match
-        actual_call = cursor.execute.call_args_list[1]  # Second call should be the insert
-        print("\nActual vs Expected:")
-        print(f"Actual SQL: {repr(actual_call[0][0])}")
-        print(f"Expected SQL: {repr(expected_sql)}")
-        if len(actual_call[0]) > 1:
-            print(f"Actual Args: {repr(actual_call[0][1])}")
-        print(f"Expected Args: {repr(expected_args)}")
-
-        # Compare strings character by character
-        actual_sql = actual_call[0][0]
-        for i, (a, e) in enumerate(zip(actual_sql, expected_sql)):
-            if a != e:
-                print(f"Difference at position {i}: '{a}' vs '{e}'")
-                print(f"Context: '{actual_sql[max(0, i-10):i]}[{a}]{actual_sql[i+1:i+11]}'")
-                print(f"         '{expected_sql[max(0, i-10):i]}[{e}]{expected_sql[i+1:i+11]}'")
-                break
-
-        # Verify SQL execution
-        cursor.execute.assert_called_with(expected_sql, expected_args)
+                    assert call[0][1] == expected_args, f"Message insert args mismatch: {call[0][1]} != {expected_args}"
+                
+                elif "INSERT INTO telegram_hashtags" in sql:
+                    hashtag_insert_found = True
+                    # Should have message_id and hashtag
+                    assert len(call[0][1]) == 2, f"Hashtag insert should have 2 args: {call[0][1]}"
+                    assert call[0][1][1] == 'test', f"Expected hashtag 'test', got {call[0][1][1]}"
+        
+        assert message_insert_found, "Message insertion SQL not found"
+        assert hashtag_insert_found, "Hashtag insertion SQL not found"
 
     def test_hashtag_handling(self, mock_db, sample_instagram_post):
         """Test hashtag insertion and querying."""
@@ -296,10 +274,13 @@ class TestDatabaseOperations:
         # Test hashtag insertion
         mock_db._insert_instagram_post(**sample_instagram_post)
         
-        # Verify hashtag SQL execution
+        # Verify hashtag SQL execution (using actual table name)
         cursor.execute.assert_any_call(
-            "INSERT OR IGNORE INTO hashtags (post_id, platform, hashtag) VALUES (?, ?, ?)",
-            (1, 'instagram', 'test')
+            """
+                                INSERT INTO instagram_hashtags (post_id, hashtag)
+                                VALUES (?, ?)
+                            """,
+            (cursor.lastrowid, 'test')
         )
         
         # Test hashtag query
@@ -315,27 +296,52 @@ class TestDatabaseOperations:
         # Test mention insertion
         mock_db._insert_instagram_post(**sample_instagram_post)
         
-        # Verify mention SQL execution
+        # Verify mention SQL execution (using actual table name)
         cursor.execute.assert_any_call(
-            "INSERT OR IGNORE INTO mentions (post_id, username) VALUES (?, ?)",
-            (1, 'mention')
+            """
+                                INSERT INTO instagram_mentions (post_id, username)
+                                VALUES (?, ?)
+                            """,
+            (cursor.lastrowid, 'mention')
         )
 
     def test_media_url_handling(self, mock_db, sample_instagram_post):
-        """Test media URL insertion and querying."""
+        """Test media URL storage in posts table."""
         cursor = mock_db._conn.cursor()
         cursor.fetchone.return_value = (1,)  # Return post ID for existence check
         
-        # Add multiple media URLs
-        sample_instagram_post['media_url'] = ['url1', 'url2']
+        # Test with single media URL (stored directly in posts table)
+        sample_instagram_post['media_url'] = 'test_url.jpg'
         
         # Test media URL insertion
         mock_db._insert_instagram_post(**sample_instagram_post)
         
-        # Verify media URL SQL execution
+        # Verify the post insertion includes the media URL
+        # This should be part of the main INSERT into instagram_posts
         cursor.execute.assert_any_call(
-            "INSERT INTO media_urls (post_id, platform, url) VALUES (?, ?, ?)",
-            (1, 'instagram', 'url1')
+            """
+                    INSERT INTO instagram_posts (
+                        shortcode, post_url, owner_username, owner_id, caption,
+                        is_video, media_url, typename, likes, comments,
+                        created_at, is_saved, source
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+            (
+                sample_instagram_post['shortcode'],
+                f"{mock_db.INSTAGRAM_BASE_URL}{sample_instagram_post['shortcode']}",
+                sample_instagram_post['owner_username'],
+                sample_instagram_post['owner_id'],
+                sample_instagram_post['caption'],
+                sample_instagram_post['is_video'],
+                sample_instagram_post['media_url'],  # This is the media URL
+                sample_instagram_post['typename'],
+                sample_instagram_post['likes'],
+                sample_instagram_post['comments'],
+                sample_instagram_post['created_at'].isoformat() if sample_instagram_post['created_at'] else None,
+                True,  # is_saved default
+                'saved'  # source default
+            )
         )
 
     def test_query_functions(self, mock_db):

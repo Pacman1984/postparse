@@ -6,7 +6,7 @@ This module provides two approaches for extracting Instagram data:
 """
 import time
 import random
-from typing import Generator, Dict, Any, Optional, List
+from typing import Generator, Dict, Any, Optional, List, Set
 from pathlib import Path
 import instaloader
 from datetime import datetime
@@ -14,6 +14,8 @@ import requests
 from tqdm import tqdm
 import logging
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+import concurrent.futures
+import threading
 
 from ..data.database import SocialMediaDatabase
 from ..utils.config import get_config
@@ -38,56 +40,98 @@ class BaseInstagramParser:
         raise NotImplementedError
     
     def save_posts_to_db(self, db: SocialMediaDatabase, limit: Optional[int] = None,
-                        force_update: bool = False) -> int:
-        """Save Instagram posts to database."""
+                        force_update: bool = False, batch_size: int = 100) -> int:
+        """Save Instagram posts to database with batch optimization."""
         saved_count = 0
         skipped_count = 0
         
         try:
             posts = list(self.get_saved_posts(limit))
             
-            with tqdm(total=len(posts), desc="Saving posts") as pbar:
-                for post_data in posts:
-                    try:
-                        exists = db.post_exists(post_data['shortcode'])
-                        if exists and not force_update:
-                            skipped_count += 1
-                            pbar.set_postfix({'saved': saved_count, 'skipped': skipped_count})
-                            pbar.update(1)
-                            continue
-                        
-                        post_id = db._insert_instagram_post(
-                            shortcode=post_data['shortcode'],
-                            owner_username=post_data['owner_username'],
-                            owner_id=post_data['owner_id'],
-                            caption=post_data['caption'],
-                            is_video=post_data['is_video'],
-                            media_url=post_data['url'],
-                            typename=post_data['typename'],
-                            likes=post_data['likes'],
-                            comments=post_data['comments'],
-                            created_at=post_data['created_at'],
-                            hashtags=post_data['hashtags'],
-                            mentions=post_data['mentions'],
-                            is_saved=True,
-                            source='saved'
-                        )
-                        
-                        if post_id:
-                            saved_count += 1
-                            pbar.set_postfix({'saved': saved_count, 'skipped': skipped_count})
-                        
-                    except Exception as e:
-                        logger.error(f"Error saving post {post_data['shortcode']}: {str(e)}")
-                        continue
-                    
-                    pbar.update(1)
+            if not posts:
+                logger.info("No posts to process")
+                return 0
+            
+            # Batch check existing posts for better performance
+            if not force_update:
+                existing_shortcodes = self._batch_check_existing_posts(db, posts)
+                logger.info(f"Found {len(existing_shortcodes)} existing posts to skip")
+            else:
+                existing_shortcodes = set()
+            
+            # Filter out existing posts
+            posts_to_process = [post for post in posts if post['shortcode'] not in existing_shortcodes]
+            skipped_count = len(posts) - len(posts_to_process)
+            
+            if not posts_to_process:
+                logger.info(f"All {len(posts)} posts already exist. Skipped: {skipped_count}")
+                return 0
+                
+            logger.info(f"Processing {len(posts_to_process)} new posts (skipping {skipped_count} existing)")
+            
+            # Process in batches for better performance
+            with tqdm(total=len(posts_to_process), desc="Saving posts", unit="post") as pbar:
+                for i in range(0, len(posts_to_process), batch_size):
+                    batch = posts_to_process[i:i + batch_size]
+                    batch_saved = self._save_batch_to_db(db, batch, pbar)
+                    saved_count += batch_saved
                     
         except Exception as e:
             logger.error(f"Error during post saving: {str(e)}")
             logger.warning("Partial data may have been saved. Please check the database.")
         
         logger.info(f"Summary: Saved {saved_count} posts, Skipped {skipped_count} existing posts")
+        return saved_count
+    
+    def _batch_check_existing_posts(self, db: SocialMediaDatabase, posts: List[Dict[str, Any]]) -> Set[str]:
+        """Batch check which posts already exist in database."""
+        existing_shortcodes = set()
+        
+        # Extract all shortcodes
+        shortcodes = [post['shortcode'] for post in posts]
+        
+        # Batch query - much faster than individual checks
+        with db as db_conn:
+            placeholders = ','.join(['?'] * len(shortcodes))
+            query = f"SELECT shortcode FROM instagram_posts WHERE shortcode IN ({placeholders})"
+            db_conn._cursor.execute(query, shortcodes)
+            existing_shortcodes = {row[0] for row in db_conn._cursor.fetchall()}
+        
+        return existing_shortcodes
+    
+    def _save_batch_to_db(self, db: SocialMediaDatabase, batch: List[Dict[str, Any]], pbar: tqdm) -> int:
+        """Save a batch of posts to database."""
+        saved_count = 0
+        
+        for post_data in batch:
+            try:
+                post_id = db._insert_instagram_post(
+                    shortcode=post_data['shortcode'],
+                    owner_username=post_data['owner_username'],
+                    owner_id=post_data['owner_id'],
+                    caption=post_data['caption'],
+                    is_video=post_data['is_video'],
+                    media_url=post_data['url'],
+                    typename=post_data['typename'],
+                    likes=post_data['likes'],
+                    comments=post_data['comments'],
+                    created_at=post_data['created_at'],
+                    hashtags=post_data['hashtags'],
+                    mentions=post_data['mentions'],
+                    is_saved=True,
+                    source='saved'
+                )
+                
+                if post_id:
+                    saved_count += 1
+                    pbar.set_postfix({'saved': saved_count})
+                
+            except Exception as e:
+                logger.error(f"Error saving post {post_data['shortcode']}: {str(e)}")
+                continue
+            
+            pbar.update(1)
+        
         return saved_count
 
 class InstaloaderParser(BaseInstagramParser):
@@ -199,24 +243,47 @@ class InstaloaderParser(BaseInstagramParser):
     def _parse_post(self, post: instaloader.Post) -> Dict[str, Any]:
         """Parse Instagram post data."""
         try:
+            # Extract hashtags and mentions from caption
+            caption = post.caption or ""
+            hashtags = list(post.caption_hashtags) if hasattr(post, 'caption_hashtags') else []
+            mentions = list(post.caption_mentions) if hasattr(post, 'caption_mentions') else []
+            
             return {
                 'shortcode': post.shortcode,
                 'owner_username': post.owner_username,
                 'owner_id': str(post.owner_id),
-                'caption': post.caption if post.caption else '',
+                'caption': caption,
                 'is_video': post.is_video,
-                'url': post.video_url if post.is_video else post.url,
+                'url': post.url,
                 'typename': post.typename,
                 'likes': post.likes,
                 'comments': post.comments,
                 'created_at': post.date,
-                'hashtags': list(post.caption_hashtags) if post.caption else [],
-                'mentions': list(post.caption_mentions) if post.caption else []
+                'hashtags': hashtags,
+                'mentions': mentions
             }
         except Exception as e:
-            logger.error(f"Error parsing post {post.shortcode}: {str(e)}")
+            logger.error(f"Error parsing post data: {str(e)}")
             return None
     
+    def _calculate_smart_delay(self, post_count: int, recent_errors: int = 0) -> float:
+        """Calculate smart delay based on current conditions."""
+        base_delay = self._min_delay
+        
+        # Adaptive delay based on progress (less aggressive than before)
+        progress_factor = min(2.0, 1 + (post_count // 50) * 0.1)  # Slower progression
+        
+        # Error factor (increase delay if we're getting errors)
+        error_factor = 1 + (recent_errors * 0.2)
+        
+        # Random factor for human-like behavior
+        random_factor = 1 + random.uniform(-0.2, 0.4)
+        
+        calculated_delay = base_delay * progress_factor * error_factor * random_factor
+        
+        # Respect maximum delay
+        return min(calculated_delay, self._max_delay)
+
     def get_saved_posts(self, limit: Optional[int] = None, db: Optional[SocialMediaDatabase] = None,
                        force_update: bool = False) -> Generator[Dict[str, Any], None, None]:
         """Extract saved posts from Instagram using Instaloader.
@@ -230,6 +297,7 @@ class InstaloaderParser(BaseInstagramParser):
         total_posts = None
         pbar = None
         skipped_count = 0
+        recent_errors = 0
         
         try:
             profile = self._get_profile()
@@ -265,9 +333,8 @@ class InstaloaderParser(BaseInstagramParser):
                                 pbar.update(1)
                             continue
                     
-                    # Adaptive rate limiting
-                    delay = min(self._max_delay, 
-                              self._min_delay * (1 + random.random() + (post_count // 10) * 0.5))
+                    # Smart delay calculation
+                    delay = self._calculate_smart_delay(post_count, recent_errors)
                     
                     # Update progress message to show current delay
                     if pbar:
@@ -283,11 +350,13 @@ class InstaloaderParser(BaseInstagramParser):
                     if post_data:
                         yield post_data
                         post_count += 1
+                        recent_errors = max(0, recent_errors - 1)  # Decrease error count on success
                         if pbar:
                             pbar.update(1)
                     
                 except Exception as e:
                     logger.error(f"Error processing post {post.shortcode}: {str(e)}")
+                    recent_errors += 1
                     if pbar:
                         pbar.update(1)
                     continue
@@ -305,8 +374,8 @@ class InstaloaderParser(BaseInstagramParser):
                 logger.info(f"{status} completed. Processed: {post_count}, Skipped: {skipped_count}, Total: {total_posts}")
 
     def save_posts_to_db(self, db: SocialMediaDatabase, limit: Optional[int] = None,
-                        force_update: bool = False) -> int:
-        """Save Instagram posts to database."""
+                        force_update: bool = False, batch_size: int = 100) -> int:
+        """Save Instagram posts to database with optimized batch processing."""
         saved_count = 0
         updated_count = 0
         
@@ -322,11 +391,19 @@ class InstaloaderParser(BaseInstagramParser):
             action = "update" if force_update else "save"
             logger.info(f"Found {total_posts} posts to {action}")
             
+            # Use optimized batch processing from base class
+            if force_update:
+                return super().save_posts_to_db(db, limit, force_update, batch_size)
+            
             # Now show progress for database saving
             with tqdm(total=total_posts, desc=f"{'Updating' if force_update else 'Saving'} to database", unit="post") as pbar:
                 for post_data in posts:
                     try:
-                        exists = db.post_exists(post_data['shortcode'])
+                        # Only check if post exists when not forcing update
+                        exists = False
+                        if not force_update:
+                            exists = db.post_exists(post_data['shortcode'])
+                        
                         post_id = db._insert_instagram_post(
                             shortcode=post_data['shortcode'],
                             owner_username=post_data['owner_username'],

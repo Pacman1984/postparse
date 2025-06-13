@@ -392,3 +392,96 @@ class SocialMediaDatabase:
             """, (message_id,))
             count = db._cursor.fetchone()[0]
             return count > 0
+
+    def get_posts_by_hashtag(self, hashtag: str) -> List[Dict[str, Any]]:
+        """Get Instagram posts by hashtag.
+        
+        Args:
+            hashtag: Hashtag to search for
+            
+        Returns:
+            List of post dictionaries
+        """
+        with self as db:
+            db._cursor.execute("""
+                SELECT p.* FROM instagram_posts p
+                JOIN instagram_hashtags h ON p.id = h.post_id
+                WHERE h.hashtag = ?
+            """, (hashtag,))
+            
+            posts = []
+            for row in db._cursor.fetchall():
+                columns = [description[0] for description in db._cursor.description]
+                post_dict = dict(zip(columns, row))
+                posts.append(post_dict)
+            return posts
+    
+    def get_posts_by_date_range(self, start_date: datetime, end_date: datetime) -> List[Dict[str, Any]]:
+        """Get Instagram posts within a date range.
+        
+        Args:
+            start_date: Start date for the range
+            end_date: End date for the range
+            
+        Returns:
+            List of post dictionaries
+        """
+        with self as db:
+            db._cursor.execute("""
+                SELECT * FROM instagram_posts 
+                WHERE created_at BETWEEN ? AND ?
+                ORDER BY created_at DESC
+            """, (start_date.isoformat(), end_date.isoformat()))
+            
+            posts = []
+            for row in db._cursor.fetchall():
+                columns = [description[0] for description in db._cursor.description]
+                post_dict = dict(zip(columns, row))
+                posts.append(post_dict)
+            return posts
+    
+    def get_instagram_posts(self, limit: int = None) -> List[Dict[str, Any]]:
+        """Get all Instagram posts.
+        
+        Args:
+            limit: Maximum number of posts to return
+            
+        Returns:
+            List of post dictionaries
+        """
+        with self as db:
+            sql = "SELECT * FROM instagram_posts ORDER BY created_at DESC"
+            if limit:
+                sql += f" LIMIT {limit}"
+                
+            db._cursor.execute(sql)
+            
+            posts = []
+            for row in db._cursor.fetchall():
+                columns = [description[0] for description in db._cursor.description]
+                post_dict = dict(zip(columns, row))
+                posts.append(post_dict)
+            return posts
+    
+    def get_telegram_messages(self, limit: int = None) -> List[Dict[str, Any]]:
+        """Get all Telegram messages.
+        
+        Args:
+            limit: Maximum number of messages to return
+            
+        Returns:
+            List of message dictionaries
+        """
+        with self as db:
+            sql = "SELECT * FROM telegram_messages ORDER BY created_at DESC"
+            if limit:
+                sql += f" LIMIT {limit}"
+                
+            db._cursor.execute(sql)
+            
+            messages = []
+            for row in db._cursor.fetchall():
+                columns = [description[0] for description in db._cursor.description]
+                msg_dict = dict(zip(columns, row))
+                messages.append(msg_dict)
+            return messages

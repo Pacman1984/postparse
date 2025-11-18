@@ -16,13 +16,59 @@ class RecipeDetails(BaseModel):
     ingredients_count: Optional[int] = Field(None, description="Estimated number of ingredients")
 
 class RecipeLLMClassifier(BaseClassifier):
-    """LLM-based recipe classifier using LangChain."""
+    """LLM-based recipe classifier using LangChain + LiteLLM.
+    
+    This classifier combines:
+    - **LangChain**: For PydanticOutputParser, prompts, and structured outputs
+    - **LiteLLM**: As universal adapter supporting ANY LLM provider
+    
+    Supported Providers (via LiteLLM):
+    - Ollama (local, free)
+    - LM Studio (local, free)
+    - OpenAI (GPT-4, GPT-3.5, etc.)
+    - Anthropic (Claude models)
+    - 100+ other providers supported by LiteLLM
+    
+    The classifier returns structured Pydantic models with:
+    - Binary classification (recipe / not_recipe)
+    - Confidence scores
+    - Rich metadata (cuisine type, difficulty, meal type, ingredients count)
+    
+    Examples:
+        Basic usage with default config:
+        ```python
+        from postparse.services.analysis.classifiers import RecipeLLMClassifier
+        
+        classifier = RecipeLLMClassifier()
+        result = classifier.predict("My pasta recipe: boil pasta, add sauce...")
+        print(result.label)           # "recipe" or "not_recipe"
+        print(result.confidence)      # 0.95
+        print(result.details)         # {"cuisine_type": "Italian", ...}
+        ```
+        
+        With specific model:
+        ```python
+        classifier = RecipeLLMClassifier(model_name="gpt-4o-mini")
+        result = classifier.predict(text)
+        ```
+        
+        Batch classification:
+        ```python
+        texts = ["recipe 1", "recipe 2", "not recipe"]
+        results = classifier.predict_batch(texts)
+        for r in results:
+            print(f"{r.label}: {r.details}")
+        ```
+    """
     
     def __init__(self, model_name: Optional[str] = None, config_path: Optional[str] = None):
         """Initialize the LLM classifier.
         
         Args:
             model_name: Name of the model to use. If None, uses config default.
+                For Ollama: "llama2", "qwen3:14b", etc.
+                For OpenAI: "gpt-4o-mini", "gpt-4", etc.
+                For Anthropic: "claude-3-5-sonnet-20241022", etc.
             config_path: Path to configuration file. If None, uses default locations.
         """
         # Load configuration

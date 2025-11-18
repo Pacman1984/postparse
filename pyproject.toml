@@ -81,3 +81,17 @@ dev-dependencies = [
     "pylint>=2.17.5",
 ]
 package = true
+
+[tool.pytest.ini_options]
+# Filter out known harmless warnings from dependencies
+filterwarnings = [
+    # Suppress Pydantic serialization warnings from LiteLLM when using local LLM servers
+    # These occur because LM Studio/Ollama return simplified responses vs full OpenAI API format
+    "ignore:Pydantic serializer warnings:UserWarning",
+    # Suppress asyncio event loop warnings from LiteLLM's internal logging
+    "ignore:There is no current event loop:DeprecationWarning",
+]
+# Register custom markers
+markers = [
+    "integration: marks tests as integration tests requiring external services",
+]

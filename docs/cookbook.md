@@ -132,61 +132,61 @@ print(f"Added {new_count} new posts")
 
 ## Recipe 3: Classify Content with Recipe Detection
 
-**Goal:** Analyze saved content to identify recipes using ML classification.
+**Goal:** Analyze saved content to identify recipes using LLM classification with structured output.
 
-**Key APIs:** [`RecipeClassifier`](api_reference.md#postparseanalysisclassifiersrecipe_classifierrecipeclassifier), [`SocialMediaDatabase`](api_reference.md#postparsedatadatabasesocialmediadatabase)
+**Key APIs:** [`RecipeLLMClassifier`](api_reference.md#postparseservicesanalysisclassifiersllmrecipellmclassifier), [`SocialMediaDatabase`](api_reference.md#postparsedatadatabasesocialmediadatabase)
 
 ```python
-from postparse.data.database import SocialMediaDatabase
-from postparse.analysis.classifiers.recipe_classifier import RecipeClassifier
+from postparse.core.data.database import SocialMediaDatabase
+from postparse.services.analysis.classifiers import RecipeLLMClassifier
 
-# Initialize database and classifier
+# Initialize database and classifier (uses LangChain + LiteLLM)
 db = SocialMediaDatabase("my_data.db")
-classifier = RecipeClassifier()  # Uses config defaults
+classifier = RecipeLLMClassifier()  # Supports Ollama, LM Studio, OpenAI, etc.
 
-# Classify Telegram messages
+# Classify Telegram messages with detailed metadata
 messages = db.get_telegram_messages(limit=100)
 recipe_count = 0
 
 for msg in messages:
     if msg['content']:
         result = classifier.predict(msg['content'])
-        if result == "recipe":
+        
+        if result.label == "recipe":
             recipe_count += 1
-            print(f"Found recipe in message {msg['message_id']}")
+            print(f"\nRecipe found in message {msg['message_id']}")
+            print(f"Confidence: {result.confidence:.2f}")
+            print(f"Cuisine: {result.details.get('cuisine_type', 'Unknown')}")
+            print(f"Difficulty: {result.details.get('difficulty', 'Unknown')}")
+            print(f"Meal type: {result.details.get('meal_type', 'Unknown')}")
             print(f"Content preview: {msg['content'][:100]}...")
 
 print(f"\nFound {recipe_count} recipes out of {len(messages)} messages")
 ```
 
-**Advanced: Detailed classification with LLM**
+**Batch Classification for Performance**
 
 ```python
-from postparse.analysis.classifiers.llm import RecipeLLMClassifier
-
-# Use advanced LLM classifier for detailed analysis
-classifier = RecipeLLMClassifier()
-
-# Classify Instagram posts with detailed metadata
+# Classify Instagram posts in batch
 posts = db.get_instagram_posts(limit=50)
+captions = [post['caption'] for post in posts if post['caption']]
 
-for post in posts:
-    if post['caption']:
-        result = classifier.predict(post['caption'])
-        
-        if result.label == "recipe":
-            print(f"\nRecipe found in post {post['shortcode']}")
-            print(f"Confidence: {result.confidence:.2f}")
-            print(f"Cuisine: {result.details.get('cuisine_type', 'Unknown')}")
-            print(f"Difficulty: {result.details.get('difficulty', 'Unknown')}")
-            print(f"Meal type: {result.details.get('meal_type', 'Unknown')}")
+# Batch prediction is more efficient
+results = classifier.predict_batch(captions)
+
+for post, result in zip(posts, results):
+    if result.label == "recipe":
+        print(f"\nRecipe in post {post['shortcode']}")
+        print(f"  Confidence: {result.confidence:.2f}")
+        print(f"  Details: {result.details}")
 ```
 
 **What's happening:**
-- `RecipeClassifier` uses zero-shot classification (no training required)
-- Connects to Ollama server for inference
-- `RecipeLLMClassifier` provides detailed analysis with structured output
-- Results include confidence scores and metadata
+- `RecipeLLMClassifier` uses LangChain + LiteLLM for universal LLM support
+- Zero-shot classification (no training required)
+- Returns structured Pydantic models with rich metadata
+- Automatically works with ANY LiteLLM provider (Ollama, LM Studio, OpenAI, etc.)
+- Includes confidence scores and detailed recipe attributes
 
 ---
 
@@ -277,17 +277,17 @@ conn.close()
 
 ```python
 import asyncio
-from postparse.telegram.telegram_parser import TelegramParser
-from postparse.instagram.instagram_parser import InstaloaderParser
-from postparse.data.database import SocialMediaDatabase
-from postparse.analysis.classifiers.recipe_classifier import RecipeClassifier
+from postparse.services.parsers.telegram.telegram_parser import TelegramParser
+from postparse.services.parsers.instagram.instagram_parser import InstaloaderParser
+from postparse.core.data.database import SocialMediaDatabase
+from postparse.services.analysis.classifiers import RecipeLLMClassifier
 
 class ContentPipeline:
     """End-to-end content extraction and analysis pipeline."""
     
     def __init__(self, db_path="content_pipeline.db"):
         self.db = SocialMediaDatabase(db_path)
-        self.classifier = RecipeClassifier()
+        self.classifier = RecipeLLMClassifier()  # LangChain + LiteLLM
         self.stats = {
             'telegram_messages': 0,
             'instagram_posts': 0,
@@ -319,16 +319,18 @@ class ContentPipeline:
         for msg in messages:
             if msg['content']:
                 result = self.classifier.predict(msg['content'])
-                if result == "recipe":
+                if result.label == "recipe":
                     self.stats['recipes_found'] += 1
+                    print(f"  Recipe found: {result.details.get('cuisine_type', 'Unknown cuisine')}")
         
         # Analyze Instagram posts
         posts = self.db.get_instagram_posts()
         for post in posts:
             if post['caption']:
                 result = self.classifier.predict(post['caption'])
-                if result == "recipe":
+                if result.label == "recipe":
                     self.stats['recipes_found'] += 1
+                    print(f"  Recipe found: {result.details.get('meal_type', 'Unknown type')}")
         
         print(f"Analysis complete. Found {self.stats['recipes_found']} recipes")
     

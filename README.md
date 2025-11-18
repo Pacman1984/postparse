@@ -42,7 +42,7 @@ uv sync
 ```python
 from postparse.services.parsers.telegram.telegram_parser import save_telegram_messages
 from postparse.core.data.database import SocialMediaDatabase
-from postparse.services.analysis.classifiers.recipe_classifier import RecipeClassifier
+from postparse.services.analysis.classifiers import RecipeLLMClassifier
 
 # Extract Telegram messages
 count = save_telegram_messages(
@@ -52,15 +52,16 @@ count = save_telegram_messages(
     limit=100
 )
 
-# Classify content
+# Classify content with LangChain + LiteLLM
 db = SocialMediaDatabase()
-classifier = RecipeClassifier()
+classifier = RecipeLLMClassifier()  # Supports Ollama, LM Studio, OpenAI, etc.
 
 messages = db.get_telegram_messages(limit=10)
 for msg in messages:
     if msg['content']:
         result = classifier.predict(msg['content'])
-        print(f"Message {msg['message_id']}: {result}")
+        print(f"Message {msg['message_id']}: {result.label} ({result.confidence:.2f})")
+        print(f"  Details: {result.details}")
 ```
 
 For more examples, see the **[Cookbook](docs/cookbook.md)**.

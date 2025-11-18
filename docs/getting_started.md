@@ -107,7 +107,20 @@ default_min_delay = 5.0
 default_max_delay = 30.0
 
 [models]
+# DEPRECATED: Use [llm] section instead
 zero_shot_model = "qwen2.5:72b-instruct"
+
+[llm]
+# LLM provider configuration for classification
+default_provider = "lm_studio"  # or "ollama", "openai", "anthropic"
+enable_fallback = true
+
+# Example Ollama provider configuration
+[[llm.providers]]
+name = "ollama"
+model = "qwen3:14b"
+api_base = "http://localhost:11434"  # Configure your Ollama server here
+timeout = 30
 ```
 
 ### Environment Variables
@@ -115,12 +128,137 @@ zero_shot_model = "qwen2.5:72b-instruct"
 For sensitive credentials, create a `config/.env` file:
 
 ```bash
-# Ollama server configuration (for classification)
+# API keys for LLM providers (used by classification system)
+# OpenAI (or OpenAI-compatible endpoints like LM Studio)
+OPENAI_API_KEY=your_key_here
+
+# Anthropic Claude
+ANTHROPIC_API_KEY=your_key_here
+
+# Note: Ollama configuration is now in config.toml under [llm.providers]
+# The legacy OLLAMA_IP and OLLAMA_PORT variables are no longer used
+```
+
+## Configuring LLM Providers
+
+PostParse uses a unified LLM provider system for classification tasks. You can configure multiple providers and switch between them easily.
+
+### Supported Providers
+
+- **Ollama**: Local LLM server (free, no API key needed)
+- **LM Studio**: Local LLM with OpenAI-compatible API (free, no API key needed)
+- **OpenAI**: GPT-4, GPT-3.5, etc. (requires API key)
+- **Anthropic**: Claude models (requires API key)
+
+### Configuration Structure
+
+All LLM providers are configured in `config/config.toml` under the `[llm]` section:
+
+```toml
+[llm]
+default_provider = "lm_studio"  # Which provider to use by default
+enable_fallback = true          # Automatically try other providers on failure
+
+# Each provider is defined with [[llm.providers]]
+[[llm.providers]]
+name = "ollama"
+model = "qwen3:14b"
+api_base = "http://192.168.1.100:11434"  # Your Ollama server URL
+timeout = 30
+temperature = 0.7
+
+[[llm.providers]]
+name = "openai"
+model = "gpt-4o-mini"
+timeout = 30
+temperature = 0.7
+# API key loaded from OPENAI_API_KEY environment variable
+```
+
+### Provider-Specific Setup
+
+#### Ollama Setup
+
+1. Install Ollama: [https://ollama.ai](https://ollama.ai)
+2. Pull a model: `ollama pull qwen3:14b`
+3. Start the server: `ollama serve`
+4. Configure in `config.toml`:
+   ```toml
+   [[llm.providers]]
+   name = "ollama"
+   model = "qwen3:14b"
+   api_base = "http://localhost:11434"  # Or your server IP:port
+   ```
+
+#### LM Studio Setup
+
+1. Install LM Studio: [https://lmstudio.ai](https://lmstudio.ai)
+2. Download a model in LM Studio
+3. Start the local server (default: `http://localhost:1234`)
+4. Set environment variable: `OPENAI_API_KEY=dummy`
+5. Configure in `config.toml`:
+   ```toml
+   [[llm.providers]]
+   name = "lm_studio"
+   model = "qwen/qwen3-vl-8b"  # Model name from LM Studio
+   api_base = "http://localhost:1234/v1"
+   ```
+
+#### OpenAI Setup
+
+1. Get your API key from [https://platform.openai.com](https://platform.openai.com)
+2. Set environment variable: `OPENAI_API_KEY=sk-...`
+3. Configure in `config.toml`:
+   ```toml
+   [[llm.providers]]
+   name = "openai"
+   model = "gpt-4o-mini"  # or "gpt-4", "gpt-3.5-turbo", etc.
+   ```
+
+#### Anthropic Setup
+
+1. Get your API key from [https://console.anthropic.com](https://console.anthropic.com)
+2. Set environment variable: `ANTHROPIC_API_KEY=sk-ant-...`
+3. Configure in `config.toml`:
+   ```toml
+   [[llm.providers]]
+   name = "anthropic"
+   model = "claude-3-5-sonnet-20241022"
+   ```
+
+### Using Different Providers in Code
+
+```python
+from postparse.services.analysis.classifiers import RecipeLLMClassifier
+
+# Use default provider from config
+classifier = RecipeLLMClassifier()
+
+# Use a specific model
+classifier = RecipeLLMClassifier(model_name="gpt-4o-mini")
+
+# Use default provider but override config path
+classifier = RecipeLLMClassifier(config_path="custom/config.toml")
+```
+
+### Migration from Legacy Ollama Configuration
+
+If you previously used `OLLAMA_IP` and `OLLAMA_PORT` in `config/.env`:
+
+**Old setup (no longer works):**
+```bash
+# config/.env
 OLLAMA_IP=192.168.1.100
 OLLAMA_PORT=11434
+```
 
-# Optional: Override model selection
-ZERO_SHOT_MODEL=qwen2.5:72b-instruct
+**New setup:**
+```toml
+# config/config.toml
+[[llm.providers]]
+name = "ollama"
+model = "qwen3:14b"
+api_base = "http://192.168.1.100:11434"
 ```
 
 ## Your First Data Extraction
@@ -181,11 +319,11 @@ print(f"Saved {saved_count} posts")
 
 ```python
 from postparse.core.data.database import SocialMediaDatabase
-from postparse.services.analysis.classifiers.recipe_classifier import RecipeClassifier
+from postparse.services.analysis.classifiers import RecipeLLMClassifier
 
-# Initialize database and classifier
+# Initialize database and classifier (uses default provider from config)
 db = SocialMediaDatabase("my_data.db")
-classifier = RecipeClassifier()
+classifier = RecipeLLMClassifier()
 
 # Get recent messages
 messages = db.get_telegram_messages(limit=10)
@@ -194,7 +332,14 @@ messages = db.get_telegram_messages(limit=10)
 for msg in messages:
     if msg['content']:
         result = classifier.predict(msg['content'])
-        print(f"Message {msg['message_id']}: {result}")
+        print(f"Message {msg['message_id']}: {result.label} (confidence: {result.confidence:.2f})")
+        if result.details:
+            print(f"  Details: {result.details}")
+
+# Or use a specific model
+classifier = RecipeLLMClassifier(model_name="gpt-4o-mini")
+result = classifier.predict("My delicious pasta recipe...")
+print(f"{result.label} - {result.details}")  # Structured output with recipe details
 ```
 
 ## Inspecting Your Data
@@ -246,10 +391,24 @@ Instagram has strict rate limits. If you hit them:
 - Reduce the number of posts fetched per session
 - Wait several hours before retrying
 
-### Ollama Connection
+### LLM Provider Configuration
 
 If classification fails:
-- Verify Ollama is running: `curl http://your-ollama-ip:11434/api/tags`
-- Check `OLLAMA_IP` and `OLLAMA_PORT` in `config/.env`
-- Ensure the model is downloaded: `ollama pull qwen2.5:72b-instruct`
+- **Check your config**: Verify `config/config.toml` has the correct `[llm]` section
+- **For Ollama**: 
+  - Verify Ollama is running: `curl http://localhost:11434/api/tags`
+  - Check the `api_base` URL in the Ollama provider configuration
+  - Ensure the model is downloaded: `ollama pull qwen3:14b`
+- **For LM Studio**: 
+  - Verify LM Studio is running and serving at `http://localhost:1234`
+  - Set `OPENAI_API_KEY=dummy` in your environment
+- **For OpenAI/Anthropic**: 
+  - Set the appropriate API key in your environment (`OPENAI_API_KEY` or `ANTHROPIC_API_KEY`)
+- **Test your provider**:
+  ```python
+  from postparse.llm import get_llm_provider
+  provider = get_llm_provider()
+  response = provider.chat([{"role": "user", "content": "Hello!"}])
+  print(response)
+  ```
 

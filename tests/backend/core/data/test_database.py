@@ -5,7 +5,7 @@ from datetime import datetime
 import sqlite3
 import json
 
-from postparse.data.database import SocialMediaDatabase
+from postparse.core.data.database import SocialMediaDatabase
 
 
 @pytest.fixture

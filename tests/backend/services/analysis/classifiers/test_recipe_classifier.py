@@ -1,8 +1,15 @@
 """Test the recipe classifier with Instagram captions."""
 import pytest
-from postparse.analysis.classifiers.recipe_classifier import RecipeClassifier
-from postparse.data.database import SocialMediaDatabase
+from postparse.core.data.database import SocialMediaDatabase
 
+# Check if skollama is available
+try:
+    from postparse.services.analysis.classifiers.recipe_classifier import RecipeClassifier, SKOLLAMA_AVAILABLE
+except ImportError:
+    SKOLLAMA_AVAILABLE = False
+    RecipeClassifier = None
+
+@pytest.mark.skipif(not SKOLLAMA_AVAILABLE, reason="skollama package not installed")
 def test_recipe_classification():
     """Test recipe classification on Instagram captions."""
     # Initialize classifier and database

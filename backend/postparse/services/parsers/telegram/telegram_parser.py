@@ -15,8 +15,8 @@ from telethon.errors import SessionPasswordNeededError
 from telethon.tl.types import Message, MessageMediaPhoto, MessageMediaDocument
 from tqdm import tqdm
 
-from ..data.database import SocialMediaDatabase
-from ..utils.config import get_config, get_paths_config
+from postparse.core.data.database import SocialMediaDatabase
+from postparse.core.utils.config import get_config, get_paths_config
 
 # Enable nested event loops for Jupyter
 nest_asyncio.apply()

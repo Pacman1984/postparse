@@ -17,8 +17,8 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 import concurrent.futures
 import threading
 
-from ..data.database import SocialMediaDatabase
-from ..utils.config import get_config
+from postparse.core.data.database import SocialMediaDatabase
+from postparse.core.utils.config import get_config
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

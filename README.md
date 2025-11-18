@@ -23,22 +23,26 @@ A Python package for extracting and analyzing saved posts from social media plat
 
 ### Installation
 
-```bash
-pip install postparse
-```
-
-Or using uv:
+**Using UV (Recommended):**
 
 ```bash
 uv pip install postparse
 ```
 
+**Or install from source:**
+
+```bash
+git clone https://github.com/sebpachl/postparse.git
+cd postparse
+uv sync
+```
+
 ## Quick Example
 
 ```python
-from postparse.telegram.telegram_parser import save_telegram_messages
-from postparse.data.database import SocialMediaDatabase
-from postparse.analysis.classifiers.recipe_classifier import RecipeClassifier
+from postparse.services.parsers.telegram.telegram_parser import save_telegram_messages
+from postparse.core.data.database import SocialMediaDatabase
+from postparse.services.analysis.classifiers.recipe_classifier import RecipeClassifier
 
 # Extract Telegram messages
 count = save_telegram_messages(
@@ -63,8 +67,9 @@ For more examples, see the **[Cookbook](docs/cookbook.md)**.
 
 ## Requirements
 
-- Python 3.6+
+- Python 3.10+
 - SQLite (included with Python)
+- UV package manager (recommended for development)
 - Telegram API credentials (for Telegram extraction)
 - Instagram account (for Instagram extraction)
 - Ollama server (optional, for content classification)
@@ -72,13 +77,18 @@ For more examples, see the **[Cookbook](docs/cookbook.md)**.
 ## Project Structure
 
 ```
-src/postparse/
-├── data/                  # Database operations
-├── telegram/             # Telegram parser
-├── instagram/            # Instagram parser
-├── analysis/             # Content classifiers
-│   └── classifiers/      # ML/LLM classifiers
-└── utils/                # Configuration utilities
+backend/postparse/
+├── core/                   # Shared components
+│   ├── data/               # Database operations
+│   ├── utils/              # Configuration utilities
+│   └── models/             # Data models
+├── services/               # Business logic layers
+│   ├── parsers/            # Platform-specific extraction
+│   │   ├── telegram/       # Telegram parser
+│   │   └── instagram/      # Instagram parser
+│   └── analysis/           # Content analysis
+│       └── classifiers/    # ML/LLM classifiers
+└── visualization/          # Visualization tools
 ```
 
 ## Development
@@ -86,7 +96,14 @@ src/postparse/
 ### Running Tests
 
 ```bash
-python -m pytest tests/
+# Install with dev dependencies
+uv sync --extra dev
+
+# Run tests
+uv run pytest tests/
+
+# Run with coverage
+uv run pytest --cov=postparse tests/
 ```
 
 ### Contributing
@@ -94,7 +111,7 @@ python -m pytest tests/
 1. Fork the repository
 2. Create a feature branch
 3. Make your changes
-4. Run tests
+4. Run tests with `uv run pytest tests/`
 5. Submit a pull request
 
 See **[Getting Started](docs/getting_started.md)** for development setup.

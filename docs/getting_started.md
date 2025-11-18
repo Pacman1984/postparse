@@ -4,16 +4,22 @@ This guide will help you install PostParse and run your first data extraction.
 
 ## Installation
 
-### Using uv (Recommended)
+### Using UV (Recommended)
+
+First, install UV if you haven't already:
+
+```bash
+# On macOS and Linux:
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# On Windows:
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+Then install PostParse:
 
 ```bash
 uv pip install postparse
-```
-
-### Using pip
-
-```bash
-pip install postparse
 ```
 
 ### From Source
@@ -21,16 +27,57 @@ pip install postparse
 ```bash
 git clone https://github.com/sebpachl/postparse.git
 cd postparse
-uv pip install -e .
+
+# Create virtual environment and install
+uv venv
+uv sync
+
+# Install with dev dependencies
+uv sync --extra dev
+```
+
+### Alternative: Using pip (Not Recommended)
+
+```bash
+pip install postparse
 ```
 
 ## Requirements
 
-- Python 3.6 or higher
+- Python 3.10 or higher (required for modern LangChain, better type hints, and improved async support)
 - SQLite (included with Python)
+- UV package manager (recommended for development)
 - For Telegram: API credentials from [my.telegram.org](https://my.telegram.org)
 - For Instagram: Valid Instagram account credentials
 - For LLM classification: Ollama server (optional)
+
+## Working with UV
+
+UV is a fast, all-in-one Python package manager that simplifies dependency management:
+
+**Add dependencies:**
+```bash
+uv add <package>
+```
+
+**Run scripts:**
+```bash
+uv run python script.py
+```
+
+**Activate virtual environment:**
+```bash
+# On Unix/macOS:
+source .venv/bin/activate
+
+# On Windows:
+.venv\Scripts\activate
+```
+
+**Update dependencies:**
+```bash
+uv lock --upgrade
+```
 
 ## Configuration
 
@@ -82,8 +129,8 @@ ZERO_SHOT_MODEL=qwen2.5:72b-instruct
 
 ```python
 import asyncio
-from postparse.telegram.telegram_parser import TelegramParser, save_telegram_messages
-from postparse.data.database import SocialMediaDatabase
+from postparse.services.parsers.telegram.telegram_parser import TelegramParser, save_telegram_messages
+from postparse.core.data.database import SocialMediaDatabase
 
 # Option 1: Using the helper function (handles async automatically)
 saved_count = save_telegram_messages(
@@ -113,8 +160,8 @@ asyncio.run(extract_messages())
 ### Example 2: Extract Instagram Posts
 
 ```python
-from postparse.instagram.instagram_parser import InstaloaderParser
-from postparse.data.database import SocialMediaDatabase
+from postparse.services.parsers.instagram.instagram_parser import InstaloaderParser
+from postparse.core.data.database import SocialMediaDatabase
 
 # Initialize database
 db = SocialMediaDatabase("my_data.db")
@@ -133,8 +180,8 @@ print(f"Saved {saved_count} posts")
 ### Example 3: Classify Content
 
 ```python
-from postparse.data.database import SocialMediaDatabase
-from postparse.analysis.classifiers.recipe_classifier import RecipeClassifier
+from postparse.core.data.database import SocialMediaDatabase
+from postparse.services.analysis.classifiers.recipe_classifier import RecipeClassifier
 
 # Initialize database and classifier
 db = SocialMediaDatabase("my_data.db")
@@ -155,7 +202,7 @@ for msg in messages:
 Once you've extracted data, you can query it using the database methods:
 
 ```python
-from postparse.data.database import SocialMediaDatabase
+from postparse.core.data.database import SocialMediaDatabase
 
 db = SocialMediaDatabase("my_data.db")
 

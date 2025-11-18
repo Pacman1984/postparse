@@ -2,10 +2,15 @@
 import os
 from typing import Dict, Any, Optional
 from pathlib import Path
-from skollama.models.ollama.classification.zero_shot import ZeroShotOllamaClassifier
 from dotenv import load_dotenv
 
-from ...utils.config import get_config, get_model_config, get_classification_config
+try:
+    from skollama.models.ollama.classification.zero_shot import ZeroShotOllamaClassifier
+    SKOLLAMA_AVAILABLE = True
+except ImportError:
+    SKOLLAMA_AVAILABLE = False
+
+from postparse.core.utils.config import get_config, get_model_config, get_classification_config
 
 
 class RecipeClassifier:
@@ -17,7 +22,16 @@ class RecipeClassifier:
         Args:
             model_name: Name of the model to use. If None, uses config default.
             config_path: Path to configuration file. If None, uses default locations.
+            
+        Raises:
+            ImportError: If skollama package is not installed.
         """
+        if not SKOLLAMA_AVAILABLE:
+            raise ImportError(
+                "skollama package is required for RecipeClassifier. "
+                "Install it separately or use an alternative classifier."
+            )
+        
         # Load configuration
         config = get_config(config_path)
         model_config = get_model_config()
@@ -26,9 +40,9 @@ class RecipeClassifier:
         # Find and load .env file
         env_path = Path("config/.env")
         if not env_path.exists():
-            # Try relative to the package root
-            package_root = Path(__file__).parent.parent.parent.parent
-            env_path = package_root / "config" / ".env"
+            # Try relative to the project root (5 levels up from this file)
+            project_root = Path(__file__).parent.parent.parent.parent.parent
+            env_path = project_root / "config" / ".env"
         
         if not env_path.exists():
             raise ValueError("Could not find config/.env file")

@@ -5,8 +5,8 @@ from datetime import datetime
 from telethon.tl.types import MessageMediaPhoto
 import asyncio
 
-from postparse.telegram.telegram_parser import TelegramParser
-from postparse.data.database import SocialMediaDatabase
+from postparse.services.parsers.telegram.telegram_parser import TelegramParser
+from postparse.core.data.database import SocialMediaDatabase
 
 
 def run_async(coro):
@@ -44,7 +44,7 @@ def create_mock_message(**kwargs):
 @pytest.fixture
 def mock_telegram_client():
     """Create a mock TelegramClient instance."""
-    with patch('postparse.telegram.telegram_parser.TelegramClient') as mock:
+    with patch('postparse.services.parsers.telegram.telegram_parser.TelegramClient') as mock:
         client_instance = Mock()
         
         # Mock context manager methods

@@ -87,7 +87,13 @@ target/
 
 # Mypy cache
 .mypy_cache/
-.venv/*
-.venv/Scripts/Activate.ps1
+
+# Virtual environment (UV and others)
+.venv/
+
+# UV-specific files
+.python-version
+
+# Session files
 instagram_session
 telegram_session

@@ -3,14 +3,14 @@ import pytest
 from unittest.mock import Mock, patch, AsyncMock, call
 from datetime import datetime
 
-from postparse.instagram.instagram_parser import InstaloaderParser, InstagramAPIParser, InstagramRateLimitError
-from postparse.data.database import SocialMediaDatabase
+from postparse.services.parsers.instagram.instagram_parser import InstaloaderParser, InstagramAPIParser, InstagramRateLimitError
+from postparse.core.data.database import SocialMediaDatabase
 
 
 @pytest.fixture
 def mock_instaloader():
     """Create a mock Instaloader instance."""
-    with patch('postparse.instagram.instagram_parser.instaloader.Instaloader') as mock:
+    with patch('postparse.services.parsers.instagram.instagram_parser.instaloader.Instaloader') as mock:
         yield mock
 
 
@@ -61,7 +61,7 @@ class TestInstaloaderParser:
         assert parser._max_delay == 30.0
         assert parser._loader is not None
 
-    @patch('postparse.instagram.instagram_parser.instaloader.Profile')
+    @patch('postparse.services.parsers.instagram.instagram_parser.instaloader.Profile')
     def test_get_saved_posts_normal_mode(self, mock_profile, mock_instaloader, mock_post, mock_db):
         """Test getting saved posts in normal mode."""
         # Setup mock profile
@@ -91,7 +91,7 @@ class TestInstaloaderParser:
         # Verify database check
         mock_db.post_exists.assert_called_once_with(mock_post.shortcode)
 
-    @patch('postparse.instagram.instagram_parser.instaloader.Profile')
+    @patch('postparse.services.parsers.instagram.instagram_parser.instaloader.Profile')
     def test_get_saved_posts_force_update(self, mock_profile, mock_instaloader, mock_post, mock_db):
         """Test getting saved posts with force update."""
         # Setup mock profile
@@ -113,7 +113,7 @@ class TestInstaloaderParser:
 
     def test_save_posts_to_db_normal_mode(self, mock_instaloader, mock_post, mock_db):
         """Test saving posts to database in normal mode."""
-        with patch('postparse.instagram.instagram_parser.instaloader.Profile') as mock_profile:
+        with patch('postparse.services.parsers.instagram.instagram_parser.instaloader.Profile') as mock_profile:
             profile_instance = Mock()
             profile_instance.get_saved_posts.return_value = [mock_post]
             mock_profile.from_username.return_value = profile_instance
@@ -134,7 +134,7 @@ class TestInstaloaderParser:
 
     def test_save_posts_to_db_force_update(self, mock_instaloader, mock_post, mock_db):
         """Test saving posts to database with force update."""
-        with patch('postparse.instagram.instagram_parser.instaloader.Profile') as mock_profile:
+        with patch('postparse.services.parsers.instagram.instagram_parser.instaloader.Profile') as mock_profile:
             profile_instance = Mock()
             profile_instance.get_saved_posts.return_value = [mock_post]
             mock_profile.from_username.return_value = profile_instance
@@ -152,7 +152,7 @@ class TestInstaloaderParser:
             mock_db.post_exists.assert_not_called()
             mock_db._insert_instagram_post.assert_called_once()
 
-    @patch('postparse.instagram.instagram_parser.instaloader.Profile')
+    @patch('postparse.services.parsers.instagram.instagram_parser.instaloader.Profile')
     def test_rate_limit_handling(self, mock_profile, mock_instaloader):
         """Test handling of rate limit errors."""
         # Setup mock profile to raise rate limit error

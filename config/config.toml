@@ -1,10 +1,16 @@
 [models]
 # Zero-shot classification models
 zero_shot_model = "qwen3:14b"
-default_llm_model = "qwen3:14b"
+default_llm_model = "qwen/qwen3-vl-8b"  # Full model name as shown in LM Studio
 
-# Model hosts and endpoints
-ollama_default_timeout = 30
+# LLM provider configuration (works with any provider via LiteLLM)
+# If llm_api_base is set, model name is used as-is (for LM Studio, custom endpoints)
+# If llm_api_base is empty, model is prefixed with provider (e.g., "ollama/llama2")
+llm_provider = "openai"  # Used only when llm_api_base is empty
+llm_api_base = "http://localhost:1234/v1"  # Your LM Studio endpoint
+
+# Timeouts and limits
+default_timeout = 30
 request_timeout = 60
 
 [classification]
@@ -24,7 +30,6 @@ Content: {content}
 
 {format_instructions}
 
-Provide a detailed analysis focusing on recipe characteristics.
 If it's not a recipe, set is_recipe to false and leave other fields as null."""
 
 [database]

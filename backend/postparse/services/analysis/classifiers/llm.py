@@ -1,12 +1,11 @@
 from typing import Any, Optional
-from langchain.prompts import PromptTemplate
-from langchain.chains import LLMChain
-from langchain.llms import Ollama
-from langchain.output_parsers import PydanticOutputParser
+from langchain_core.prompts import PromptTemplate
+from langchain_core.output_parsers import PydanticOutputParser
+from langchain_community.chat_models import ChatLiteLLM
 from pydantic import BaseModel, Field
 
 from .base import BaseClassifier, ClassificationResult
-from ...utils.config import get_config, get_model_config, get_prompt_config, get_classification_config
+from postparse.core.utils.config import get_config, get_model_config, get_prompt_config, get_classification_config
 
 class RecipeDetails(BaseModel):
     """Detailed recipe classification output."""
@@ -39,19 +38,49 @@ class RecipeLLMClassifier(BaseClassifier):
             env_var='DEFAULT_LLM_MODEL'
         )
         
-        self.llm = Ollama(model=model)
+        # Get provider and optional API base from config
+        provider = config.get(
+            'models.llm_provider',
+            default='ollama',
+            env_var='LLM_PROVIDER'
+        )
+        api_base = config.get(
+            'models.llm_api_base',
+            default='',
+            env_var='LLM_API_BASE'
+        )
+        
+        # LiteLLM adapter configuration
+        if api_base:
+            # Custom endpoint (LM Studio, etc.) - use model name as-is
+            # LM Studio expects: "model": "qwen/qwen3-vl-8b"
+            llm_kwargs = {
+                "model": model,  # Use model name as-is from config
+                "api_base": api_base,
+                "custom_llm_provider": "openai"  # OpenAI-compatible format
+            }
+            self._validate_llm_config(config, provider="openai", is_custom_endpoint=True)
+        else:
+            # Standard providers - prefix with provider name
+            # Examples: "ollama/llama2", "gpt-4", "claude-3-5-sonnet-20241022"
+            llm_kwargs = {"model": f"{provider}/{model}"}
+            self._validate_llm_config(config, provider=provider)
+        
+        self.llm = ChatLiteLLM(**llm_kwargs)
+        
+        # Use PydanticOutputParser for compatibility with all models
+        # (with_structured_output requires tool calling which not all models support)
         self.output_parser = PydanticOutputParser(pydantic_object=RecipeDetails)
         
         # Get prompt template from config
         prompt_template = config.get(
             'prompts.recipe_analysis_prompt',
             default="""Analyze if the following content is a recipe and extract key details.
-        
+
 Content: {content}
 
 {format_instructions}
 
-Provide a detailed analysis focusing on recipe characteristics.
 If it's not a recipe, set is_recipe to false and leave other fields as null."""
         )
         
@@ -63,8 +92,6 @@ If it's not a recipe, set is_recipe to false and leave other fields as null."""
             }
         )
         
-        self.chain = LLMChain(llm=self.llm, prompt=self.prompt)
-        
         # Store configuration for confidence calculation
         self.min_confidence = config.get(
             'classification.min_confidence_threshold',
@@ -74,6 +101,25 @@ If it's not a recipe, set is_recipe to false and leave other fields as null."""
             'classification.max_confidence_threshold',
             default=1.0
         )
+    
+    def _validate_llm_config(self, config: Any, provider: str, is_custom_endpoint: bool = False) -> None:
+        """Validate that necessary configuration for LiteLLM is present.
+        
+        Args:
+            config: Configuration object
+            provider: LLM provider name
+            is_custom_endpoint: Whether using a custom API base
+        """
+        # Check for OpenAI API key if using OpenAI provider or custom OpenAI-compatible endpoint
+        if provider == 'openai' or (is_custom_endpoint and provider == 'openai'):
+            api_key = config.get('models.openai_api_key', env_var='OPENAI_API_KEY')
+            if not api_key:
+                msg = (
+                    "Missing OPENAI_API_KEY environment variable or configuration. "
+                    "This is required for OpenAI models and compatible custom endpoints (like LM Studio). "
+                    "For local development with LM Studio/Ollama, you can set OPENAI_API_KEY='dummy'."
+                )
+                raise ValueError(msg)
     
     def fit(self, X: Any, y: Optional[Any] = None) -> 'RecipeLLMClassifier':
         """LLM classifiers don't require training."""
@@ -88,9 +134,14 @@ If it's not a recipe, set is_recipe to false and leave other fields as null."""
         Returns:
             ClassificationResult: Classification with recipe details
         """
+        # Format prompt with content
+        formatted_prompt = self.prompt.format(content=X)
+        
         # Get LLM response
-        response = self.chain.run(content=X)
-        details = self.output_parser.parse(response)
+        response = self.llm.invoke(formatted_prompt)
+        
+        # Parse response to RecipeDetails
+        details = self.output_parser.parse(response.content)
         
         # Calculate confidence based on completeness of details
         confidence = self._calculate_confidence(details)
@@ -98,13 +149,13 @@ If it's not a recipe, set is_recipe to false and leave other fields as null."""
         return ClassificationResult(
             label="recipe" if details.is_recipe else "not_recipe",
             confidence=confidence,
-            details=details.dict()
+            details=details.model_dump()
         )
     
     def _calculate_confidence(self, details: RecipeDetails) -> float:
         """Calculate confidence score based on completeness of details."""
         if not details.is_recipe:
-            return self.max_confidence if all(v is None for k, v in details.dict().items() if k != "is_recipe") else 0.7
+            return self.max_confidence if all(v is None for k, v in details.model_dump().items() if k != "is_recipe") else 0.7
         
         # Count how many optional fields are filled
         filled_fields = sum(1 for v in [

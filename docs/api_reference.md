@@ -2,6 +2,285 @@
 
 This is the authoritative reference for PostParse's public API. All classes and functions documented here are part of the stable, supported interface.
 
+## REST API Reference
+
+PostParse provides a REST API built with FastAPI for programmatic access to all features.
+
+### Base URL
+
+```
+http://localhost:8000/api/v1
+```
+
+### Authentication
+
+Authentication is optional and can be enabled via configuration. When enabled, include JWT token in requests:
+
+```bash
+curl -H "Authorization: Bearer YOUR_JWT_TOKEN" http://localhost:8000/api/v1/classify/recipe
+```
+
+### API Endpoints
+
+#### Telegram Endpoints
+
+**POST /api/v1/telegram/extract**
+
+Trigger Telegram message extraction.
+
+- **Request body:** `TelegramExtractRequest` (api_id, api_hash, phone, limit, force_update)
+- **Response:** `TelegramExtractResponse` (job_id, status, message_count)
+- **Status codes:** 200 (success), 400 (invalid request), 401 (unauthorized), 503 (service unavailable)
+
+**Example:**
+
+```bash
+curl -X POST http://localhost:8000/api/v1/telegram/extract \
+  -H "Content-Type: application/json" \
+  -d '{
+    "api_id": "12345678",
+    "api_hash": "0123456789abcdef0123456789abcdef",
+    "phone": "+1234567890",
+    "limit": 100
+  }'
+```
+
+**GET /api/v1/telegram/messages**
+
+List extracted Telegram messages with pagination.
+
+- **Query params:** 
+  - `limit` (int): Maximum results to return (default: 50, max: 100)
+  - `offset` (int): Number of results to skip (accepted but not yet implemented)
+  - `channel_username` (str, optional): Filter by channel (accepted but not yet implemented)
+- **Response:** `PaginatedResponse[TelegramMessageSchema]`
+
+**Note:** Currently supports basic limit-based pagination. Advanced filtering (offset, channel_username, date range, content type) is planned for a future phase.
+
+**Example:**
+
+```bash
+curl http://localhost:8000/api/v1/telegram/messages?limit=20
+```
+
+#### Instagram Endpoints
+
+**POST /api/v1/instagram/extract**
+
+Trigger Instagram post extraction.
+
+- **Request body:** `InstagramExtractRequest` (username, password, limit, force_update, use_api)
+- **Response:** `InstagramExtractResponse` (job_id, status, post_count)
+
+**Example:**
+
+```bash
+curl -X POST http://localhost:8000/api/v1/instagram/extract \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "cooking_profile",
+    "password": "secret123",
+    "limit": 50,
+    "use_api": false
+  }'
+```
+
+**GET /api/v1/instagram/posts**
+
+List extracted Instagram posts with pagination.
+
+- **Query params:** 
+  - `limit` (int): Maximum results to return (default: 50, max: 100)
+  - `offset` (int): Number of results to skip (accepted but not yet implemented)
+  - `owner_username` (str, optional): Filter by owner (accepted but not yet implemented)
+- **Response:** `PaginatedResponse[InstagramPostSchema]`
+
+**Note:** Currently supports basic limit-based pagination. Advanced filtering (offset, owner_username, hashtags, date range) is planned for a future phase.
+
+**Example:**
+
+```bash
+curl http://localhost:8000/api/v1/instagram/posts?limit=20
+```
+
+#### Classification Endpoints
+
+**POST /api/v1/classify/recipe**
+
+Classify single text as recipe or non-recipe.
+
+- **Request body:** `ClassifyRequest` (text, classifier_type, provider_name)
+- **Response:** `ClassifyResponse` (label, confidence, details, processing_time)
+
+**Note:** Currently only the `"llm"` classifier type is supported. A basic rule-based classifier is planned for a future phase.
+
+**Example:**
+
+```bash
+curl -X POST http://localhost:8000/api/v1/classify/recipe \
+  -H "Content-Type: application/json" \
+  -d '{
+    "text": "Boil pasta for 10 minutes, drain, add tomato sauce and basil",
+    "classifier_type": "llm",
+    "provider_name": "lm_studio"
+  }'
+```
+
+**Response:**
+
+```json
+{
+  "label": "recipe",
+  "confidence": 0.95,
+  "details": {
+    "cuisine_type": "italian",
+    "difficulty": "easy",
+    "meal_type": "dinner",
+    "ingredients_count": 5
+  },
+  "processing_time": 0.234,
+  "classifier_used": "llm"
+}
+```
+
+**POST /api/v1/classify/batch**
+
+Classify multiple texts in batch.
+
+- **Request body:** `BatchClassifyRequest` (texts, classifier_type, provider_name)
+- **Response:** `BatchClassifyResponse` (results, total_processed, failed_count)
+
+**Example:**
+
+```bash
+curl -X POST http://localhost:8000/api/v1/classify/batch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "texts": [
+      "Boil pasta for 10 minutes",
+      "Just finished watching a great movie",
+      "Mix flour, eggs, and milk to make pancakes"
+    ],
+    "classifier_type": "llm"
+  }'
+```
+
+#### Search Endpoints
+
+**GET /api/v1/search/posts**
+
+Search Instagram posts with basic filters.
+
+- **Query params:** 
+  - `hashtags` (list): Filter by hashtags (currently only first hashtag is used; OR logic for multiple hashtags is planned)
+  - `owner_username` (str): Filter by owner (not yet implemented)
+  - `limit` (int): Maximum results (default: 50, max: 100)
+  - `offset` (int): Results to skip (not yet implemented)
+- **Response:** `SearchResponse[PostSearchResult]`
+
+**Note:** Currently supports single hashtag filtering. Advanced features (multiple hashtags with OR logic, date_range, content_type, owner_username, offset) are planned for future phases.
+
+**Example:**
+
+```bash
+curl "http://localhost:8000/api/v1/search/posts?hashtags=recipe&limit=20"
+```
+
+**Response:**
+
+```json
+{
+  "results": [...],
+  "total_count": 20,
+  "filters_applied": {"hashtags": ["recipe"]},
+  "pagination": {"limit": 20, "offset": 0, "next_offset": 20}
+}
+```
+
+**GET /api/v1/search/messages**
+
+Search Telegram messages with basic filters.
+
+- **Query params:** 
+  - `hashtags` (list): Filter by hashtags (not yet implemented)
+  - `channel_username` (str): Filter by channel (not yet implemented)
+  - `limit` (int): Maximum results (default: 50, max: 100)
+  - `offset` (int): Results to skip (not yet implemented)
+- **Response:** `SearchResponse[MessageSearchResult]`
+
+**Note:** Currently returns all messages with basic limit-based pagination. Advanced filtering (hashtags, date_range, content_type, channel_username, offset) is planned for future phases.
+
+**Example:**
+
+```bash
+curl "http://localhost:8000/api/v1/search/messages?limit=50"
+```
+
+#### Health Endpoints
+
+**GET /health**
+
+Basic health check.
+
+- **Response:** `HealthResponse` (status, version, timestamp)
+
+**Example:**
+
+```bash
+curl http://localhost:8000/health
+```
+
+**Response:**
+
+```json
+{
+  "status": "ok",
+  "version": "0.1.0",
+  "timestamp": "2025-11-19T10:30:00Z",
+  "details": null
+}
+```
+
+**GET /health/ready**
+
+Readiness probe (checks database and LLM provider).
+
+- **Response:** 200 (ready) or 503 (not ready)
+
+**GET /metrics**
+
+Basic metrics (request counts, database stats).
+
+- **Response:** JSON with metrics data
+
+### Error Responses
+
+All errors follow a standard format:
+
+```json
+{
+  "error_code": "INVALID_REQUEST",
+  "message": "Text field is required",
+  "details": {"field": "text", "issue": "missing"}
+}
+```
+
+**Common error codes:**
+
+- `INVALID_REQUEST`: Validation error (400)
+- `UNAUTHORIZED`: Authentication failed (401)
+- `NOT_FOUND`: Resource not found (404)
+- `RATE_LIMIT_EXCEEDED`: Too many requests (429)
+- `LLM_PROVIDER_ERROR`: LLM service unavailable (503)
+- `INTERNAL_ERROR`: Server error (500)
+
+### Interactive Documentation
+
+Explore the API interactively at:
+
+- **Swagger UI:** http://localhost:8000/docs
+- **ReDoc:** http://localhost:8000/redoc
+
 ## Core Modules
 
 ### Data Storage

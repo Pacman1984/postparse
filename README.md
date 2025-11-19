@@ -66,19 +66,77 @@ for msg in messages:
 
 For more examples, see the **[Cookbook](docs/cookbook.md)**.
 
+## API Server
+
+PostParse now includes a REST API built with FastAPI for programmatic access to all features.
+
+### Starting the API Server
+
+```bash
+# Development mode (with auto-reload)
+uv run python -m backend.postparse.api.main
+
+# Or using uvicorn directly
+uv run uvicorn backend.postparse.api.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+### API Documentation
+
+Once the server is running, access the interactive API documentation:
+
+- **Swagger UI**: http://localhost:8000/docs
+- **ReDoc**: http://localhost:8000/redoc
+- **OpenAPI JSON**: http://localhost:8000/openapi.json
+
+### API Endpoints
+
+- **Telegram**: `/api/v1/telegram/extract`, `/api/v1/telegram/messages`
+- **Instagram**: `/api/v1/instagram/extract`, `/api/v1/instagram/posts`
+- **Classification**: `/api/v1/classify/recipe`, `/api/v1/classify/batch`
+- **Search**: `/api/v1/search/posts`, `/api/v1/search/messages`
+- **Health**: `/health`, `/health/ready`, `/metrics`
+
+### Example API Usage
+
+```python
+import requests
+
+# Classify text via API
+response = requests.post(
+    "http://localhost:8000/api/v1/classify/recipe",
+    json={
+        "text": "Boil pasta, add tomato sauce and basil",
+        "classifier_type": "llm",
+        "provider_name": "lm_studio"
+    }
+)
+result = response.json()
+print(f"Classification: {result['label']} ({result['confidence']:.2f})")
+```
+
+For more API examples, see the **[API Reference](docs/api_reference.md)**.
+
 ## Requirements
 
 - Python 3.10+
 - SQLite (included with Python)
 - UV package manager (recommended for development)
+- FastAPI and Uvicorn (for API server)
 - Telegram API credentials (for Telegram extraction)
 - Instagram account (for Instagram extraction)
 - Ollama server (optional, for content classification)
+- JWT secret key (for authentication, set via `JWT_SECRET_KEY` environment variable)
 
 ## Project Structure
 
 ```
 backend/postparse/
+├── api/                    # FastAPI REST API
+│   ├── routers/            # API route handlers
+│   ├── schemas/            # Pydantic request/response models
+│   ├── dependencies.py     # Dependency injection
+│   ├── middleware.py       # Authentication, CORS, logging
+│   └── main.py             # FastAPI application entry point
 ├── core/                   # Shared components
 │   ├── data/               # Database operations
 │   ├── utils/              # Configuration utilities

@@ -107,11 +107,39 @@ default_db_path = "data/social_media.db"
 analysis_db_path = "data/analysis.db"
 
 [api]
-# API rate limiting and request management
+# FastAPI server configuration
+host = "0.0.0.0"
+port = 8000
+reload = true  # Enable auto-reload in development
+workers = 1    # Number of worker processes (increase for production)
+log_level = "info"  # Logging level (debug, info, warning, error)
+environment = "development"  # Environment mode (development, production)
+
+# API rate limiting and request management (legacy - for parsers)
 max_requests_per_session = 100
 request_delay_min = 1.0
 request_delay_max = 3.0
 max_retries = 3
+
+[api.auth]
+# JWT authentication configuration
+enabled = false  # Disable auth for development, enable for production
+algorithm = "HS256"
+token_expiry = 3600  # Token expiration in seconds (1 hour)
+# secret_key should be set via JWT_SECRET_KEY environment variable
+
+[api.cors]
+# CORS configuration for frontend
+allowed_origins = ["http://localhost:3000", "http://localhost:3001"]  # NextJS dev servers
+allow_credentials = true
+allowed_methods = ["*"]
+allowed_headers = ["*"]
+
+[api.rate_limiting]
+# Rate limiting configuration (to be implemented in subsequent phase)
+enabled = false
+requests_per_minute = 60
+burst_size = 10
 
 [paths]
 # Default directory paths

@@ -141,12 +141,24 @@ ANTHROPIC_API_KEY=your_key_here
 
 ## Configuring LLM Providers
 
-PostParse uses a unified LLM provider system for classification tasks. You can configure multiple providers and switch between them easily.
+PostParse uses a unified LLM provider system for classification tasks. Configure providers in `config.toml` and switch between them using the `provider_name` parameter.
+
+For detailed setup instructions, troubleshooting, and best practices, see the **[LLM Providers Guide](llm_providers.md)**.
+
+### Quick Setup
+
+**For local development:**
+- Use **Ollama** or **LM Studio** (free, no API key)
+- Run: `ollama run qwen3:14b` or start LM Studio server
+
+**For production:**
+- Use **OpenAI** or **Anthropic** (requires API key)
+- Set environment variable: `export OPENAI_API_KEY='sk-...'`
 
 ### Supported Providers
 
 - **Ollama**: Local LLM server (free, no API key needed)
-- **LM Studio**: Local LLM with OpenAI-compatible API (free, no API key needed)
+- **LM Studio**: Local LLM with OpenAI-compatible API (free, requires dummy API key)
 - **OpenAI**: GPT-4, GPT-3.5, etc. (requires API key)
 - **Anthropic**: Claude models (requires API key)
 
@@ -234,12 +246,16 @@ from postparse.services.analysis.classifiers import RecipeLLMClassifier
 # Use default provider from config
 classifier = RecipeLLMClassifier()
 
-# Use a specific model
-classifier = RecipeLLMClassifier(model_name="gpt-4o-mini")
+# Use a specific provider from [llm.providers]
+classifier = RecipeLLMClassifier(provider_name='openai')     # Use OpenAI
+classifier = RecipeLLMClassifier(provider_name='lm_studio')  # Use LM Studio
+classifier = RecipeLLMClassifier(provider_name='ollama')     # Use Ollama
 
 # Use default provider but override config path
 classifier = RecipeLLMClassifier(config_path="custom/config.toml")
 ```
+
+**Note**: The old `model_name` parameter has been replaced with `provider_name` for clarity. Use `provider_name` to select from configured providers in `[llm.providers]`.
 
 ### Migration from Legacy Ollama Configuration
 
@@ -336,8 +352,8 @@ for msg in messages:
         if result.details:
             print(f"  Details: {result.details}")
 
-# Or use a specific model
-classifier = RecipeLLMClassifier(model_name="gpt-4o-mini")
+# Or use a specific provider
+classifier = RecipeLLMClassifier(provider_name='openai')  # Use OpenAI GPT models
 result = classifier.predict("My delicious pasta recipe...")
 print(f"{result.label} - {result.details}")  # Structured output with recipe details
 ```
@@ -393,22 +409,42 @@ Instagram has strict rate limits. If you hit them:
 
 ### LLM Provider Configuration
 
-If classification fails:
-- **Check your config**: Verify `config/config.toml` has the correct `[llm]` section
-- **For Ollama**: 
-  - Verify Ollama is running: `curl http://localhost:11434/api/tags`
-  - Check the `api_base` URL in the Ollama provider configuration
-  - Ensure the model is downloaded: `ollama pull qwen3:14b`
-- **For LM Studio**: 
-  - Verify LM Studio is running and serving at `http://localhost:1234`
-  - Set `OPENAI_API_KEY=dummy` in your environment
-- **For OpenAI/Anthropic**: 
-  - Set the appropriate API key in your environment (`OPENAI_API_KEY` or `ANTHROPIC_API_KEY`)
-- **Test your provider**:
-  ```python
-  from postparse.llm import get_llm_provider
-  provider = get_llm_provider()
-  response = provider.chat([{"role": "user", "content": "Hello!"}])
-  print(response)
-  ```
+If classification fails, check your LLM provider setup:
+
+**Configuration Issues:**
+- Verify `config/config.toml` has the correct `[llm]` section
+- Ensure `default_provider` matches a provider name in `[[llm.providers]]`
+- Confirm `provider_name` (if used) matches a configured provider
+
+**For Ollama:**
+- Verify Ollama is running: `curl http://localhost:11434/api/tags`
+- Check the `api_base` URL in the Ollama provider configuration
+- Ensure the model is downloaded: `ollama pull qwen3:14b`
+
+**For LM Studio:**
+- Verify LM Studio server is running at `http://localhost:1234`
+- Set `OPENAI_API_KEY=dummy` (any value works)
+- Ensure model is loaded in LM Studio interface
+
+**For OpenAI/Anthropic:**
+- Set the appropriate API key: `export OPENAI_API_KEY='sk-...'` or `export ANTHROPIC_API_KEY='sk-ant-...'`
+- Verify key is set: `echo $OPENAI_API_KEY`
+- Check account has credits/billing set up
+
+**Quick Test:**
+```python
+from postparse.services.analysis.classifiers import RecipeLLMClassifier
+
+# Test default provider
+classifier = RecipeLLMClassifier()
+result = classifier.predict("Test recipe: mix flour and water")
+print(f"Result: {result.label}")
+
+# Test specific provider
+classifier = RecipeLLMClassifier(provider_name='openai')
+result = classifier.predict("Test recipe")
+print(f"OpenAI result: {result.label}")
+```
+
+For detailed troubleshooting, see the **[LLM Providers Guide](llm_providers.md#troubleshooting)**.
 

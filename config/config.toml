@@ -1,6 +1,7 @@
 [models]
-# DEPRECATED: This section is kept for backward compatibility. Use [llm] section instead.
-# Legacy model configuration - these settings are no longer used by RecipeClassifier
+# DEPRECATED: No longer used by RecipeLLMClassifier. All settings moved to [llm].
+# Migrate to [llm] section below. Remove after migration.
+# Legacy model configuration - these settings are no longer used
 zero_shot_model = "qwen3:14b"
 default_llm_model = "qwen/qwen3-vl-8b"
 llm_provider = "openai"
@@ -14,10 +15,24 @@ request_timeout = 60
 # This section replaces the legacy OLLAMA_IP and OLLAMA_PORT environment variables.
 # All LLM provider settings (including Ollama) are now configured here in config.toml.
 #
-# To override settings, you can use environment variables or modify this file:
-#   - Set OPENAI_API_KEY for OpenAI, LM Studio, or other OpenAI-compatible endpoints
-#   - Set ANTHROPIC_API_KEY for Anthropic Claude models
-#   - Ollama endpoints are configured via api_base below (no API key needed)
+# API Key Setup
+# -------------
+# Set via environment variables:
+#   export OPENAI_API_KEY='sk-...'              # For OpenAI
+#   export OPENAI_API_KEY='dummy'               # For LM Studio (any value works)
+#   export ANTHROPIC_API_KEY='sk-ant-...'       # For Anthropic
+# Ollama: No API key needed
+#
+# Switching Providers in Code
+# ----------------------------
+# Usage:
+#   RecipeLLMClassifier()                        # Uses default_provider below
+#   RecipeLLMClassifier(provider_name='openai')  # Uses OpenAI
+#   RecipeLLMClassifier(provider_name='ollama')  # Uses Ollama
+#
+# Fallback Behavior
+# -----------------
+# If enable_fallback=true, the classifier tries providers in order on transient errors
 #
 # Migration from .env:
 #   - Old: OLLAMA_IP and OLLAMA_PORT in config/.env
@@ -29,17 +44,13 @@ default_provider = "lm_studio"
 # Enable automatic fallback to other providers on failure
 enable_fallback = true
 
-# Provider configurations (first in list is primary, rest are fallbacks)
-# API keys are loaded from environment variables:
-#   - OpenAI: OPENAI_API_KEY
-#   - Anthropic: ANTHROPIC_API_KEY
-#   - LM Studio: OPENAI_API_KEY (uses OpenAI-compatible format)
-#   - Ollama: No API key needed for local deployment
+# Provider configurations
+# API keys are loaded from environment variables (see above)
 
 [[llm.providers]]
 name = "lm_studio"
 model = "qwen/qwen3-vl-8b"  # Model name as shown in LM Studio
-api_base = "http://localhost:1234/v1"
+api_base = "http://localhost:1234/v1"  # LM Studio on default port
 timeout = 60
 max_retries = 3
 temperature = 0.7
@@ -48,14 +59,14 @@ temperature = 0.7
 [[llm.providers]]
 name = "ollama"
 model = "qwen3:14b"
-api_base = "http://localhost:11434"  # Default Ollama endpoint
+api_base = "http://localhost:11434"  # Local endpoint; ensure Ollama is running with model loaded
 timeout = 30
 max_retries = 3
 temperature = 0.7
 
 [[llm.providers]]
 name = "openai"
-model = "gpt-4o-mini"  # Cost-effective model for production
+model = "gpt-4o-mini"  # Cost-effective model; upgrade to gpt-4o for better accuracy
 timeout = 30
 max_retries = 3
 temperature = 0.7
@@ -64,7 +75,7 @@ max_tokens = 1000
 
 [[llm.providers]]
 name = "anthropic"
-model = "claude-3-5-sonnet-20241022"
+model = "claude-3-5-sonnet-20241022"  # High-quality model for production
 timeout = 30
 max_retries = 3
 temperature = 0.7

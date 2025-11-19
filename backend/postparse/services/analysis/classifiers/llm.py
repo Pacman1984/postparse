@@ -5,7 +5,8 @@ from langchain_community.chat_models import ChatLiteLLM
 from pydantic import BaseModel, Field
 
 from .base import BaseClassifier, ClassificationResult
-from postparse.core.utils.config import get_config, get_model_config, get_prompt_config, get_classification_config
+from postparse.core.utils.config import get_config
+from postparse.llm.config import LLMConfig, get_provider_config
 
 class RecipeDetails(BaseModel):
     """Detailed recipe classification output."""
@@ -22,6 +23,9 @@ class RecipeLLMClassifier(BaseClassifier):
     - **LangChain**: For PydanticOutputParser, prompts, and structured outputs
     - **LiteLLM**: As universal adapter supporting ANY LLM provider
     
+    Configuration is now centralized in config.toml [llm] section. The old [models] 
+    section is deprecated.
+    
     Supported Providers (via LiteLLM):
     - Ollama (local, free)
     - LM Studio (local, free)
@@ -34,8 +38,13 @@ class RecipeLLMClassifier(BaseClassifier):
     - Confidence scores
     - Rich metadata (cuisine type, difficulty, meal type, ingredients count)
     
+    API keys are loaded from environment variables:
+    - OPENAI_API_KEY: For OpenAI and LM Studio (OpenAI-compatible format)
+    - ANTHROPIC_API_KEY: For Anthropic Claude models
+    - Ollama: No API key needed for local deployment
+    
     Examples:
-        Basic usage with default config:
+        Basic usage with default provider from config:
         ```python
         from postparse.services.analysis.classifiers import RecipeLLMClassifier
         
@@ -46,9 +55,11 @@ class RecipeLLMClassifier(BaseClassifier):
         print(result.details)         # {"cuisine_type": "Italian", ...}
         ```
         
-        With specific model:
+        With specific provider from [llm.providers]:
         ```python
-        classifier = RecipeLLMClassifier(model_name="gpt-4o-mini")
+        classifier = RecipeLLMClassifier(provider_name='openai')  # Uses OpenAI
+        classifier = RecipeLLMClassifier(provider_name='lm_studio')  # Uses LM Studio
+        classifier = RecipeLLMClassifier(provider_name='ollama')  # Uses Ollama
         result = classifier.predict(text)
         ```
         
@@ -61,56 +72,66 @@ class RecipeLLMClassifier(BaseClassifier):
         ```
     """
     
-    def __init__(self, model_name: Optional[str] = None, config_path: Optional[str] = None):
+    def __init__(self, provider_name: Optional[str] = None, config_path: Optional[str] = None):
         """Initialize the LLM classifier.
         
         Args:
-            model_name: Name of the model to use. If None, uses config default.
-                For Ollama: "llama2", "qwen3:14b", etc.
-                For OpenAI: "gpt-4o-mini", "gpt-4", etc.
-                For Anthropic: "claude-3-5-sonnet-20241022", etc.
+            provider_name: Name of the provider to use from [llm.providers] in config.toml.
+                If None, uses the default_provider from config. 
+                Examples: 'openai', 'ollama', 'lm_studio', 'anthropic'
             config_path: Path to configuration file. If None, uses default locations.
+                
+        Examples:
+            ```python
+            # Use default provider from config
+            classifier = RecipeLLMClassifier()
+            
+            # Use specific provider
+            classifier = RecipeLLMClassifier(provider_name='openai')
+            classifier = RecipeLLMClassifier(provider_name='lm_studio')
+            ```
         """
         # Load configuration
         config = get_config(config_path)
-        model_config = get_model_config()
-        prompt_config = get_prompt_config()
-        classification_config = get_classification_config()
         
-        # Get model name from config or parameter
-        model = model_name or config.get(
-            'models.default_llm_model',
-            default='llama2',
-            env_var='DEFAULT_LLM_MODEL'
-        )
+        # Load LLM configuration from new [llm] section
+        llm_config = LLMConfig.from_config_manager(config)
         
-        # Get provider and optional API base from config
-        provider = config.get(
-            'models.llm_provider',
-            default='ollama',
-            env_var='LLM_PROVIDER'
-        )
-        api_base = config.get(
-            'models.llm_api_base',
-            default='',
-            env_var='LLM_API_BASE'
-        )
+        # Select provider: use specified or default from config
+        selected_provider = provider_name or llm_config.default_provider
         
-        # LiteLLM adapter configuration
-        if api_base:
-            # Custom endpoint (LM Studio, etc.) - use model name as-is
-            # LM Studio expects: "model": "qwen/qwen3-vl-8b"
-            llm_kwargs = {
-                "model": model,  # Use model name as-is from config
-                "api_base": api_base,
-                "custom_llm_provider": "openai"  # OpenAI-compatible format
-            }
-            self._validate_llm_config(config, provider="openai", is_custom_endpoint=True)
+        # Get provider configuration
+        provider_cfg = get_provider_config(llm_config, selected_provider)
+        
+        # Build llm_kwargs from provider configuration
+        llm_kwargs = {
+            "model": provider_cfg.model,
+            "temperature": provider_cfg.temperature,
+        }
+        
+        # Add optional parameters if present
+        if provider_cfg.timeout:
+            llm_kwargs["timeout"] = provider_cfg.timeout
+        if provider_cfg.max_tokens:
+            llm_kwargs["max_tokens"] = provider_cfg.max_tokens
+        if provider_cfg.api_key:
+            llm_kwargs["api_key"] = provider_cfg.api_key
+            
+        # Handle custom endpoints (LM Studio, Ollama)
+        if provider_cfg.api_base:
+            llm_kwargs["api_base"] = provider_cfg.api_base
+            
+            # For custom endpoints, set custom_llm_provider based on port/provider
+            if '11434' in provider_cfg.api_base or provider_cfg.name.lower() == 'ollama':
+                llm_kwargs["custom_llm_provider"] = "ollama"
+            else:
+                # LM Studio and other OpenAI-compatible endpoints
+                llm_kwargs["custom_llm_provider"] = "openai"
         else:
-            # Standard providers - prefix with provider name
-            # Examples: "ollama/llama2", "gpt-4", "claude-3-5-sonnet-20241022"
-            llm_kwargs = {"model": f"{provider}/{model}"}
-            self._validate_llm_config(config, provider=provider)
+            # Standard cloud providers - prefix model with provider name if needed
+            if provider_cfg.name.lower() == 'ollama':
+                llm_kwargs["model"] = f"ollama/{provider_cfg.model}"
+            # OpenAI and Anthropic models don't need prefixing
         
         self.llm = ChatLiteLLM(**llm_kwargs)
         
@@ -147,25 +168,6 @@ If it's not a recipe, set is_recipe to false and leave other fields as null."""
             'classification.max_confidence_threshold',
             default=1.0
         )
-    
-    def _validate_llm_config(self, config: Any, provider: str, is_custom_endpoint: bool = False) -> None:
-        """Validate that necessary configuration for LiteLLM is present.
-        
-        Args:
-            config: Configuration object
-            provider: LLM provider name
-            is_custom_endpoint: Whether using a custom API base
-        """
-        # Check for OpenAI API key if using OpenAI provider or custom OpenAI-compatible endpoint
-        if provider == 'openai' or (is_custom_endpoint and provider == 'openai'):
-            api_key = config.get('models.openai_api_key', env_var='OPENAI_API_KEY')
-            if not api_key:
-                msg = (
-                    "Missing OPENAI_API_KEY environment variable or configuration. "
-                    "This is required for OpenAI models and compatible custom endpoints (like LM Studio). "
-                    "For local development with LM Studio/Ollama, you can set OPENAI_API_KEY='dummy'."
-                )
-                raise ValueError(msg)
     
     def fit(self, X: Any, y: Optional[Any] = None) -> 'RecipeLLMClassifier':
         """LLM classifiers don't require training."""

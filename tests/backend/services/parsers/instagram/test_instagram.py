@@ -3,14 +3,14 @@ import pytest
 from unittest.mock import Mock, patch, AsyncMock, call
 from datetime import datetime
 
-from postparse.services.parsers.instagram.instagram_parser import InstaloaderParser, InstagramAPIParser, InstagramRateLimitError
-from postparse.core.data.database import SocialMediaDatabase
+from backend.postparse.services.parsers.instagram.instagram_parser import InstaloaderParser, InstagramAPIParser, InstagramRateLimitError
+from backend.postparse.core.data.database import SocialMediaDatabase
 
 
 @pytest.fixture
 def mock_instaloader():
     """Create a mock Instaloader instance."""
-    with patch('postparse.services.parsers.instagram.instagram_parser.instaloader.Instaloader') as mock:
+    with patch('backend.postparse.services.parsers.instagram.instagram_parser.instaloader.Instaloader') as mock:
         yield mock
 
 
@@ -113,7 +113,7 @@ class TestInstaloaderParser:
 
     def test_save_posts_to_db_normal_mode(self, mock_instaloader, mock_post, mock_db):
         """Test saving posts to database in normal mode."""
-        with patch('postparse.services.parsers.instagram.instagram_parser.instaloader.Profile') as mock_profile:
+        with patch('backend.postparse.services.parsers.instagram.instagram_parser.instaloader.Profile') as mock_profile:
             profile_instance = Mock()
             profile_instance.get_saved_posts.return_value = [mock_post]
             mock_profile.from_username.return_value = profile_instance
@@ -134,7 +134,7 @@ class TestInstaloaderParser:
 
     def test_save_posts_to_db_force_update(self, mock_instaloader, mock_post, mock_db):
         """Test saving posts to database with force update."""
-        with patch('postparse.services.parsers.instagram.instagram_parser.instaloader.Profile') as mock_profile:
+        with patch('backend.postparse.services.parsers.instagram.instagram_parser.instaloader.Profile') as mock_profile:
             profile_instance = Mock()
             profile_instance.get_saved_posts.return_value = [mock_post]
             mock_profile.from_username.return_value = profile_instance

@@ -5,7 +5,7 @@ This module provides endpoints for monitoring service health,
 readiness, and basic metrics.
 """
 
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Dict, Any
 from fastapi import APIRouter, Depends, status, Response
 
@@ -63,7 +63,7 @@ async def health_check(
     return HealthResponse(
         status="ok",
         version=version,
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(UTC),
         details=None,
     )
 
@@ -152,7 +152,7 @@ async def readiness_check(
     return HealthResponse(
         status=service_status,
         version=version,
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(UTC),
         details=details,
     )
 

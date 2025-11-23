@@ -485,3 +485,71 @@ class SocialMediaDatabase:
                 msg_dict = dict(zip(columns, row))
                 messages.append(msg_dict)
             return messages
+    
+    def count_instagram_posts(self) -> int:
+        """Get the total count of Instagram posts in the database.
+        
+        This method is used for pagination metadata to provide clients with
+        the total number of posts available across all pages.
+        
+        Returns:
+            int: Total number of Instagram posts in the database.
+            
+        Example:
+            >>> db = SocialMediaDatabase()
+            >>> total = db.count_instagram_posts()
+            >>> print(f"Total posts: {total}")
+            Total posts: 1250
+        """
+        with self as db:
+            db._cursor.execute("SELECT COUNT(*) FROM instagram_posts")
+            count = db._cursor.fetchone()[0]
+            return count
+    
+    def count_instagram_posts_by_hashtag(self, hashtag: str) -> int:
+        """Get the total count of Instagram posts matching a specific hashtag.
+        
+        This method is used for paginated search results to provide clients
+        with the total number of posts matching the hashtag filter.
+        
+        Args:
+            hashtag: The hashtag to count posts for (without # symbol).
+            
+        Returns:
+            int: Total number of Instagram posts with the specified hashtag.
+            
+        Example:
+            >>> db = SocialMediaDatabase()
+            >>> recipe_count = db.count_instagram_posts_by_hashtag("recipe")
+            >>> print(f"Recipe posts: {recipe_count}")
+            Recipe posts: 125
+        """
+        with self as db:
+            db._cursor.execute("""
+                SELECT COUNT(DISTINCT p.id) 
+                FROM instagram_posts p
+                JOIN instagram_hashtags h ON p.id = h.post_id
+                WHERE h.hashtag = ?
+            """, (hashtag,))
+            count = db._cursor.fetchone()[0]
+            return count
+    
+    def count_telegram_messages(self) -> int:
+        """Get the total count of Telegram messages in the database.
+        
+        This method is used for pagination metadata to provide clients with
+        the total number of messages available across all pages.
+        
+        Returns:
+            int: Total number of Telegram messages in the database.
+            
+        Example:
+            >>> db = SocialMediaDatabase()
+            >>> total = db.count_telegram_messages()
+            >>> print(f"Total messages: {total}")
+            Total messages: 3420
+        """
+        with self as db:
+            db._cursor.execute("SELECT COUNT(*) FROM telegram_messages")
+            count = db._cursor.fetchone()[0]
+            return count

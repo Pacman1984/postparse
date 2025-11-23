@@ -82,20 +82,20 @@ class TestTelegramExtractRequest:
     def test_telegram_extract_request_valid(self):
         """Test creating a valid TelegramExtractRequest."""
         request = TelegramExtractRequest(
-            api_id="12345678",
+            api_id=12345678,
             api_hash="0123456789abcdef0123456789abcdef",
             phone="+1234567890",
             limit=100
         )
         
-        assert request.api_id == "12345678"
+        assert request.api_id == 12345678
         assert request.limit == 100
 
     def test_telegram_extract_request_phone_validation(self):
         """Test phone number validation."""
         # Valid phone
         request = TelegramExtractRequest(
-            api_id="12345678",
+            api_id=12345678,
             api_hash="0123456789abcdef0123456789abcdef",
             phone="+1234567890"
         )
@@ -104,7 +104,7 @@ class TestTelegramExtractRequest:
         # Invalid phone
         with pytest.raises(ValidationError):
             TelegramExtractRequest(
-                api_id="12345678",
+                api_id=12345678,
                 api_hash="0123456789abcdef0123456789abcdef",
                 phone="invalid"
             )

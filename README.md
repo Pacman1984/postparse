@@ -94,7 +94,23 @@ Once the server is running, access the interactive API documentation:
 - **Instagram**: `/api/v1/instagram/extract`, `/api/v1/instagram/posts`
 - **Classification**: `/api/v1/classify/recipe`, `/api/v1/classify/batch`
 - **Search**: `/api/v1/search/posts`, `/api/v1/search/messages`
+- **Jobs**: `/api/v1/jobs/{job_id}` (unified job status for all platforms)
 - **Health**: `/health`, `/health/ready`, `/metrics`
+
+### WebSocket Endpoints for Real-Time Progress
+
+PostParse provides WebSocket endpoints for receiving live extraction job progress updates.
+
+**Unified Endpoint (Recommended):**
+
+- `ws://localhost:8000/api/v1/jobs/ws/progress/{job_id}` - Works for all platforms (Telegram, Instagram)
+
+**Platform-Specific Endpoints (Backward Compatibility):**
+
+- `ws://localhost:8000/api/v1/telegram/ws/progress/{job_id}` - Telegram jobs only
+- `ws://localhost:8000/api/v1/instagram/ws/progress/{job_id}` - Instagram jobs only
+
+All WebSocket endpoints provide identical functionality and message format. Use the unified endpoint for new integrations.
 
 ### Example API Usage
 
@@ -115,6 +131,119 @@ print(f"Classification: {result['label']} ({result['confidence']:.2f})")
 ```
 
 For more API examples, see the **[API Reference](docs/api_reference.md)**.
+
+## Extraction API Usage
+
+### Telegram Message Extraction
+
+**Start Extraction Job:**
+
+```bash
+curl -X POST http://localhost:8000/api/v1/telegram/extract \
+  -H "Content-Type: application/json" \
+  -d '{
+    "api_id": "12345678",
+    "api_hash": "0123456789abcdef0123456789abcdef",
+    "phone": "+1234567890",
+    "limit": 100
+  }'
+```
+
+Response:
+
+```json
+{
+  "job_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "pending",
+  "message_count": 0,
+  "estimated_time": 60
+}
+```
+
+**Check Job Status:**
+
+```bash
+curl http://localhost:8000/api/v1/telegram/jobs/550e8400-e29b-41d4-a716-446655440000
+```
+
+**Real-time Progress (WebSocket):**
+
+Use the unified WebSocket endpoint for any job type:
+
+```javascript
+// Recommended: Unified endpoint (works for all platforms)
+const ws = new WebSocket('ws://localhost:8000/api/v1/jobs/ws/progress/550e8400-e29b-41d4-a716-446655440000');
+
+ws.onmessage = (event) => {
+  const progress = JSON.parse(event.data);
+  console.log(`Progress: ${progress.progress}% - ${progress.messages_processed} messages`);
+};
+
+// Alternative: Platform-specific endpoint (backward compatibility)
+// const ws = new WebSocket('ws://localhost:8000/api/v1/telegram/ws/progress/550e8400-e29b-41d4-a716-446655440000');
+```
+
+### Instagram Post Extraction
+
+> **Note:** Currently, only Instaloader-based extraction is supported (`use_api=false`). Instagram Platform API extraction (`use_api=true`) is not yet implemented.
+
+**Start Extraction Job:**
+
+```bash
+curl -X POST http://localhost:8000/api/v1/instagram/extract \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "cooking_profile",
+    "password": "secret123",
+    "limit": 50,
+    "use_api": false
+  }'
+```
+
+**WebSocket Progress:**
+
+```javascript
+// Recommended: Unified endpoint (works for all platforms)
+const ws = new WebSocket('ws://localhost:8000/api/v1/jobs/ws/progress/{job_id}');
+
+// Alternative: Platform-specific endpoint (backward compatibility)
+// const ws = new WebSocket('ws://localhost:8000/api/v1/instagram/ws/progress/{job_id}');
+
+ws.onmessage = (event) => {
+  const progress = JSON.parse(event.data);
+  console.log(`Progress: ${progress.progress}% - ${progress.messages_processed} posts`);
+};
+```
+
+### Rate Limiting
+
+The API enforces rate limits to prevent abuse:
+
+- **Default:** 60 requests per minute per IP
+- **Burst:** Up to 10 additional requests
+- **Response:** 429 Too Many Requests when limit exceeded
+
+Health endpoints (`/health`, `/docs`) are excluded from rate limiting.
+
+### Authentication
+
+For Telegram extraction, you need:
+
+1. API credentials from https://my.telegram.org
+2. Phone number in international format
+3. Existing session file OR interactive authentication
+
+**First-time Setup (Interactive):**
+
+```python
+from postparse.services.parsers.telegram import TelegramParser
+
+# Run once interactively to create session
+parser = TelegramParser(api_id="...", api_hash="...", phone="+1234567890")
+# Follow prompts to enter verification code and 2FA password
+```
+
+After session is created, API calls will use the cached session.
 
 ## Requirements
 

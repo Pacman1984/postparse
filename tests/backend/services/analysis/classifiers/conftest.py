@@ -8,8 +8,8 @@ import pytest
 from unittest.mock import Mock
 from langchain_core.messages import AIMessage
 from langchain_community.chat_models import ChatLiteLLM
-from postparse.llm import LLMProvider
-from postparse.llm.config import LLMConfig, ProviderConfig
+from backend.postparse.llm import LLMProvider
+from backend.postparse.llm.config import LLMConfig, ProviderConfig
 
 
 @pytest.fixture

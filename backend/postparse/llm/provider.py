@@ -14,9 +14,9 @@ from litellm import (
     RateLimitError,
 )
 
-from postparse.core.utils.config import ConfigManager
-from postparse.llm.config import LLMConfig, ProviderConfig, get_provider_config
-from postparse.llm.exceptions import (
+from backend.postparse.core.utils.config import ConfigManager
+from backend.postparse.llm.config import LLMConfig, ProviderConfig, get_provider_config
+from backend.postparse.llm.exceptions import (
     LLMAuthenticationError,
     LLMConnectionError,
     LLMInvalidRequestError,

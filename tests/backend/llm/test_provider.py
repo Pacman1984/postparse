@@ -5,8 +5,8 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
-from postparse.llm.config import LLMConfig, ProviderConfig
-from postparse.llm.exceptions import (
+from backend.postparse.llm.config import LLMConfig, ProviderConfig
+from backend.postparse.llm.exceptions import (
     LLMAuthenticationError,
     LLMConnectionError,
     LLMInvalidRequestError,
@@ -15,7 +15,7 @@ from postparse.llm.exceptions import (
     LLMRateLimitError,
     LLMResponseError,
 )
-from postparse.llm.provider import LiteLLMProvider, get_llm_provider
+from backend.postparse.llm.provider import LiteLLMProvider, get_llm_provider
 
 
 @pytest.fixture
@@ -63,7 +63,7 @@ def mock_litellm_completion() -> MagicMock:
     mock_response.choices = [Mock()]
     mock_response.choices[0].message.content = "Test response"
 
-    with patch("postparse.llm.provider.litellm.completion", return_value=mock_response) as mock:
+    with patch("backend.postparse.llm.provider.litellm.completion", return_value=mock_response) as mock:
         yield mock
 
 
@@ -77,7 +77,7 @@ def mock_litellm_embedding() -> MagicMock:
     mock_response = Mock()
     mock_response.data = [{"embedding": [0.1, 0.2, 0.3, 0.4, 0.5]}]
 
-    with patch("postparse.llm.provider.litellm.embedding", return_value=mock_response) as mock:
+    with patch("backend.postparse.llm.provider.litellm.embedding", return_value=mock_response) as mock:
         yield mock
 
 
@@ -341,7 +341,7 @@ class TestLiteLLMProvider:
         """Test availability check when provider is unreachable."""
         provider = LiteLLMProvider(mock_provider_config)
 
-        with patch("postparse.llm.provider.litellm.completion") as mock_completion:
+        with patch("backend.postparse.llm.provider.litellm.completion") as mock_completion:
             mock_completion.side_effect = Exception("Connection failed")
 
             is_available = provider.is_available()
@@ -366,7 +366,7 @@ class TestLiteLLMProviderErrorHandling:
         """Mock litellm.RateLimitError and verify LLMRateLimitError is raised."""
         provider = LiteLLMProvider(mock_provider_config)
 
-        with patch("postparse.llm.provider.litellm.completion") as mock_completion:
+        with patch("backend.postparse.llm.provider.litellm.completion") as mock_completion:
             from litellm import RateLimitError
             import httpx
 
@@ -399,7 +399,7 @@ class TestLiteLLMProviderErrorHandling:
         """Mock litellm.APIConnectionError and verify LLMConnectionError is raised."""
         provider = LiteLLMProvider(mock_provider_config)
 
-        with patch("postparse.llm.provider.litellm.completion") as mock_completion:
+        with patch("backend.postparse.llm.provider.litellm.completion") as mock_completion:
             from litellm import APIConnectionError
             import httpx
 
@@ -431,7 +431,7 @@ class TestLiteLLMProviderErrorHandling:
         """Mock generic exception and verify LLMProviderError is raised."""
         provider = LiteLLMProvider(mock_provider_config)
 
-        with patch("postparse.llm.provider.litellm.completion") as mock_completion:
+        with patch("backend.postparse.llm.provider.litellm.completion") as mock_completion:
             mock_completion.side_effect = Exception("Unexpected error")
 
             with pytest.raises(LLMProviderError) as exc_info:
@@ -443,7 +443,7 @@ class TestLiteLLMProviderErrorHandling:
         """Verify original exception is preserved in __cause__."""
         provider = LiteLLMProvider(mock_provider_config)
 
-        with patch("postparse.llm.provider.litellm.completion") as mock_completion:
+        with patch("backend.postparse.llm.provider.litellm.completion") as mock_completion:
             original_error = ValueError("Original error")
             mock_completion.side_effect = original_error
 
@@ -457,7 +457,7 @@ class TestLiteLLMProviderErrorHandling:
         """Test handling of empty/None response content."""
         provider = LiteLLMProvider(mock_provider_config)
 
-        with patch("postparse.llm.provider.litellm.completion") as mock_completion:
+        with patch("backend.postparse.llm.provider.litellm.completion") as mock_completion:
             mock_response = Mock()
             mock_response.choices = [Mock()]
             mock_response.choices[0].message.content = None  # Empty content
@@ -476,8 +476,8 @@ class TestRetryLogic:
         """Test that RateLimitError triggers multiple retry attempts with exponential backoff."""
         provider = LiteLLMProvider(mock_provider_config)
 
-        with patch("postparse.llm.provider.litellm.completion") as mock_completion:
-            with patch("postparse.llm.provider.time.sleep") as mock_sleep:
+        with patch("backend.postparse.llm.provider.litellm.completion") as mock_completion:
+            with patch("backend.postparse.llm.provider.time.sleep") as mock_sleep:
                 from litellm import RateLimitError
                 import httpx
 
@@ -506,8 +506,8 @@ class TestRetryLogic:
         """Test that APIConnectionError triggers multiple retry attempts with exponential backoff."""
         provider = LiteLLMProvider(mock_provider_config)
 
-        with patch("postparse.llm.provider.litellm.completion") as mock_completion:
-            with patch("postparse.llm.provider.time.sleep") as mock_sleep:
+        with patch("backend.postparse.llm.provider.litellm.completion") as mock_completion:
+            with patch("backend.postparse.llm.provider.time.sleep") as mock_sleep:
                 from litellm import APIConnectionError
                 import httpx
 
@@ -535,8 +535,8 @@ class TestRetryLogic:
         """Test that rate limit with retry_after uses that value instead of exponential backoff."""
         provider = LiteLLMProvider(mock_provider_config)
 
-        with patch("postparse.llm.provider.litellm.completion") as mock_completion:
-            with patch("postparse.llm.provider.time.sleep") as mock_sleep:
+        with patch("backend.postparse.llm.provider.litellm.completion") as mock_completion:
+            with patch("backend.postparse.llm.provider.time.sleep") as mock_sleep:
                 from litellm import RateLimitError
                 import httpx
 
@@ -567,8 +567,8 @@ class TestRetryLogic:
         """Test that non-transient errors (auth, invalid request, model not found) are not retried."""
         provider = LiteLLMProvider(mock_provider_config)
 
-        with patch("postparse.llm.provider.litellm.completion") as mock_completion:
-            with patch("postparse.llm.provider.time.sleep") as mock_sleep:
+        with patch("backend.postparse.llm.provider.litellm.completion") as mock_completion:
+            with patch("backend.postparse.llm.provider.time.sleep") as mock_sleep:
                 # Use a generic exception that will be mapped to LLMProviderError
                 # and should not be retried (since it's not a ConnectionError or RateLimitError)
                 mock_completion.side_effect = ValueError("Invalid parameter value")
@@ -589,8 +589,8 @@ class TestRetryLogic:
         """Test that successful response after transient failures returns correctly."""
         provider = LiteLLMProvider(mock_provider_config)
 
-        with patch("postparse.llm.provider.litellm.completion") as mock_completion:
-            with patch("postparse.llm.provider.time.sleep") as mock_sleep:
+        with patch("backend.postparse.llm.provider.litellm.completion") as mock_completion:
+            with patch("backend.postparse.llm.provider.time.sleep") as mock_sleep:
                 from litellm import APIConnectionError
                 import httpx
 
@@ -630,8 +630,8 @@ class TestRetryLogic:
         """Test that embed() also benefits from retry logic."""
         provider = LiteLLMProvider(mock_provider_config)
 
-        with patch("postparse.llm.provider.litellm.embedding") as mock_embedding:
-            with patch("postparse.llm.provider.time.sleep") as mock_sleep:
+        with patch("backend.postparse.llm.provider.litellm.embedding") as mock_embedding:
+            with patch("backend.postparse.llm.provider.time.sleep") as mock_sleep:
                 from litellm import APIConnectionError
                 import httpx
 
@@ -660,7 +660,7 @@ class TestFactoryFunction:
     def test_get_llm_provider_default(self) -> None:
         """Test factory function with default provider."""
         # Mock ConfigManager to return test config
-        with patch("postparse.llm.provider.ConfigManager") as mock_cm_class:
+        with patch("backend.postparse.llm.provider.ConfigManager") as mock_cm_class:
             mock_cm = Mock()
             mock_cm_class.return_value = mock_cm
             mock_cm.get_section.return_value = {
@@ -679,7 +679,7 @@ class TestFactoryFunction:
 
     def test_get_llm_provider_specific(self) -> None:
         """Test factory function with specific provider name."""
-        with patch("postparse.llm.provider.ConfigManager") as mock_cm_class:
+        with patch("backend.postparse.llm.provider.ConfigManager") as mock_cm_class:
             mock_cm = Mock()
             mock_cm_class.return_value = mock_cm
             mock_cm.get_section.return_value = {
@@ -698,7 +698,7 @@ class TestFactoryFunction:
 
     def test_get_llm_provider_invalid(self) -> None:
         """Test factory function with invalid provider name raises ValueError."""
-        with patch("postparse.llm.provider.ConfigManager") as mock_cm_class:
+        with patch("backend.postparse.llm.provider.ConfigManager") as mock_cm_class:
             mock_cm = Mock()
             mock_cm_class.return_value = mock_cm
             mock_cm.get_section.return_value = {
@@ -714,7 +714,7 @@ class TestFactoryFunction:
 
     def test_get_llm_provider_custom_config(self) -> None:
         """Test factory function with custom config path."""
-        with patch("postparse.llm.provider.ConfigManager") as mock_cm_class:
+        with patch("backend.postparse.llm.provider.ConfigManager") as mock_cm_class:
             mock_cm = Mock()
             mock_cm_class.return_value = mock_cm
             mock_cm.get_section.return_value = {

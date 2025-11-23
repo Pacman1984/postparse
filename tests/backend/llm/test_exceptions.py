@@ -2,7 +2,7 @@
 
 import pytest
 
-from postparse.llm.exceptions import (
+from backend.postparse.llm.exceptions import (
     LLMAuthenticationError,
     LLMConnectionError,
     LLMInvalidRequestError,

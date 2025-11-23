@@ -225,7 +225,7 @@ class PostSearchResult(BaseModel):
         is_video: Whether post contains video.
         likes: Number of likes.
         hashtags: Extracted hashtags.
-        created_at: Post creation timestamp.
+        created_at: Post creation timestamp (None if unavailable).
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -236,7 +236,7 @@ class PostSearchResult(BaseModel):
     is_video: bool = False
     likes: int = 0
     hashtags: List[str] = Field(default_factory=list)
-    created_at: datetime
+    created_at: Optional[datetime] = None
 
 
 class MessageSearchResult(BaseModel):
@@ -251,7 +251,7 @@ class MessageSearchResult(BaseModel):
         content: Message content (truncated to 200 chars).
         content_type: Content type.
         hashtags: Extracted hashtags.
-        created_at: Message creation timestamp.
+        created_at: Message creation timestamp (None if unavailable).
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -261,7 +261,7 @@ class MessageSearchResult(BaseModel):
     content: Optional[str] = None
     content_type: str = "text"
     hashtags: List[str] = Field(default_factory=list)
-    created_at: datetime
+    created_at: Optional[datetime] = None
 
 
 class SearchResponse(BaseModel, Generic[T]):

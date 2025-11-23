@@ -12,7 +12,8 @@ import os
 import time
 import uuid
 import logging
-from typing import Callable, List, Optional
+import threading
+from typing import Callable, List, Optional, Dict, Any
 from fastapi import Request, Response, status
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -228,12 +229,24 @@ def configure_cors(app, config: ConfigManager) -> None:
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """
-    Rate limiting middleware (placeholder).
+    Rate limiting middleware using token bucket algorithm.
 
-    This is a placeholder for future rate limiting implementation.
-    Will use Redis or in-memory store for tracking request counts.
+    Implements per-IP rate limiting with in-memory token buckets.
+    For production multi-instance deployments, consider Redis-based storage.
 
-    TODO: Implement actual rate limiting in next phase.
+    Attributes:
+        config: Configuration manager.
+        enabled: Whether rate limiting is active.
+        requests_per_minute: Base rate limit per IP.
+        burst_size: Additional burst capacity above base rate.
+        _buckets: In-memory storage of token buckets per client IP.
+        _lock: Thread-safe lock for bucket access.
+        _cleanup_interval: Cleanup frequency in seconds.
+        _last_cleanup: Timestamp of last cleanup.
+
+    Example:
+        Rate limit: 60 requests/minute with burst of 10
+        Client can make up to 70 requests immediately, then 1 per second.
     """
 
     def __init__(self, app, config: ConfigManager):
@@ -249,10 +262,102 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self.enabled = config.get("api.rate_limiting.enabled", False)
         self.requests_per_minute = config.get("api.rate_limiting.requests_per_minute", 60)
         self.burst_size = config.get("api.rate_limiting.burst_size", 10)
+        
+        # In-memory storage for token buckets
+        self._buckets: Dict[str, Dict[str, Any]] = {}
+        self._lock = threading.Lock()
+        self._cleanup_interval = 300  # Cleanup every 5 minutes
+        self._last_cleanup = time.time()
+        
+        logger.info(
+            f"Rate limiting initialized: enabled={self.enabled}, "
+            f"rate={self.requests_per_minute}/min, burst={self.burst_size}"
+        )
+
+    def _check_rate_limit(self, client_ip: str) -> bool:
+        """
+        Check if request is allowed under rate limit using token bucket.
+
+        Args:
+            client_ip: Client IP address.
+
+        Returns:
+            True if request is allowed, False if rate limit exceeded.
+
+        Example:
+            allowed = self._check_rate_limit("192.168.1.1")
+            if not allowed:
+                return 429 response
+        """
+        current_time = time.time()
+        
+        with self._lock:
+            # Get or create bucket for this IP
+            if client_ip not in self._buckets:
+                self._buckets[client_ip] = {
+                    "tokens": self.requests_per_minute + self.burst_size,
+                    "last_refill": current_time
+                }
+            
+            bucket = self._buckets[client_ip]
+            
+            # Calculate time elapsed since last refill
+            time_elapsed = current_time - bucket["last_refill"]
+            
+            # Refill tokens based on time elapsed
+            # Rate: requests_per_minute tokens per 60 seconds
+            tokens_to_add = (time_elapsed / 60.0) * self.requests_per_minute
+            max_tokens = self.requests_per_minute + self.burst_size
+            bucket["tokens"] = min(max_tokens, bucket["tokens"] + tokens_to_add)
+            bucket["last_refill"] = current_time
+            
+            # Check if we have tokens available
+            if bucket["tokens"] >= 1:
+                bucket["tokens"] -= 1
+                logger.debug(
+                    f"Rate limit check for {client_ip}: allowed "
+                    f"(tokens remaining: {bucket['tokens']:.2f})"
+                )
+                return True
+            else:
+                logger.warning(
+                    f"Rate limit exceeded for {client_ip} "
+                    f"(tokens: {bucket['tokens']:.2f})"
+                )
+                return False
+
+    def _cleanup_old_buckets(self) -> None:
+        """
+        Remove inactive buckets to prevent memory leaks.
+
+        Removes buckets for IPs that haven't made requests in over 1 hour.
+
+        Example:
+            Called periodically during request processing.
+        """
+        current_time = time.time()
+        cutoff_time = current_time - 3600  # 1 hour ago
+        
+        with self._lock:
+            buckets_to_remove = [
+                ip for ip, bucket in self._buckets.items()
+                if bucket["last_refill"] < cutoff_time
+            ]
+            
+            for ip in buckets_to_remove:
+                del self._buckets[ip]
+            
+            if buckets_to_remove:
+                logger.info(
+                    f"Cleaned up {len(buckets_to_remove)} inactive "
+                    f"rate limit buckets"
+                )
+        
+        self._last_cleanup = current_time
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         """
-        Process request and check rate limits (placeholder).
+        Process request and enforce rate limits.
 
         Args:
             request: Incoming HTTP request.
@@ -260,12 +365,39 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         Returns:
             Response from next handler or 429 if rate limit exceeded.
+
+        Example:
+            Automatically applied to all requests via middleware.
         """
         # Skip if disabled
         if not self.enabled:
             return await call_next(request)
-
-        # TODO: Implement actual rate limiting logic
-        # For now, just pass through
+        
+        # Extract client IP
+        client_ip = request.client.host if request.client else "unknown"
+        
+        # Skip rate limiting for health endpoints
+        if request.url.path in ["/health", "/health/ready", "/health/live"]:
+            return await call_next(request)
+        
+        # Check rate limit
+        if not self._check_rate_limit(client_ip):
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "error_code": "RATE_LIMIT_EXCEEDED",
+                    "message": "Too many requests. Please try again later.",
+                    "details": {
+                        "limit": self.requests_per_minute,
+                        "window": "1 minute"
+                    }
+                }
+            )
+        
+        # Periodic cleanup of old buckets
+        current_time = time.time()
+        if current_time - self._last_cleanup >= self._cleanup_interval:
+            self._cleanup_old_buckets()
+        
         return await call_next(request)
 

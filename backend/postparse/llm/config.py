@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from postparse.core.utils.config import ConfigManager
+from backend.postparse.core.utils.config import ConfigManager
 
 
 class ProviderConfig(BaseModel):
@@ -200,7 +200,7 @@ def load_llm_config(config_manager: ConfigManager) -> LLMConfig:
 
     Examples:
         ```python
-        from postparse.core.utils.config import ConfigManager
+        from backend.postparse.core.utils.config import ConfigManager
         from postparse.llm.config import load_llm_config
 
         config_manager = ConfigManager()

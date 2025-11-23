@@ -47,8 +47,8 @@ class TestAPIIntegration:
             "classifier_type": "llm"
         })
         
-        # FastAPI returns 400 for validation errors
-        assert response.status_code == 400
+        # FastAPI returns 422 for validation errors
+        assert response.status_code == 422
 
     def test_404_error_handler(self):
         """Test 404 error handling."""

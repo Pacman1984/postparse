@@ -9,7 +9,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import patch
 
-from postparse.core.utils.config import (
+from backend.postparse.core.utils.config import (
     ConfigManager, 
     get_config, 
     get_model_config, 

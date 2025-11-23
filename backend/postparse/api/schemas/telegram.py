@@ -42,7 +42,7 @@ class TelegramExtractRequest(BaseModel):
 
     Example:
         {
-            "api_id": "12345678",
+            "api_id": 12345678,
             "api_hash": "0123456789abcdef0123456789abcdef",
             "phone": "+1234567890",
             "limit": 100,
@@ -54,7 +54,7 @@ class TelegramExtractRequest(BaseModel):
     model_config = ConfigDict(json_schema_extra={
         "examples": [
             {
-                "api_id": "12345678",
+                "api_id": 12345678,
                 "api_hash": "0123456789abcdef0123456789abcdef",
                 "phone": "+1234567890",
                 "limit": 100,
@@ -64,10 +64,10 @@ class TelegramExtractRequest(BaseModel):
         ]
     })
 
-    api_id: str = Field(
+    api_id: int = Field(
         ...,
-        description="Telegram API ID",
-        examples=["12345678"]
+        description="Telegram API ID (integer from my.telegram.org)",
+        examples=[12345678]
     )
     api_hash: str = Field(
         ...,

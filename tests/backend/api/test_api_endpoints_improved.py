@@ -120,8 +120,8 @@ class TestClassifyEndpoints:
             "classifier_type": "llm"
         })
         
-        # FastAPI returns 400 for missing required fields
-        assert response.status_code == 400
+        # FastAPI returns 422 for missing required fields
+        assert response.status_code == 422
 
     def test_classify_endpoint_rejects_empty_text(self, test_client):
         """Test that classify endpoint rejects empty text."""
@@ -130,8 +130,8 @@ class TestClassifyEndpoints:
             "classifier_type": "llm"
         })
         
-        # FastAPI returns 400 for validation errors
-        assert response.status_code == 400
+        # FastAPI returns 422 for validation errors
+        assert response.status_code == 422
 
     def test_classify_endpoint_handles_llm_unavailable(self, test_client):
         """Test proper error handling when LLM is unavailable."""
@@ -235,7 +235,9 @@ class TestInstagramEndpoints:
         """Test POST /api/v1/instagram/extract."""
         payload = {
             "username": "test_user",
-            "limit": 50
+            "password": "test_password",
+            "limit": 50,
+            "use_api": False
         }
         
         response = test_client.post("/api/v1/instagram/extract", json=payload)
@@ -375,6 +377,6 @@ class TestErrorHandling:
             "text": ""
         })
         
-        # FastAPI returns 400 for validation errors
-        assert response.status_code == 400
+        # FastAPI returns 422 for validation errors
+        assert response.status_code == 422
 

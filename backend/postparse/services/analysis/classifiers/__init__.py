@@ -39,8 +39,8 @@ Example:
     configured in config.toml (Ollama, LM Studio, OpenAI, etc.).
 """
 
-from postparse.services.analysis.classifiers.base import BaseClassifier, ClassificationResult
-from postparse.services.analysis.classifiers.llm import RecipeLLMClassifier, RecipeDetails
+from backend.postparse.services.analysis.classifiers.base import BaseClassifier, ClassificationResult
+from backend.postparse.services.analysis.classifiers.llm import RecipeLLMClassifier, RecipeDetails
 
 __all__ = [
     "BaseClassifier",

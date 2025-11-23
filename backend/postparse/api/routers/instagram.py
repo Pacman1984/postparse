@@ -10,10 +10,19 @@ the next phase. This module contains placeholder implementations.
 
 import uuid
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status, BackgroundTasks, WebSocket, WebSocketDisconnect
 
 from backend.postparse.core.data.database import SocialMediaDatabase
-from backend.postparse.api.dependencies import get_db, get_optional_auth
+from backend.postparse.api.dependencies import (
+    get_db,
+    get_optional_auth,
+    get_job_manager,
+    get_websocket_manager,
+    get_instagram_extraction_service,
+)
+from backend.postparse.api.services.job_manager import JobManager
+from backend.postparse.api.services.websocket_manager import WebSocketManager
+from backend.postparse.api.services.extraction_service import InstagramExtractionService
 from backend.postparse.api.schemas import (
     InstagramExtractRequest,
     InstagramExtractResponse,
@@ -56,19 +65,26 @@ router = APIRouter(
 )
 async def extract_posts(
     request: InstagramExtractRequest,
-    db: SocialMediaDatabase = Depends(get_db),
+    background_tasks: BackgroundTasks,
+    job_manager: JobManager = Depends(get_job_manager),
+    extraction_service: InstagramExtractionService = Depends(get_instagram_extraction_service),
     user: Optional[dict] = Depends(get_optional_auth),
 ) -> InstagramExtractResponse:
     """
-    Trigger Instagram post extraction (placeholder implementation).
+    Trigger Instagram post extraction with background processing.
     
     Args:
         request: Extraction request with Instagram credentials and options.
-        db: Database instance (injected dependency).
+        background_tasks: FastAPI background tasks manager.
+        job_manager: Job state manager (injected dependency).
+        extraction_service: Extraction service (injected dependency).
         user: Optional authenticated user info.
         
     Returns:
         InstagramExtractResponse with job_id for tracking.
+        
+    Raises:
+        HTTPException: 400 if credentials are missing for selected method.
         
     Example:
         POST /api/v1/instagram/extract
@@ -87,10 +103,40 @@ async def extract_posts(
             "estimated_time": 30
         }
     """
-    # TODO: Implement actual extraction logic in next phase
-    # This is a placeholder that returns a mock job_id
+    # Validate credentials based on use_api flag
+    if request.use_api:
+        if not request.access_token:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Access token is required when use_api=true",
+            )
+        # Instagram API-based extraction is not yet implemented
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Instagram API-based extraction (use_api=true) is not yet supported; use use_api=false for Instaloader-based extraction.",
+        )
+    else:
+        if not request.password:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Password is required when use_api=false",
+            )
     
-    job_id = str(uuid.uuid4())
+    # Create job in job manager
+    job_id = job_manager.create_job('instagram', request.model_dump())
+    
+    # Add extraction task to background tasks
+    # BackgroundTasks supports async functions, so we can add the async method directly
+    background_tasks.add_task(
+        extraction_service.run_extraction,
+        job_id=job_id,
+        username=request.username,
+        password=request.password.get_secret_value() if request.password else None,
+        access_token=request.access_token.get_secret_value() if request.access_token else None,
+        limit=request.limit,
+        force_update=request.force_update,
+        use_api=request.use_api,
+    )
     
     return InstagramExtractResponse(
         job_id=job_id,
@@ -112,17 +158,22 @@ async def extract_posts(
 )
 async def get_job_status(
     job_id: str,
+    job_manager: JobManager = Depends(get_job_manager),
     user: Optional[dict] = Depends(get_optional_auth),
 ) -> JobStatusResponse:
     """
-    Get extraction job status (placeholder implementation).
+    Get extraction job status.
     
     Args:
         job_id: Unique job identifier from extract_posts.
+        job_manager: Job state manager (injected dependency).
         user: Optional authenticated user info.
         
     Returns:
         JobStatusResponse with current job status and progress.
+        
+    Raises:
+        HTTPException: 404 if job not found.
         
     Example:
         GET /api/v1/instagram/jobs/550e8400-e29b-41d4-a716-446655440000
@@ -136,15 +187,21 @@ async def get_job_status(
             "errors": []
         }
     """
-    # TODO: Implement actual job status tracking in next phase
-    # This is a placeholder that returns mock status
+    # Retrieve job from job manager
+    job = job_manager.get_job(job_id)
+    
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Job {job_id} not found",
+        )
     
     return JobStatusResponse(
-        job_id=job_id,
-        status=ExtractionStatus.COMPLETED,
-        progress=100,
-        messages_processed=50,
-        errors=[],
+        job_id=job.job_id,
+        status=job.status,
+        progress=job.progress,
+        messages_processed=job.messages_processed,
+        errors=job.errors,
     )
 
 
@@ -238,7 +295,7 @@ async def get_posts(
         ))
     
     has_more = len(posts) > limit
-    total = len(post_schemas)  # TODO: Get actual count from database
+    total = db.count_instagram_posts()  # Get actual count from database for pagination
     
     return PaginatedResponse(
         items=post_schemas,
@@ -288,11 +345,120 @@ async def get_post(
             ...
         }
     """
-    # TODO: Implement actual post retrieval by shortcode
-    # This is a placeholder that raises 404
+    from datetime import datetime as dt
     
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail=f"Post with shortcode {shortcode} not found",
+    # Retrieve post from database
+    post = db.get_instagram_post(shortcode)
+    
+    if not post:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Post with shortcode {shortcode} not found",
+        )
+    
+    # Parse created_at timestamp
+    created_at = post.get("created_at")
+    if created_at and isinstance(created_at, str):
+        try:
+            created_at = dt.fromisoformat(created_at.replace('Z', '+00:00'))
+        except (ValueError, AttributeError):
+            created_at = None
+    
+    # Parse extracted_at (fetched_at in database) timestamp
+    extracted_at = post.get("fetched_at")
+    if extracted_at and isinstance(extracted_at, str):
+        try:
+            extracted_at = dt.fromisoformat(extracted_at.replace('Z', '+00:00'))
+        except (ValueError, AttributeError):
+            extracted_at = None
+    
+    # Fetch hashtags and mentions from respective tables
+    # TODO: Implement hashtag and mention retrieval from database
+    hashtags = []
+    mentions = []
+    
+    return InstagramPostSchema(
+        shortcode=post.get("shortcode", ""),
+        owner_username=post.get("owner_username"),
+        caption=post.get("caption"),
+        is_video=post.get("is_video", False),
+        media_url=post.get("media_url"),
+        likes=max(0, post.get("likes") or 0),
+        comments=max(0, post.get("comments") or 0),
+        hashtags=hashtags,
+        mentions=mentions,
+        created_at=created_at,
+        extracted_at=extracted_at,
+        metadata={},
     )
+
+
+@router.websocket("/ws/progress/{job_id}")
+async def websocket_progress(
+    websocket: WebSocket,
+    job_id: str,
+    ws_manager: WebSocketManager = Depends(get_websocket_manager),
+    job_manager: JobManager = Depends(get_job_manager),
+):
+    """
+    WebSocket endpoint for real-time job progress updates.
+    
+    Clients can connect to this endpoint to receive live progress updates
+    for a specific extraction job. The connection will receive JSON messages
+    with job status, progress percentage, and posts processed.
+    
+    Args:
+        websocket: WebSocket connection.
+        job_id: Unique job identifier.
+        ws_manager: WebSocket manager (injected dependency).
+        job_manager: Job state manager (injected dependency).
+        
+    Example:
+        const ws = new WebSocket('ws://localhost:8000/api/v1/instagram/ws/progress/550e8400-e29b-41d4-a716-446655440000');
+        
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            console.log(`Progress: ${data.progress}%`);
+        };
+        
+    Message Format:
+        {
+            "job_id": "550e8400-e29b-41d4-a716-446655440000",
+            "status": "running",
+            "progress": 65,
+            "messages_processed": 32,
+            "errors": [],
+            "timestamp": "2025-11-23T10:30:00Z"
+        }
+    """
+    # Verify job exists
+    job = job_manager.get_job(job_id)
+    if not job:
+        await websocket.accept()
+        await websocket.send_json({
+            "error": f"Job {job_id} not found",
+            "job_id": job_id
+        })
+        await websocket.close()
+        return
+    
+    # Register connection
+    await ws_manager.connect(job_id, websocket)
+    
+    # Send initial job status
+    await ws_manager.send_job_update(job_id, job)
+    
+    try:
+        # Keep connection alive and listen for disconnect
+        while True:
+            # Wait for messages (client may send ping/keepalive)
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        # Client disconnected
+        await ws_manager.disconnect(job_id, websocket)
+    except Exception as e:
+        # Handle other errors
+        await ws_manager.disconnect(job_id, websocket)
+
+
 

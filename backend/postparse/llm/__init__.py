@@ -29,8 +29,8 @@ Features:
     - Type-safe configuration with Pydantic models
 """
 
-from postparse.llm.config import LLMConfig, ProviderConfig, load_llm_config
-from postparse.llm.exceptions import (
+from backend.postparse.llm.config import LLMConfig, ProviderConfig, load_llm_config
+from backend.postparse.llm.exceptions import (
     LLMAuthenticationError,
     LLMConnectionError,
     LLMInvalidRequestError,
@@ -39,7 +39,7 @@ from postparse.llm.exceptions import (
     LLMRateLimitError,
     LLMResponseError,
 )
-from postparse.llm.provider import LiteLLMProvider, LLMProvider, get_llm_provider
+from backend.postparse.llm.provider import LiteLLMProvider, LLMProvider, get_llm_provider
 
 __all__ = [
     # Base classes

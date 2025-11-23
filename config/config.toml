@@ -136,10 +136,21 @@ allowed_methods = ["*"]
 allowed_headers = ["*"]
 
 [api.rate_limiting]
-# Rate limiting configuration (to be implemented in subsequent phase)
-enabled = false
+# Rate limiting configuration
+# Enable in production to prevent abuse. Disable for development if needed.
+enabled = true
 requests_per_minute = 60
 burst_size = 10
+
+[api.jobs]
+# Job management configuration
+max_job_age_hours = 24  # Clean up jobs older than 24 hours
+cleanup_interval_minutes = 60  # Run cleanup every hour
+
+[api.websocket]
+# WebSocket configuration
+heartbeat_interval = 30  # Send heartbeat every 30 seconds to keep connection alive
+max_connections_per_job = 10  # Maximum WebSocket connections per job
 
 [paths]
 # Default directory paths

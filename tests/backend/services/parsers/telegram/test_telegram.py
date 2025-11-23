@@ -5,8 +5,8 @@ from datetime import datetime
 from telethon.tl.types import MessageMediaPhoto
 import asyncio
 
-from postparse.services.parsers.telegram.telegram_parser import TelegramParser
-from postparse.core.data.database import SocialMediaDatabase
+from backend.postparse.services.parsers.telegram.telegram_parser import TelegramParser
+from backend.postparse.core.data.database import SocialMediaDatabase
 
 
 def run_async(coro):
@@ -44,7 +44,7 @@ def create_mock_message(**kwargs):
 @pytest.fixture
 def mock_telegram_client():
     """Create a mock TelegramClient instance."""
-    with patch('postparse.services.parsers.telegram.telegram_parser.TelegramClient') as mock:
+    with patch('backend.postparse.services.parsers.telegram.telegram_parser.TelegramClient') as mock:
         client_instance = Mock()
         
         # Mock context manager methods
@@ -90,13 +90,13 @@ class TestTelegramParser:
 
     def test_initialization(self, mock_telegram_client):
         """Test TelegramParser initialization."""
-        parser = TelegramParser(api_id="test_id", api_hash="test_hash")
+        parser = TelegramParser(api_id=12345678, api_hash="test_hash")
         assert parser._client is not None
         assert parser._request_count == 0
 
     def test_parse_message(self, mock_telegram_client):
         """Test parsing a Telegram message."""
-        parser = TelegramParser(api_id="test_id", api_hash="test_hash")
+        parser = TelegramParser(api_id=12345678, api_hash="test_hash")
         mock_message = create_mock_message()
         
         # Run async parse_message synchronously
@@ -112,7 +112,7 @@ class TestTelegramParser:
 
     def test_get_saved_messages_normal_mode(self, mock_telegram_client, mock_db):
         """Test getting saved messages in normal mode."""
-        parser = TelegramParser(api_id="test_id", api_hash="test_hash")
+        parser = TelegramParser(api_id=12345678, api_hash="test_hash")
         
         # Run async context manager and get_saved_messages synchronously
         async def get_messages():
@@ -136,7 +136,7 @@ class TestTelegramParser:
     def test_get_saved_messages_force_update(self, mock_telegram_client, mock_db):
         """Test getting saved messages with force update."""
         mock_db.message_exists.return_value = True
-        parser = TelegramParser(api_id="test_id", api_hash="test_hash")
+        parser = TelegramParser(api_id=12345678, api_hash="test_hash")
         
         async def get_messages():
             async with parser:
@@ -153,7 +153,7 @@ class TestTelegramParser:
 
     def test_save_messages_to_db_normal_mode(self, mock_telegram_client, mock_db):
         """Test saving messages to database in normal mode."""
-        parser = TelegramParser(api_id="test_id", api_hash="test_hash")
+        parser = TelegramParser(api_id=12345678, api_hash="test_hash")
         
         async def save_messages():
             async with parser:
@@ -172,7 +172,7 @@ class TestTelegramParser:
     def test_save_messages_to_db_force_update(self, mock_telegram_client, mock_db):
         """Test saving messages to database with force update."""
         mock_db.message_exists.return_value = True
-        parser = TelegramParser(api_id="test_id", api_hash="test_hash")
+        parser = TelegramParser(api_id=12345678, api_hash="test_hash")
         
         async def save_messages():
             async with parser:
@@ -198,7 +198,7 @@ class TestTelegramParser:
             return "/path/to/media.jpg"
         mock_message.download_media = mock_download_media
         
-        parser = TelegramParser(api_id="test_id", api_hash="test_hash")
+        parser = TelegramParser(api_id=12345678, api_hash="test_hash")
         path = run_async(parser._download_media(mock_message))
         assert path == "/path/to/media.jpg"
 
@@ -211,7 +211,7 @@ class TestTelegramParser:
             raise asyncio.TimeoutError()
         mock_message.download_media = mock_download_timeout
         
-        parser = TelegramParser(api_id="test_id", api_hash="test_hash")
+        parser = TelegramParser(api_id=12345678, api_hash="test_hash")
         path = run_async(parser._download_media(mock_message, timeout=1))
         assert path is None
     

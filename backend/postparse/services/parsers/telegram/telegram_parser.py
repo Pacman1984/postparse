@@ -15,8 +15,8 @@ from telethon.errors import SessionPasswordNeededError
 from telethon.tl.types import Message, MessageMediaPhoto, MessageMediaDocument
 from tqdm import tqdm
 
-from postparse.core.data.database import SocialMediaDatabase
-from postparse.core.utils.config import get_config, get_paths_config
+from backend.postparse.core.data.database import SocialMediaDatabase
+from backend.postparse.core.utils.config import get_config, get_paths_config
 
 # Enable nested event loops for Jupyter
 nest_asyncio.apply()
@@ -25,27 +25,31 @@ nest_asyncio.apply()
 class TelegramParser:
     """Handles Telegram data extraction using Telethon."""
     
-    def __init__(self, api_id: str, api_hash: str, phone: str = None,
+    def __init__(self, api_id: int, api_hash: str, phone: str = None,
                  session_file: str = "telegram_session",
                  cache_dir: Optional[str] = None,
                  downloads_dir: Optional[str] = None,
-                 config_path: Optional[str] = None):
+                 config_path: Optional[str] = None,
+                 interactive: bool = True):
         """Initialize Telegram parser.
         
         Args:
-            api_id: Telegram API ID from https://my.telegram.org
+            api_id: Telegram API ID (integer) from https://my.telegram.org
             api_hash: Telegram API hash from https://my.telegram.org
             phone: Phone number in international format (e.g., +1234567890)
             session_file: Name of session file (without path)
             cache_dir: Directory for cache files (sessions). If None, uses config default.
             downloads_dir: Directory for downloaded media files. If None, uses config default.
             config_path: Path to configuration file. If None, uses default locations.
+            interactive: If True, prompts for input when needed. If False, raises errors
+                for missing credentials. Set to False for API usage.
         """
         # Load configuration
         config = get_config(config_path)
         paths_config = get_paths_config()
         
         self._phone = phone
+        self._interactive = interactive
         
         # Use configuration for directories with fallbacks
         cache_dir = cache_dir or config.get('paths.cache_dir', default='data/cache')
@@ -195,24 +199,47 @@ class TelegramParser:
             return None
     
     async def __aenter__(self):
-        """Async context manager entry."""
+        """Async context manager entry.
+        
+        For API usage (interactive=False), ensure phone is provided and session file exists,
+        or authenticate interactively beforehand. Non-interactive mode will raise
+        descriptive errors instead of prompting for input.
+        """
         await self._client.connect()
         
         if not await self._client.is_user_authorized():
             if not self._phone:
-                self._phone = input("Please enter your phone number in international format (e.g., +1234567890): ")
+                if self._interactive:
+                    self._phone = input("Please enter your phone number in international format (e.g., +1234567890): ")
+                else:
+                    raise ValueError(
+                        "Phone number is required for new sessions. "
+                        "Provide phone parameter or ensure session file exists."
+                    )
             
             # Send code request
             await self._client.send_code_request(self._phone)
             
             try:
                 # Get the verification code from user
-                verification_code = input("Please enter the verification code you received: ")
+                if self._interactive:
+                    verification_code = input("Please enter the verification code you received: ")
+                else:
+                    raise ValueError(
+                        "Session requires verification code. "
+                        "Please authenticate interactively first or provide valid session file."
+                    )
                 await self._client.sign_in(self._phone, verification_code)
                 
             except SessionPasswordNeededError:
                 # 2FA is enabled, ask for password
-                password = input("Please enter your 2FA password: ")
+                if self._interactive:
+                    password = input("Please enter your 2FA password: ")
+                else:
+                    raise ValueError(
+                        "Session requires 2FA password. "
+                        "Please authenticate interactively first or provide valid session file."
+                    )
                 await self._client.sign_in(password=password)
         
         self._me = await self._client.get_me()

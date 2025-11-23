@@ -3,9 +3,9 @@ import os
 import pytest
 from unittest.mock import Mock, patch
 from langchain_core.messages import AIMessage
-from langchain_community.chat_models import ChatLiteLLM
-from postparse.services.analysis.classifiers import RecipeLLMClassifier, RecipeDetails, ClassificationResult
-from postparse.llm.config import LLMConfig, get_provider_config
+from langchain_litellm import ChatLiteLLM
+from backend.postparse.services.analysis.classifiers import RecipeLLMClassifier, RecipeDetails, ClassificationResult
+from backend.postparse.llm.config import LLMConfig, get_provider_config
 
 
 def test_recipe_llm_classifier_initialization():
@@ -158,9 +158,9 @@ def test_invalid_provider_name():
     """Test that invalid provider_name raises ValueError."""
     os.environ.setdefault("OPENAI_API_KEY", "dummy-key-for-testing")
     
-    with patch('postparse.services.analysis.classifiers.llm.LLMConfig.from_config_manager') as mock_from_config:
+    with patch('backend.postparse.services.analysis.classifiers.llm.LLMConfig.from_config_manager') as mock_from_config:
         # Create a real LLMConfig instance with a known set of providers
-        from postparse.llm.config import ProviderConfig
+        from backend.postparse.llm.config import ProviderConfig
         
         # Create a minimal valid provider configuration
         valid_provider = ProviderConfig(
@@ -190,7 +190,7 @@ def test_uses_llm_config_section():
     os.environ.setdefault("OPENAI_API_KEY", "dummy-key-for-testing")
     
     # Mock at ConfigManager level to test actual config loading logic
-    with patch('postparse.services.analysis.classifiers.llm.get_config') as mock_get_config:
+    with patch('backend.postparse.services.analysis.classifiers.llm.get_config') as mock_get_config:
         # Create mock ConfigManager
         mock_config_manager = Mock()
         

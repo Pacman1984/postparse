@@ -16,6 +16,7 @@ Usage:
     uvicorn backend.postparse.api.main:app --reload --host 0.0.0.0 --port 8000
 """
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -40,6 +41,7 @@ from backend.postparse.api.routers import (
     classify_router,
     search_router,
     health_router,
+    jobs_router,
 )
 from backend.postparse.api.middleware import (
     configure_cors,
@@ -62,6 +64,48 @@ logger = logging.getLogger(__name__)
 config = ConfigManager()
 
 
+async def job_cleanup_task(config: ConfigManager):
+    """
+    Background task that periodically cleans up old jobs.
+
+    Runs indefinitely with sleep intervals, calling JobManager.cleanup_old_jobs()
+    with configured max_age_hours and cleanup_interval_minutes settings.
+
+    Args:
+        config: ConfigManager instance for reading configuration values.
+
+    Example:
+        >>> task = asyncio.create_task(job_cleanup_task(config))
+    """
+    from backend.postparse.api.dependencies import get_job_manager
+
+    # Get configuration values
+    max_age_hours = config.get("api.jobs.max_job_age_hours", 24)
+    cleanup_interval_minutes = config.get("api.jobs.cleanup_interval_minutes", 60)
+    cleanup_interval_seconds = cleanup_interval_minutes * 60
+
+    logger.info(
+        f"Job cleanup task started: cleaning jobs older than {max_age_hours} hours "
+        f"every {cleanup_interval_minutes} minutes"
+    )
+
+    # Get singleton JobManager instance
+    job_manager = get_job_manager()
+
+    while True:
+        try:
+            await asyncio.sleep(cleanup_interval_seconds)
+            cleaned_count = job_manager.cleanup_old_jobs(max_age_hours=max_age_hours)
+            if cleaned_count > 0:
+                logger.info(f"Job cleanup: removed {cleaned_count} old jobs")
+        except asyncio.CancelledError:
+            logger.info("Job cleanup task cancelled")
+            break
+        except Exception as e:
+            logger.error(f"Error in job cleanup task: {e}")
+            # Continue running despite errors
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -73,9 +117,11 @@ async def lifespan(app: FastAPI):
         - Load configuration
         - Initialize database and verify schema
         - Warm up classifiers
+        - Start background job cleanup task
         - Log startup message
 
     Shutdown:
+        - Stop background job cleanup task
         - Close database connections
         - Log shutdown message
     """
@@ -83,6 +129,8 @@ async def lifespan(app: FastAPI):
     logger.info("=" * 60)
     logger.info("Starting PostParse API")
     logger.info("=" * 60)
+
+    cleanup_task = None
 
     try:
         # Load and verify configuration
@@ -101,13 +149,17 @@ async def lifespan(app: FastAPI):
         # Warm up classifiers (load models into memory)
         logger.info("Warming up classifiers...")
         from backend.postparse.api.dependencies import _get_cached_recipe_llm_classifier
-        # Call cached helper function with explicit config instance
+        # Call cached helper function with provider name (cache key)
         try:
-            llm_classifier = _get_cached_recipe_llm_classifier(config)
-            logger.info("Classifier warmed up successfully")
+            llm_classifier = _get_cached_recipe_llm_classifier(default_provider)
+            logger.info(f"Classifier warmed up successfully (provider: {default_provider})")
         except Exception as e:
             logger.warning(f"Failed to warm up classifier: {e}")
             logger.warning("Classifier will be initialized on first request")
+
+        # Start background job cleanup task
+        logger.info("Starting background job cleanup task...")
+        cleanup_task = asyncio.create_task(job_cleanup_task(config))
 
         # Log API configuration
         api_host = config.get("api.host", "0.0.0.0")
@@ -130,6 +182,16 @@ async def lifespan(app: FastAPI):
     logger.info("=" * 60)
     logger.info("Shutting down PostParse API")
     logger.info("=" * 60)
+
+    # Stop background job cleanup task
+    if cleanup_task and not cleanup_task.done():
+        logger.info("Stopping background job cleanup task...")
+        cleanup_task.cancel()
+        try:
+            await cleanup_task
+        except asyncio.CancelledError:
+            pass
+
     logger.info("Cleanup completed successfully")
 
 
@@ -190,6 +252,10 @@ app = FastAPI(
             "description": "Search posts and messages with filters",
         },
         {
+            "name": "jobs",
+            "description": "Unified job status tracking for all platforms",
+        },
+        {
             "name": "health",
             "description": "Health checks and metrics",
         },
@@ -210,6 +276,7 @@ app.include_router(telegram_router)
 app.include_router(instagram_router)
 app.include_router(classify_router)
 app.include_router(search_router)
+app.include_router(jobs_router)
 
 
 # Exception handlers
@@ -242,7 +309,7 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
         status_code=exc.status_code,
         content={
             "error_code": f"HTTP_{exc.status_code}",
-            "message": exc.detail,
+            "detail": exc.detail,
         },
     )
 
@@ -252,14 +319,14 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
     """
     Handle request validation errors.
 
-    Returns 400 Bad Request with detailed validation error information.
+    Returns 422 Unprocessable Entity with detailed validation error information.
     """
     return JSONResponse(
-        status_code=status.HTTP_400_BAD_REQUEST,
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content={
-            "error_code": "INVALID_REQUEST",
-            "message": "Request validation failed",
-            "details": exc.errors(),
+            "error_code": "VALIDATION_ERROR",
+            "detail": "Request validation failed",
+            "errors": exc.errors(),
         },
     )
 
@@ -313,6 +380,7 @@ async def root() -> Dict[str, Any]:
             "instagram": "/api/v1/instagram",
             "classify": "/api/v1/classify",
             "search": "/api/v1/search",
+            "jobs": "/api/v1/jobs",
             "health": "/health",
         },
     }

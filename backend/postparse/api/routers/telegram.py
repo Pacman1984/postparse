@@ -10,10 +10,19 @@ the next phase. This module contains placeholder implementations.
 
 import uuid
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status, BackgroundTasks, WebSocket, WebSocketDisconnect
 
 from backend.postparse.core.data.database import SocialMediaDatabase
-from backend.postparse.api.dependencies import get_db, get_optional_auth
+from backend.postparse.api.dependencies import (
+    get_db,
+    get_optional_auth,
+    get_job_manager,
+    get_websocket_manager,
+    get_telegram_extraction_service,
+)
+from backend.postparse.api.services.job_manager import JobManager
+from backend.postparse.api.services.websocket_manager import WebSocketManager
+from backend.postparse.api.services.extraction_service import TelegramExtractionService
 from backend.postparse.api.schemas import (
     TelegramExtractRequest,
     TelegramExtractResponse,
@@ -56,15 +65,19 @@ router = APIRouter(
 )
 async def extract_messages(
     request: TelegramExtractRequest,
-    db: SocialMediaDatabase = Depends(get_db),
+    background_tasks: BackgroundTasks,
+    job_manager: JobManager = Depends(get_job_manager),
+    extraction_service: TelegramExtractionService = Depends(get_telegram_extraction_service),
     user: Optional[dict] = Depends(get_optional_auth),
 ) -> TelegramExtractResponse:
     """
-    Trigger Telegram message extraction (placeholder implementation).
+    Trigger Telegram message extraction with background processing.
     
     Args:
         request: Extraction request with Telegram credentials and options.
-        db: Database instance (injected dependency).
+        background_tasks: FastAPI background tasks manager.
+        job_manager: Job state manager (injected dependency).
+        extraction_service: Extraction service (injected dependency).
         user: Optional authenticated user info.
         
     Returns:
@@ -73,7 +86,7 @@ async def extract_messages(
     Example:
         POST /api/v1/telegram/extract
         {
-            "api_id": "12345678",
+            "api_id": 12345678,
             "api_hash": "0123456789abcdef0123456789abcdef",
             "phone": "+1234567890",
             "limit": 100
@@ -87,10 +100,21 @@ async def extract_messages(
             "estimated_time": 60
         }
     """
-    # TODO: Implement actual extraction logic in next phase
-    # This is a placeholder that returns a mock job_id
+    # Create job in job manager
+    job_id = job_manager.create_job('telegram', request.model_dump())
     
-    job_id = str(uuid.uuid4())
+    # Add extraction task to background tasks
+    # BackgroundTasks supports async functions, so we can add the async method directly
+    background_tasks.add_task(
+        extraction_service.run_extraction,
+        job_id=job_id,
+        api_id=request.api_id,
+        api_hash=request.api_hash,
+        phone=request.phone,
+        limit=request.limit,
+        force_update=request.force_update,
+        max_requests_per_session=request.max_requests_per_session,
+    )
     
     return TelegramExtractResponse(
         job_id=job_id,
@@ -112,17 +136,22 @@ async def extract_messages(
 )
 async def get_job_status(
     job_id: str,
+    job_manager: JobManager = Depends(get_job_manager),
     user: Optional[dict] = Depends(get_optional_auth),
 ) -> JobStatusResponse:
     """
-    Get extraction job status (placeholder implementation).
+    Get extraction job status.
     
     Args:
         job_id: Unique job identifier from extract_messages.
+        job_manager: Job state manager (injected dependency).
         user: Optional authenticated user info.
         
     Returns:
         JobStatusResponse with current job status and progress.
+        
+    Raises:
+        HTTPException: 404 if job not found.
         
     Example:
         GET /api/v1/telegram/jobs/550e8400-e29b-41d4-a716-446655440000
@@ -136,15 +165,21 @@ async def get_job_status(
             "errors": []
         }
     """
-    # TODO: Implement actual job status tracking in next phase
-    # This is a placeholder that returns mock status
+    # Retrieve job from job manager
+    job = job_manager.get_job(job_id)
+    
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Job {job_id} not found",
+        )
     
     return JobStatusResponse(
-        job_id=job_id,
-        status=ExtractionStatus.COMPLETED,
-        progress=100,
-        messages_processed=100,
-        errors=[],
+        job_id=job.job_id,
+        status=job.status,
+        progress=job.progress,
+        messages_processed=job.messages_processed,
+        errors=job.errors,
     )
 
 
@@ -245,7 +280,7 @@ async def get_messages(
         ))
     
     has_more = len(messages) > limit
-    total = len(message_schemas)  # TODO: Get actual count from database
+    total = db.count_telegram_messages()  # Get actual count from database for pagination
     
     return PaginatedResponse(
         items=message_schemas,
@@ -295,11 +330,124 @@ async def get_message(
             ...
         }
     """
-    # TODO: Implement actual message retrieval by ID
-    # This is a placeholder that raises 404
+    from datetime import datetime as dt
+    import json
     
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail=f"Message with ID {message_id} not found",
+    # Retrieve message from database
+    message = db.get_telegram_message(message_id)
+    
+    if not message:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Message with ID {message_id} not found",
+        )
+    
+    # Parse media_urls from JSON string if needed
+    media_urls = message.get("media_urls", [])
+    if isinstance(media_urls, str):
+        try:
+            media_urls = json.loads(media_urls) if media_urls else []
+        except json.JSONDecodeError:
+            media_urls = []
+    
+    # Parse created_at timestamp
+    created_at = message.get("created_at")
+    if created_at and isinstance(created_at, str):
+        try:
+            created_at = dt.fromisoformat(created_at.replace('Z', '+00:00'))
+        except (ValueError, AttributeError):
+            created_at = None
+    
+    # Parse extracted_at (saved_at in database) timestamp
+    extracted_at = message.get("saved_at")
+    if extracted_at and isinstance(extracted_at, str):
+        try:
+            extracted_at = dt.fromisoformat(extracted_at.replace('Z', '+00:00'))
+        except (ValueError, AttributeError):
+            extracted_at = None
+    
+    # Fetch hashtags from telegram_hashtags table
+    # TODO: Implement hashtag retrieval from database
+    hashtags = []
+    
+    return TelegramMessageSchema(
+        message_id=message.get("message_id", 0),
+        channel_username=None,  # Database doesn't have this field yet
+        content=message.get("content"),
+        content_type=message.get("content_type", "text"),
+        media_urls=media_urls if isinstance(media_urls, list) else [],
+        hashtags=hashtags,
+        mentions=[],  # TODO: Get from separate table
+        created_at=created_at,
+        extracted_at=extracted_at,
+        metadata={},
     )
+
+
+@router.websocket("/ws/progress/{job_id}")
+async def websocket_progress(
+    websocket: WebSocket,
+    job_id: str,
+    ws_manager: WebSocketManager = Depends(get_websocket_manager),
+    job_manager: JobManager = Depends(get_job_manager),
+):
+    """
+    WebSocket endpoint for real-time job progress updates.
+    
+    Clients can connect to this endpoint to receive live progress updates
+    for a specific extraction job. The connection will receive JSON messages
+    with job status, progress percentage, and messages processed.
+    
+    Args:
+        websocket: WebSocket connection.
+        job_id: Unique job identifier.
+        ws_manager: WebSocket manager (injected dependency).
+        job_manager: Job state manager (injected dependency).
+        
+    Example:
+        const ws = new WebSocket('ws://localhost:8000/api/v1/telegram/ws/progress/550e8400-e29b-41d4-a716-446655440000');
+        
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            console.log(`Progress: ${data.progress}%`);
+        };
+        
+    Message Format:
+        {
+            "job_id": "550e8400-e29b-41d4-a716-446655440000",
+            "status": "running",
+            "progress": 65,
+            "messages_processed": 65,
+            "errors": [],
+            "timestamp": "2025-11-23T10:30:00Z"
+        }
+    """
+    # Verify job exists
+    job = job_manager.get_job(job_id)
+    if not job:
+        await websocket.accept()
+        await websocket.send_json({
+            "error": f"Job {job_id} not found",
+            "job_id": job_id
+        })
+        await websocket.close()
+        return
+    
+    # Register connection
+    await ws_manager.connect(job_id, websocket)
+    
+    # Send initial job status
+    await ws_manager.send_job_update(job_id, job)
+    
+    try:
+        # Keep connection alive and listen for disconnect
+        while True:
+            # Wait for messages (client may send ping/keepalive)
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        # Client disconnected
+        await ws_manager.disconnect(job_id, websocket)
+    except Exception as e:
+        # Handle other errors
+        await ws_manager.disconnect(job_id, websocket)
 

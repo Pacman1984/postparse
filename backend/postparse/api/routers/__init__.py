@@ -9,6 +9,7 @@ from .instagram import router as instagram_router
 from .classify import router as classify_router
 from .search import router as search_router
 from .health import router as health_router
+from .jobs import router as jobs_router
 
 __all__ = [
     "telegram_router",
@@ -16,6 +17,7 @@ __all__ = [
     "classify_router",
     "search_router",
     "health_router",
+    "jobs_router",
 ]
 
 

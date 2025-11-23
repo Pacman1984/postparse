@@ -165,8 +165,8 @@ class TestClassifyEndpoints:
             "classifier_type": "llm"
         })
         
-        # FastAPI returns 400 for validation errors
-        assert response.status_code == 400
+        # FastAPI returns 422 for validation errors
+        assert response.status_code == 422
 
 
 class TestRootEndpoint:

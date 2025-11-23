@@ -50,7 +50,7 @@ class ConfigManager:
         search_paths = [
             Path("config/config.toml"),
             Path("config.toml"),
-            Path(__file__).parent.parent.parent.parent.parent / "config" / "config.toml"
+            Path(__file__).parent.parent.parent.parent / "config" / "config.toml"
         ]
         
         for path in search_paths:

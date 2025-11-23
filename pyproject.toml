@@ -35,12 +35,14 @@ dependencies = [
     "langchain-core>=1.0.0,<2.0.0",
     "litellm>=1.0.0,<2.0.0",
     "langchain-community>=0.3.0,<1.0.0",
+    "langchain-litellm>=0.3.0,<1.0.0",
     "pydantic>=2.7.4,<3.0.0",
     "fastapi>=0.115.0,<1.0.0",
     "uvicorn[standard]>=0.32.0,<1.0.0",
     "python-jose[cryptography]>=3.3.0,<4.0.0",
     "python-multipart>=0.0.9,<1.0.0",
     "email-validator>=2.0.0,<3.0.0",
+    "websockets>=12.0,<13.0.0",
 ]
 
 [project.optional-dependencies]
@@ -48,6 +50,7 @@ dev = [
     "pytest>=7.4.0",
     "pytest-asyncio>=0.21.0",
     "pytest-cov>=4.1.0",
+    "pytest-mock>=3.12.0",
     "black>=23.7.0",
     "isort>=5.12.0",
     "mypy>=1.5.0",
@@ -81,6 +84,7 @@ dev-dependencies = [
     "pytest>=7.4.0",
     "pytest-asyncio>=0.21.0",
     "pytest-cov>=4.1.0",
+    "pytest-mock>=3.12.0",
     "black>=23.7.0",
     "isort>=5.12.0",
     "mypy>=1.5.0",
@@ -89,6 +93,9 @@ dev-dependencies = [
 package = true
 
 [tool.pytest.ini_options]
+# Pytest-asyncio configuration
+asyncio_mode = "auto"
+
 # Filter out known harmless warnings from dependencies
 filterwarnings = [
     # Suppress Pydantic serialization warnings from LiteLLM when using local LLM servers
@@ -96,8 +103,14 @@ filterwarnings = [
     "ignore:Pydantic serializer warnings:UserWarning",
     # Suppress asyncio event loop warnings from LiteLLM's internal logging
     "ignore:There is no current event loop:DeprecationWarning",
+    # Suppress Telethon cleanup warnings during test teardown
+    "ignore::ResourceWarning",
+    "ignore:coroutine.*was never awaited:RuntimeWarning",
+    # Suppress deprecation warnings we're actively fixing
+    "ignore:datetime.datetime.utcnow.*is deprecated:DeprecationWarning",
 ]
 # Register custom markers
 markers = [
     "integration: marks tests as integration tests requiring external services",
+    "slow: marks tests as slow running tests (deselect with '-m \"not slow\"')",
 ]

@@ -1,12 +1,12 @@
 from typing import Any, Optional
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
-from langchain_community.chat_models import ChatLiteLLM
+from langchain_litellm import ChatLiteLLM
 from pydantic import BaseModel, Field
 
 from .base import BaseClassifier, ClassificationResult
-from postparse.core.utils.config import get_config
-from postparse.llm.config import LLMConfig, get_provider_config
+from backend.postparse.core.utils.config import get_config
+from backend.postparse.llm.config import LLMConfig, get_provider_config
 
 class RecipeDetails(BaseModel):
     """Detailed recipe classification output."""

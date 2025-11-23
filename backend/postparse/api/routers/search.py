@@ -8,6 +8,7 @@ Note: Advanced filtering and cursor-based pagination will be implemented
 in the next phase. This module contains basic implementations.
 """
 
+from datetime import datetime as dt
 from typing import Dict, Any, List
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
@@ -93,17 +94,24 @@ async def search_posts(
         filters_applied["hashtags"] = request.hashtags[:1]  # Only track first hashtag currently used
         # Get posts by hashtag (using first hashtag only)
         posts = db.get_posts_by_hashtag(request.hashtags[0], limit=request.limit + 1)
-    elif request.owner_username:
-        # owner_username filter not yet implemented, fall back to all posts
-        filters_applied["owner_username"] = request.owner_username
-        posts = db.get_instagram_posts(limit=request.limit + 1)
     else:
-        # Get all posts
+        # Get all posts (owner_username filter not yet implemented)
+        # Note: owner_username is accepted in the schema but not yet applied
         posts = db.get_instagram_posts(limit=request.limit + 1)
     
     # Convert to search result schemas
     results = []
     for post in posts[:request.limit]:
+        # Parse created_at timestamp
+        created_at = post.get("created_at")
+        if isinstance(created_at, str) and created_at.strip():
+            try:
+                created_at = dt.fromisoformat(created_at.replace('Z', '+00:00'))
+            except (ValueError, AttributeError):
+                created_at = None
+        else:
+            created_at = None
+        
         results.append(PostSearchResult(
             shortcode=post.get("shortcode", ""),
             owner_username=post.get("owner_username", ""),
@@ -111,16 +119,24 @@ async def search_posts(
             is_video=post.get("is_video", False),
             likes=post.get("likes", 0),
             hashtags=post.get("hashtags", []),
-            created_at=post.get("created_at", ""),
+            created_at=created_at,
         ))
     
     has_more = len(posts) > request.limit
     next_offset = request.offset + request.limit if has_more else None
     prev_offset = max(0, request.offset - request.limit) if request.offset > 0 else None
     
+    # Get actual total count based on filters applied
+    if request.hashtags:
+        # When filtering by hashtag, count only posts with that hashtag
+        total_count = db.count_instagram_posts_by_hashtag(request.hashtags[0])
+    else:
+        # When not filtering, count all posts
+        total_count = db.count_instagram_posts()
+    
     return SearchResponse(
         results=results,
-        total_count=len(results),  # TODO: Get actual count from database
+        total_count=total_count,
         filters_applied=filters_applied,
         pagination={
             "limit": request.limit,
@@ -186,10 +202,7 @@ async def search_messages(
     # Note: hashtags, channel_username, and offset filters are not yet implemented
     # These parameters are accepted but currently ignored
     # date_range and content_type are also not yet implemented but accepted in the schema
-    if request.hashtags:
-        filters_applied["hashtags"] = request.hashtags  # Tracked but not applied
-    if request.channel_username:
-        filters_applied["channel_username"] = request.channel_username  # Tracked but not applied
+    # Only add filters to filters_applied when they're actually being used
     
     # Get messages from database (no filtering applied yet)
     messages = db.get_telegram_messages(limit=request.limit + 1)
@@ -197,22 +210,36 @@ async def search_messages(
     # Convert to search result schemas
     results = []
     for msg in messages[:request.limit]:
+        # Parse created_at timestamp
+        created_at = msg.get("created_at")
+        if isinstance(created_at, str) and created_at.strip():
+            try:
+                created_at = dt.fromisoformat(created_at.replace('Z', '+00:00'))
+            except (ValueError, AttributeError):
+                created_at = None
+        else:
+            created_at = None
+        
         results.append(MessageSearchResult(
             message_id=msg.get("message_id", 0),
             channel_username=msg.get("channel_username", ""),
             content=msg.get("content", "")[:200] if msg.get("content") else None,  # Truncate
             content_type=msg.get("content_type", "text"),
             hashtags=msg.get("hashtags", []),
-            created_at=msg.get("created_at", ""),
+            created_at=created_at,
         ))
     
     has_more = len(messages) > request.limit
     next_offset = request.offset + request.limit if has_more else None
     prev_offset = max(0, request.offset - request.limit) if request.offset > 0 else None
     
+    # Get actual total count from database
+    # Note: When hashtag/channel filtering is implemented, this will need to be conditional
+    total_count = db.count_telegram_messages()
+    
     return SearchResponse(
         results=results,
-        total_count=len(results),  # TODO: Get actual count from database
+        total_count=total_count,
         filters_applied=filters_applied,
         pagination={
             "limit": request.limit,

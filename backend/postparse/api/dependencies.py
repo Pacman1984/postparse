@@ -24,6 +24,12 @@ from jose import JWTError, jwt
 from backend.postparse.core.data.database import SocialMediaDatabase
 from backend.postparse.services.analysis.classifiers.llm import RecipeLLMClassifier
 from backend.postparse.core.utils.config import ConfigManager
+from backend.postparse.api.services.job_manager import JobManager
+from backend.postparse.api.services.websocket_manager import WebSocketManager
+from backend.postparse.api.services.extraction_service import (
+    TelegramExtractionService,
+    InstagramExtractionService,
+)
 
 # Security scheme for JWT authentication
 security = HTTPBearer(auto_error=False)
@@ -71,24 +77,23 @@ def get_db(config: ConfigManager = Depends(get_config)) -> Generator[SocialMedia
         pass
 
 
-@lru_cache()
-def _get_cached_recipe_llm_classifier(config: ConfigManager) -> RecipeLLMClassifier:
+@lru_cache(maxsize=8)
+def _get_cached_recipe_llm_classifier(provider_name: str) -> RecipeLLMClassifier:
     """
     Get cached RecipeLLMClassifier instance (internal helper).
 
     The LLM classifier is cached to avoid re-initialization on every request.
-    Uses the default LLM provider from config.
+    Caching is keyed by provider_name to ensure stability across ConfigManager instances.
 
     This is a non-FastAPI cached helper that should not be called directly
     in route handlers. Use get_recipe_llm_classifier instead.
 
     Args:
-        config: ConfigManager instance.
+        provider_name: Name of the LLM provider (e.g., "ollama", "openai").
 
     Returns:
-        RecipeLLMClassifier: Cached LLM classifier instance.
+        RecipeLLMClassifier: Cached LLM classifier instance for the specified provider.
     """
-    provider_name = config.get("llm.default_provider", "ollama")
     return RecipeLLMClassifier(provider_name=provider_name)
 
 
@@ -97,8 +102,8 @@ def get_recipe_llm_classifier(config: ConfigManager = Depends(get_config)) -> Re
     FastAPI dependency for RecipeLLMClassifier.
 
     Returns a cached LLM classifier instance. The caching is handled by
-    _get_cached_recipe_llm_classifier to avoid conflicts with FastAPI's
-    dependency injection mechanism.
+    _get_cached_recipe_llm_classifier with provider_name as the cache key
+    to ensure consistent caching across different ConfigManager instances.
 
     Args:
         config: ConfigManager instance (injected dependency).
@@ -114,7 +119,8 @@ def get_recipe_llm_classifier(config: ConfigManager = Depends(get_config)) -> Re
         ):
             return classifier.predict(text)
     """
-    return _get_cached_recipe_llm_classifier(config)
+    provider_name = config.get("llm.default_provider", "ollama")
+    return _get_cached_recipe_llm_classifier(provider_name)
 
 
 async def get_current_user(
@@ -207,5 +213,92 @@ def get_optional_auth(
             return {"message": "Hello, guest"}
     """
     return user
+
+
+@lru_cache()
+def get_job_manager() -> JobManager:
+    """
+    Get singleton JobManager instance.
+
+    Returns:
+        JobManager: Singleton job manager instance.
+
+    Example:
+        @app.get("/jobs")
+        def list_jobs(job_manager: JobManager = Depends(get_job_manager)):
+            return job_manager.list_jobs()
+    """
+    return JobManager()
+
+
+@lru_cache()
+def get_websocket_manager() -> WebSocketManager:
+    """
+    Get singleton WebSocketManager instance.
+
+    Returns:
+        WebSocketManager: Singleton WebSocket manager instance.
+
+    Example:
+        @app.websocket("/ws/{job_id}")
+        async def websocket_endpoint(
+            job_id: str,
+            ws_manager: WebSocketManager = Depends(get_websocket_manager)
+        ):
+            await ws_manager.connect(job_id, websocket)
+    """
+    return WebSocketManager()
+
+
+def get_telegram_extraction_service(
+    job_manager: JobManager = Depends(get_job_manager),
+    ws_manager: WebSocketManager = Depends(get_websocket_manager),
+    db: SocialMediaDatabase = Depends(get_db),
+) -> TelegramExtractionService:
+    """
+    Get TelegramExtractionService with injected dependencies.
+
+    Args:
+        job_manager: JobManager instance (injected dependency).
+        ws_manager: WebSocketManager instance (injected dependency).
+        db: SocialMediaDatabase instance (injected dependency).
+
+    Returns:
+        TelegramExtractionService: Extraction service instance.
+
+    Example:
+        @app.post("/telegram/extract")
+        async def extract(
+            service: TelegramExtractionService = Depends(get_telegram_extraction_service)
+        ):
+            await service.run_extraction(...)
+    """
+    return TelegramExtractionService(job_manager, ws_manager, db)
+
+
+def get_instagram_extraction_service(
+    job_manager: JobManager = Depends(get_job_manager),
+    ws_manager: WebSocketManager = Depends(get_websocket_manager),
+    db: SocialMediaDatabase = Depends(get_db),
+) -> InstagramExtractionService:
+    """
+    Get InstagramExtractionService with injected dependencies.
+
+    Args:
+        job_manager: JobManager instance (injected dependency).
+        ws_manager: WebSocketManager instance (injected dependency).
+        db: SocialMediaDatabase instance (injected dependency).
+
+    Returns:
+        InstagramExtractionService: Extraction service instance.
+
+    Example:
+        @app.post("/instagram/extract")
+        async def extract(
+            service: InstagramExtractionService = Depends(get_instagram_extraction_service)
+        ):
+            await service.run_extraction(...)
+    """
+    return InstagramExtractionService(job_manager, ws_manager, db)
 
 

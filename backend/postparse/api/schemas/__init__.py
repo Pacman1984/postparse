@@ -38,6 +38,7 @@ from .search import (
     MessageSearchResult,
     DateRangeFilter,
     ContentTypeFilter,
+    PaginationMetadata,
 )
 
 __all__ = [
@@ -71,6 +72,7 @@ __all__ = [
     "MessageSearchResult",
     "DateRangeFilter",
     "ContentTypeFilter",
+    "PaginationMetadata",
 ]
 
 

@@ -50,6 +50,10 @@ router = APIRouter(
     
     Returns classification label, confidence score, and additional details
     like cuisine type, difficulty, and meal type.
+    
+    Provider switching is supported: specify `provider_name` in the request
+    to use a different LLM provider (e.g., "openai", "anthropic", "lm_studio").
+    If not specified, uses the default provider from configuration.
     """,
 )
 async def classify_recipe(
@@ -69,6 +73,7 @@ async def classify_recipe(
         ClassifyResponse with label, confidence, and details.
         
     Raises:
+        HTTPException: 400 if provider_name is invalid.
         HTTPException: 503 if LLM service is unavailable.
         
     Example:
@@ -96,8 +101,19 @@ async def classify_recipe(
     start_time = time.time()
     
     try:
-        # Use LLM classifier (only classifier available)
-        classifier = llm_classifier
+        # Use provider-specific classifier if provider_name is provided
+        if request.provider_name:
+            try:
+                classifier = RecipeLLMClassifier(provider_name=request.provider_name)
+            except Exception as e:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid provider_name '{request.provider_name}': {str(e)}",
+                )
+        else:
+            # Use default injected classifier
+            classifier = llm_classifier
+        
         classifier_name = "llm"
         
         # Perform classification
@@ -113,6 +129,9 @@ async def classify_recipe(
             classifier_used=classifier_name,
         )
         
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
     except Exception as e:
         # Handle LLM provider errors
         raise HTTPException(
@@ -130,6 +149,9 @@ async def classify_recipe(
     
     Supports up to 100 texts per request. Uses the same classifier types
     as the single classification endpoint.
+    
+    Provider switching is supported: specify `provider_name` in the request
+    to use a different LLM provider for all texts in the batch.
     """,
 )
 async def classify_batch(
@@ -148,6 +170,9 @@ async def classify_batch(
     Returns:
         BatchClassifyResponse with results for all texts.
         
+    Raises:
+        HTTPException: 400 if provider_name is invalid.
+        
     Example:
         POST /api/v1/classify/batch
         {
@@ -156,7 +181,8 @@ async def classify_batch(
                 "Just finished watching a great movie",
                 "Mix flour, eggs, and milk to make pancakes"
             ],
-            "classifier_type": "llm"
+            "classifier_type": "llm",
+            "provider_name": "openai"
         }
         
         Response:
@@ -169,8 +195,19 @@ async def classify_batch(
     """
     start_time = time.time()
     
-    # Use LLM classifier (only classifier available)
-    classifier = llm_classifier
+    # Use provider-specific classifier if provider_name is provided
+    if request.provider_name:
+        try:
+            classifier = RecipeLLMClassifier(provider_name=request.provider_name)
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid provider_name '{request.provider_name}': {str(e)}",
+            )
+    else:
+        # Use default injected classifier
+        classifier = llm_classifier
+    
     classifier_name = "llm"
     
     results = []

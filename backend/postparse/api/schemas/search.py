@@ -13,6 +13,56 @@ from pydantic import BaseModel, Field, ConfigDict, field_validator
 T = TypeVar("T")
 
 
+class PaginationMetadata(BaseModel):
+    """
+    Pagination metadata for cursor-based pagination.
+
+    Attributes:
+        cursor: Current pagination cursor (base64-encoded).
+        next_cursor: Next page cursor (None if no more results).
+        has_more: Whether more results are available.
+        limit: Maximum results returned per page.
+
+    Example:
+        {
+            "cursor": null,
+            "next_cursor": "MjAyNC0wMS0xNVQxMDozMDowMHwxMjM=",
+            "has_more": true,
+            "limit": 50
+        }
+    """
+
+    model_config = ConfigDict(json_schema_extra={
+        "examples": [
+            {
+                "cursor": None,
+                "next_cursor": "MjAyNC0wMS0xNVQxMDozMDowMHwxMjM=",
+                "has_more": True,
+                "limit": 50
+            }
+        ]
+    })
+
+    cursor: Optional[str] = Field(
+        default=None,
+        description="Current pagination cursor (base64-encoded)"
+    )
+    next_cursor: Optional[str] = Field(
+        default=None,
+        description="Next page cursor (None if no more results)"
+    )
+    has_more: bool = Field(
+        ...,
+        description="Whether more results are available"
+    )
+    limit: int = Field(
+        ...,
+        ge=1,
+        le=100,
+        description="Maximum results returned per page"
+    )
+
+
 class ContentTypeFilter(str, Enum):
     """
     Content type filter for posts/messages.
@@ -82,7 +132,7 @@ class SearchPostsRequest(BaseModel):
         content_type: Content type filter.
         owner_username: Filter by post owner username.
         limit: Maximum results to return.
-        offset: Number of results to skip.
+        cursor: Pagination cursor (base64-encoded).
 
     Example:
         {
@@ -94,7 +144,7 @@ class SearchPostsRequest(BaseModel):
             "content_type": "image",
             "owner_username": null,
             "limit": 50,
-            "offset": 0
+            "cursor": null
         }
     """
 
@@ -109,7 +159,7 @@ class SearchPostsRequest(BaseModel):
                 "content_type": "image",
                 "owner_username": None,
                 "limit": 50,
-                "offset": 0
+                "cursor": None
             }
         ]
     })
@@ -138,33 +188,47 @@ class SearchPostsRequest(BaseModel):
         le=100,
         description="Maximum results to return"
     )
-    offset: int = Field(
-        default=0,
-        ge=0,
-        description="Number of results to skip"
+    cursor: Optional[str] = Field(
+        default=None,
+        description="Pagination cursor (base64-encoded string from previous response)"
     )
+    
+    @field_validator("cursor")
+    @classmethod
+    def validate_cursor(cls, v: Optional[str]) -> Optional[str]:
+        """Validate that cursor is a valid base64 string."""
+        if v is not None:
+            try:
+                import base64
+                base64.b64decode(v.encode())
+            except Exception:
+                raise ValueError("cursor must be a valid base64-encoded string")
+        return v
 
 
 class SearchMessagesRequest(BaseModel):
     """
     Query parameters for Telegram message search.
 
+    Note: channel_username filtering is NOT SUPPORTED. The underlying database
+    schema does not store channel information. Requests with channel_username
+    will be rejected with a 400 error.
+
     Attributes:
         hashtags: List of hashtags to filter by (OR logic).
         date_range: Date range filter.
         content_type: Content type filter.
-        channel_username: Filter by channel username.
+        channel_username: DEPRECATED - Not supported, will return 400 error if provided.
         limit: Maximum results to return.
-        offset: Number of results to skip.
+        cursor: Pagination cursor (base64-encoded).
 
     Example:
         {
             "hashtags": ["recipe"],
             "date_range": null,
             "content_type": "text",
-            "channel_username": "cooking_channel",
             "limit": 50,
-            "offset": 0
+            "cursor": null
         }
     """
 
@@ -174,9 +238,8 @@ class SearchMessagesRequest(BaseModel):
                 "hashtags": ["recipe"],
                 "date_range": None,
                 "content_type": "text",
-                "channel_username": "cooking_channel",
                 "limit": 50,
-                "offset": 0
+                "cursor": None
             }
         ]
     })
@@ -196,8 +259,9 @@ class SearchMessagesRequest(BaseModel):
     )
     channel_username: Optional[str] = Field(
         default=None,
-        description="Filter by channel",
-        examples=["cooking_channel"]
+        description="DEPRECATED - Not supported. Will return 400 error if provided.",
+        examples=None,
+        deprecated=True
     )
     limit: int = Field(
         default=50,
@@ -205,11 +269,22 @@ class SearchMessagesRequest(BaseModel):
         le=100,
         description="Maximum results to return"
     )
-    offset: int = Field(
-        default=0,
-        ge=0,
-        description="Number of results to skip"
+    cursor: Optional[str] = Field(
+        default=None,
+        description="Pagination cursor (base64-encoded string from previous response)"
     )
+    
+    @field_validator("cursor")
+    @classmethod
+    def validate_cursor(cls, v: Optional[str]) -> Optional[str]:
+        """Validate that cursor is a valid base64 string."""
+        if v is not None:
+            try:
+                import base64
+                base64.b64decode(v.encode())
+            except Exception:
+                raise ValueError("cursor must be a valid base64-encoded string")
+        return v
 
 
 class PostSearchResult(BaseModel):
@@ -245,9 +320,13 @@ class MessageSearchResult(BaseModel):
 
     Contains a subset of TelegramMessageSchema fields for efficient search responses.
 
+    The database stores chat_id (numeric identifier) rather than channel_username.
+    Use chat_id to identify the source chat/channel for Telegram messages.
+
     Attributes:
         message_id: Telegram message ID.
-        channel_username: Channel username.
+        chat_id: Telegram chat/channel ID (numeric identifier).
+        channel_username: DEPRECATED - Always None (not stored in database).
         content: Message content (truncated to 200 chars).
         content_type: Content type.
         hashtags: Extracted hashtags.
@@ -257,7 +336,15 @@ class MessageSearchResult(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     message_id: int
-    channel_username: str
+    chat_id: Optional[int] = Field(
+        default=None,
+        description="Telegram chat/channel ID (numeric identifier)"
+    )
+    channel_username: Optional[str] = Field(
+        default=None,
+        description="DEPRECATED - Not stored in database, always None",
+        deprecated=True
+    )
     content: Optional[str] = None
     content_type: str = "text"
     hashtags: List[str] = Field(default_factory=list)
@@ -266,13 +353,13 @@ class MessageSearchResult(BaseModel):
 
 class SearchResponse(BaseModel, Generic[T]):
     """
-    Generic search response schema.
+    Generic search response schema with cursor-based pagination.
 
     Attributes:
         results: List of search results.
         total_count: Total matching results (before pagination).
         filters_applied: Dictionary of filters that were applied.
-        pagination: Pagination metadata.
+        pagination: Pagination metadata with cursor support.
 
     Example:
         {
@@ -283,10 +370,10 @@ class SearchResponse(BaseModel, Generic[T]):
                 "content_type": "image"
             },
             "pagination": {
-                "limit": 50,
-                "offset": 0,
-                "next_offset": 50,
-                "prev_offset": null
+                "cursor": null,
+                "next_cursor": "MjAyNC0wMS0xNVQxMDozMDowMHwxMjM=",
+                "has_more": true,
+                "limit": 50
             }
         }
     """
@@ -301,10 +388,10 @@ class SearchResponse(BaseModel, Generic[T]):
                     "content_type": "image"
                 },
                 "pagination": {
-                    "limit": 50,
-                    "offset": 0,
-                    "next_offset": 50,
-                    "prev_offset": None
+                    "cursor": None,
+                    "next_cursor": "MjAyNC0wMS0xNVQxMDozMDowMHwxMjM=",
+                    "has_more": True,
+                    "limit": 50
                 }
             }
         ]
@@ -323,8 +410,8 @@ class SearchResponse(BaseModel, Generic[T]):
         default_factory=dict,
         description="Filters that were applied"
     )
-    pagination: Dict[str, Optional[int]] = Field(
-        default_factory=dict,
-        description="Pagination metadata"
+    pagination: PaginationMetadata = Field(
+        ...,
+        description="Pagination metadata with cursor support"
     )
 

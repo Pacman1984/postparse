@@ -66,7 +66,9 @@ class TestSearchDatetimeParsing:
         with patch("backend.postparse.api.routers.search.Depends") as mock_depends:
             # Mock database dependency
             mock_db = MagicMock()
-            mock_db.get_instagram_posts.return_value = mock_posts
+            # Use new search_instagram_posts method that returns (results, cursor) tuple
+            mock_db.search_instagram_posts.return_value = (mock_posts, None)
+            mock_db.count_instagram_posts_filtered.return_value = len(mock_posts)
             
             # Setup dependency override
             from backend.postparse.api import dependencies
@@ -135,7 +137,8 @@ class TestSearchDatetimeParsing:
         
         with patch("backend.postparse.api.routers.search.Depends") as mock_depends:
             mock_db = MagicMock()
-            mock_db.get_instagram_posts.return_value = mock_posts
+            mock_db.search_instagram_posts.return_value = (mock_posts, None)
+            mock_db.count_instagram_posts_filtered.return_value = len(mock_posts)
             
             from backend.postparse.api import dependencies
             original_get_db = dependencies.get_db
@@ -187,7 +190,8 @@ class TestSearchDatetimeParsing:
         
         with patch("backend.postparse.api.routers.search.Depends") as mock_depends:
             mock_db = MagicMock()
-            mock_db.get_telegram_messages.return_value = mock_messages
+            mock_db.search_telegram_messages.return_value = (mock_messages, None)
+            mock_db.count_telegram_messages_filtered.return_value = len(mock_messages)
             
             from backend.postparse.api import dependencies
             original_get_db = dependencies.get_db
@@ -232,7 +236,8 @@ class TestSearchDatetimeParsing:
         
         with patch("backend.postparse.api.routers.search.Depends") as mock_depends:
             mock_db = MagicMock()
-            mock_db.get_telegram_messages.return_value = mock_messages
+            mock_db.search_telegram_messages.return_value = (mock_messages, None)
+            mock_db.count_telegram_messages_filtered.return_value = len(mock_messages)
             
             from backend.postparse.api import dependencies
             original_get_db = dependencies.get_db

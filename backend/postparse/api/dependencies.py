@@ -26,6 +26,7 @@ from backend.postparse.services.analysis.classifiers.llm import RecipeLLMClassif
 from backend.postparse.core.utils.config import ConfigManager
 from backend.postparse.api.services.job_manager import JobManager
 from backend.postparse.api.services.websocket_manager import WebSocketManager
+from backend.postparse.api.services.cache_manager import CacheManager
 from backend.postparse.api.services.extraction_service import (
     TelegramExtractionService,
     InstagramExtractionService,
@@ -248,6 +249,31 @@ def get_websocket_manager() -> WebSocketManager:
             await ws_manager.connect(job_id, websocket)
     """
     return WebSocketManager()
+
+
+@lru_cache()
+def get_cache_manager(config: ConfigManager = Depends(get_config)) -> CacheManager:
+    """
+    Get singleton CacheManager instance.
+
+    Returns:
+        CacheManager: Singleton cache manager instance.
+
+    Example:
+        @app.get("/search/posts")
+        async def search_posts(
+            cache: CacheManager = Depends(get_cache_manager),
+            db: SocialMediaDatabase = Depends(get_db)
+        ):
+            cache_key = cache.generate_cache_key("posts", hashtag="recipe")
+            cached = cache.get(cache_key)
+            if cached:
+                return cached
+            results = db.get_posts_by_hashtag("recipe")
+            cache.set(cache_key, results, ttl=600)
+            return results
+    """
+    return CacheManager(config)
 
 
 def get_telegram_extraction_service(

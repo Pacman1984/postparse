@@ -4,9 +4,10 @@ This module handles all database operations for storing and retrieving social me
 """
 import sqlite3
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional, Tuple
 import json
 from datetime import datetime
+import base64
 
 
 class SocialMediaDatabase:
@@ -553,3 +554,479 @@ class SocialMediaDatabase:
             db._cursor.execute("SELECT COUNT(*) FROM telegram_messages")
             count = db._cursor.fetchone()[0]
             return count
+    
+    def _encode_cursor(self, created_at: str, record_id: int) -> str:
+        """Encode cursor from created_at and record_id.
+        
+        Args:
+            created_at: ISO format timestamp string
+            record_id: Database record ID
+            
+        Returns:
+            Base64-encoded cursor string
+            
+        Example:
+            >>> cursor = db._encode_cursor("2024-01-15T10:30:00", 123)
+            >>> print(cursor)
+            MjAyNC0wMS0xNVQxMDozMDowMHwxMjM=
+        """
+        cursor_str = f"{created_at}|{record_id}"
+        return base64.b64encode(cursor_str.encode()).decode()
+    
+    def _decode_cursor(self, cursor: str) -> Tuple[str, int]:
+        """Decode cursor to get created_at and record_id.
+        
+        Args:
+            cursor: Base64-encoded cursor string
+            
+        Returns:
+            Tuple of (created_at, record_id)
+            
+        Raises:
+            ValueError: If cursor format is invalid
+            
+        Example:
+            >>> created_at, record_id = db._decode_cursor("MjAyNC0wMS0xNVQxMDozMDowMHwxMjM=")
+            >>> print(f"{created_at}, {record_id}")
+            2024-01-15T10:30:00, 123
+        """
+        try:
+            decoded = base64.b64decode(cursor.encode()).decode()
+            created_at, record_id = decoded.split("|")
+            return created_at, int(record_id)
+        except (ValueError, UnicodeDecodeError) as e:
+            raise ValueError(f"Invalid cursor format: {e}")
+    
+    def search_instagram_posts(
+        self,
+        hashtags: Optional[List[str]] = None,
+        date_range: Optional[Tuple[datetime, datetime]] = None,
+        content_type: Optional[str] = None,
+        owner_username: Optional[str] = None,
+        limit: int = 50,
+        cursor: Optional[str] = None
+    ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+        """Search Instagram posts with multiple filter criteria and cursor pagination.
+        
+        Args:
+            hashtags: List of hashtags to filter by (OR logic - matches any)
+            date_range: Tuple of (start_date, end_date) for filtering
+            content_type: Content type filter ('video' or 'image')
+            owner_username: Filter by post owner username
+            limit: Maximum number of results to return
+            cursor: Pagination cursor (base64-encoded)
+            
+        Returns:
+            Tuple of (list of post dictionaries, next_cursor string or None)
+            
+        Example:
+            >>> db = SocialMediaDatabase()
+            >>> posts, next_cursor = db.search_instagram_posts(
+            ...     hashtags=["recipe", "cooking"],
+            ...     content_type="video",
+            ...     limit=20
+            ... )
+            >>> print(f"Found {len(posts)} posts")
+            Found 20 posts
+            >>> # Get next page
+            >>> more_posts, cursor = db.search_instagram_posts(
+            ...     hashtags=["recipe", "cooking"],
+            ...     content_type="video",
+            ...     limit=20,
+            ...     cursor=next_cursor
+            ... )
+        """
+        with self as db:
+            # Build WHERE clauses
+            where_clauses = []
+            params = []
+            
+            # Cursor pagination
+            if cursor:
+                cursor_created_at, cursor_id = self._decode_cursor(cursor)
+                where_clauses.append("(p.created_at < ? OR (p.created_at = ? AND p.id < ?))")
+                params.extend([cursor_created_at, cursor_created_at, cursor_id])
+            
+            # Hashtags filter (OR logic)
+            if hashtags:
+                placeholders = ",".join(["?" for _ in hashtags])
+                where_clauses.append(f"p.id IN (SELECT post_id FROM instagram_hashtags WHERE hashtag IN ({placeholders}))")
+                params.extend(hashtags)
+            
+            # Date range filter
+            if date_range:
+                start_date, end_date = date_range
+                start_str = start_date.isoformat() if isinstance(start_date, datetime) else start_date
+                end_str = end_date.isoformat() if isinstance(end_date, datetime) else end_date
+                where_clauses.append("p.created_at BETWEEN ? AND ?")
+                params.extend([start_str, end_str])
+            
+            # Content type filter
+            if content_type:
+                if content_type.lower() == "video":
+                    where_clauses.append("p.is_video = 1")
+                elif content_type.lower() == "image":
+                    where_clauses.append("p.is_video = 0")
+            
+            # Owner username filter
+            if owner_username:
+                where_clauses.append("p.owner_username = ?")
+                params.append(owner_username)
+            
+            # Build final query
+            sql = "SELECT DISTINCT p.* FROM instagram_posts p"
+            if where_clauses:
+                sql += " WHERE " + " AND ".join(where_clauses)
+            sql += " ORDER BY p.created_at DESC, p.id DESC LIMIT ?"
+            params.append(limit + 1)  # Fetch one extra to check if there are more results
+            
+            db._cursor.execute(sql, params)
+            rows = db._cursor.fetchall()
+            
+            # Check if there are more results
+            has_more = len(rows) > limit
+            if has_more:
+                rows = rows[:limit]
+            
+            # Convert to dictionaries
+            posts = []
+            columns = [description[0] for description in db._cursor.description]
+            for row in rows:
+                post_dict = dict(zip(columns, row))
+                
+                # Get hashtags for this post
+                db._cursor.execute("""
+                    SELECT hashtag FROM instagram_hashtags WHERE post_id = ?
+                """, (post_dict['id'],))
+                post_dict['hashtags'] = [r[0] for r in db._cursor.fetchall()]
+                
+                # Get mentions for this post
+                db._cursor.execute("""
+                    SELECT username FROM instagram_mentions WHERE post_id = ?
+                """, (post_dict['id'],))
+                post_dict['mentions'] = [r[0] for r in db._cursor.fetchall()]
+                
+                posts.append(post_dict)
+            
+            # Generate next cursor
+            next_cursor = None
+            if has_more and posts:
+                last_post = posts[-1]
+                next_cursor = self._encode_cursor(last_post['created_at'], last_post['id'])
+            
+            return posts, next_cursor
+    
+    def search_telegram_messages(
+        self,
+        hashtags: Optional[List[str]] = None,
+        date_range: Optional[Tuple[datetime, datetime]] = None,
+        content_type: Optional[str] = None,
+        limit: int = 50,
+        cursor: Optional[str] = None
+    ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+        """Search Telegram messages with multiple filter criteria and cursor pagination.
+        
+        Note: Channel-based filtering is NOT supported as the telegram_messages table
+        does not store channel username information.
+        
+        Args:
+            hashtags: List of hashtags to filter by (OR logic - matches any)
+            date_range: Tuple of (start_date, end_date) for filtering
+            content_type: Content type filter (text/photo/video)
+            limit: Maximum number of results to return
+            cursor: Pagination cursor (base64-encoded)
+            
+        Returns:
+            Tuple of (list of message dictionaries, next_cursor string or None)
+            
+        Example:
+            >>> db = SocialMediaDatabase()
+            >>> messages, next_cursor = db.search_telegram_messages(
+            ...     hashtags=["news"],
+            ...     content_type="photo",
+            ...     limit=20
+            ... )
+            >>> print(f"Found {len(messages)} messages")
+            Found 20 messages
+        """
+        with self as db:
+            # Build WHERE clauses
+            where_clauses = []
+            params = []
+            
+            # Cursor pagination
+            if cursor:
+                cursor_created_at, cursor_id = self._decode_cursor(cursor)
+                where_clauses.append("(m.created_at < ? OR (m.created_at = ? AND m.id < ?))")
+                params.extend([cursor_created_at, cursor_created_at, cursor_id])
+            
+            # Hashtags filter (OR logic)
+            if hashtags:
+                placeholders = ",".join(["?" for _ in hashtags])
+                where_clauses.append(f"m.id IN (SELECT message_id FROM telegram_hashtags WHERE hashtag IN ({placeholders}))")
+                params.extend(hashtags)
+            
+            # Date range filter
+            if date_range:
+                start_date, end_date = date_range
+                start_str = start_date.isoformat() if isinstance(start_date, datetime) else start_date
+                end_str = end_date.isoformat() if isinstance(end_date, datetime) else end_date
+                where_clauses.append("m.created_at BETWEEN ? AND ?")
+                params.extend([start_str, end_str])
+            
+            # Content type filter
+            if content_type:
+                where_clauses.append("m.content_type = ?")
+                params.append(content_type.lower())
+            
+            # Build final query
+            sql = "SELECT DISTINCT m.* FROM telegram_messages m"
+            if where_clauses:
+                sql += " WHERE " + " AND ".join(where_clauses)
+            sql += " ORDER BY m.created_at DESC, m.id DESC LIMIT ?"
+            params.append(limit + 1)  # Fetch one extra to check if there are more results
+            
+            db._cursor.execute(sql, params)
+            rows = db._cursor.fetchall()
+            
+            # Check if there are more results
+            has_more = len(rows) > limit
+            if has_more:
+                rows = rows[:limit]
+            
+            # Convert to dictionaries
+            messages = []
+            columns = [description[0] for description in db._cursor.description]
+            for row in rows:
+                msg_dict = dict(zip(columns, row))
+                
+                # Get hashtags for this message
+                db._cursor.execute("""
+                    SELECT hashtag FROM telegram_hashtags WHERE message_id = ?
+                """, (msg_dict['id'],))
+                msg_dict['hashtags'] = [r[0] for r in db._cursor.fetchall()]
+                
+                # Parse media_urls from JSON
+                if msg_dict.get('media_urls'):
+                    try:
+                        msg_dict['media_urls'] = json.loads(msg_dict['media_urls'])
+                    except json.JSONDecodeError:
+                        msg_dict['media_urls'] = []
+                
+                messages.append(msg_dict)
+            
+            # Generate next cursor
+            next_cursor = None
+            if has_more and messages:
+                last_msg = messages[-1]
+                next_cursor = self._encode_cursor(last_msg['created_at'], last_msg['id'])
+            
+            return messages, next_cursor
+    
+    def count_instagram_posts_filtered(
+        self,
+        hashtags: Optional[List[str]] = None,
+        date_range: Optional[Tuple[datetime, datetime]] = None,
+        content_type: Optional[str] = None,
+        owner_username: Optional[str] = None
+    ) -> int:
+        """Count Instagram posts matching filter criteria.
+        
+        Args:
+            hashtags: List of hashtags to filter by (OR logic - matches any)
+            date_range: Tuple of (start_date, end_date) for filtering
+            content_type: Content type filter ('video' or 'image')
+            owner_username: Filter by post owner username
+            
+        Returns:
+            Total count of posts matching filters
+            
+        Example:
+            >>> db = SocialMediaDatabase()
+            >>> count = db.count_instagram_posts_filtered(
+            ...     hashtags=["recipe"],
+            ...     content_type="video"
+            ... )
+            >>> print(f"Total: {count}")
+            Total: 150
+        """
+        with self as db:
+            # Build WHERE clauses
+            where_clauses = []
+            params = []
+            
+            # Hashtags filter (OR logic)
+            if hashtags:
+                placeholders = ",".join(["?" for _ in hashtags])
+                where_clauses.append(f"p.id IN (SELECT post_id FROM instagram_hashtags WHERE hashtag IN ({placeholders}))")
+                params.extend(hashtags)
+            
+            # Date range filter
+            if date_range:
+                start_date, end_date = date_range
+                start_str = start_date.isoformat() if isinstance(start_date, datetime) else start_date
+                end_str = end_date.isoformat() if isinstance(end_date, datetime) else end_date
+                where_clauses.append("p.created_at BETWEEN ? AND ?")
+                params.extend([start_str, end_str])
+            
+            # Content type filter
+            if content_type:
+                if content_type.lower() == "video":
+                    where_clauses.append("p.is_video = 1")
+                elif content_type.lower() == "image":
+                    where_clauses.append("p.is_video = 0")
+            
+            # Owner username filter
+            if owner_username:
+                where_clauses.append("p.owner_username = ?")
+                params.append(owner_username)
+            
+            # Build final query
+            sql = "SELECT COUNT(DISTINCT p.id) FROM instagram_posts p"
+            if where_clauses:
+                sql += " WHERE " + " AND ".join(where_clauses)
+            
+            db._cursor.execute(sql, params)
+            count = db._cursor.fetchone()[0]
+            return count
+    
+    def count_telegram_messages_filtered(
+        self,
+        hashtags: Optional[List[str]] = None,
+        date_range: Optional[Tuple[datetime, datetime]] = None,
+        content_type: Optional[str] = None
+    ) -> int:
+        """Count Telegram messages matching filter criteria.
+        
+        Note: Channel-based filtering is NOT supported as the telegram_messages table
+        does not store channel username information.
+        
+        Args:
+            hashtags: List of hashtags to filter by (OR logic - matches any)
+            date_range: Tuple of (start_date, end_date) for filtering
+            content_type: Content type filter (text/photo/video)
+            
+        Returns:
+            Total count of messages matching filters
+            
+        Example:
+            >>> db = SocialMediaDatabase()
+            >>> count = db.count_telegram_messages_filtered(
+            ...     hashtags=["news"],
+            ...     content_type="photo"
+            ... )
+            >>> print(f"Total: {count}")
+            Total: 89
+        """
+        with self as db:
+            # Build WHERE clauses
+            where_clauses = []
+            params = []
+            
+            # Hashtags filter (OR logic)
+            if hashtags:
+                placeholders = ",".join(["?" for _ in hashtags])
+                where_clauses.append(f"m.id IN (SELECT message_id FROM telegram_hashtags WHERE hashtag IN ({placeholders}))")
+                params.extend(hashtags)
+            
+            # Date range filter
+            if date_range:
+                start_date, end_date = date_range
+                start_str = start_date.isoformat() if isinstance(start_date, datetime) else start_date
+                end_str = end_date.isoformat() if isinstance(end_date, datetime) else end_date
+                where_clauses.append("m.created_at BETWEEN ? AND ?")
+                params.extend([start_str, end_str])
+            
+            # Content type filter
+            if content_type:
+                where_clauses.append("m.content_type = ?")
+                params.append(content_type.lower())
+            
+            # Build final query
+            sql = "SELECT COUNT(DISTINCT m.id) FROM telegram_messages m"
+            if where_clauses:
+                sql += " WHERE " + " AND ".join(where_clauses)
+            
+            db._cursor.execute(sql, params)
+            count = db._cursor.fetchone()[0]
+            return count
+    
+    def get_all_hashtags(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """Get all unique hashtags with usage counts from both platforms.
+        
+        Aggregates hashtags from both Instagram posts and Telegram messages,
+        counts their occurrences, and returns them sorted by total count (descending).
+        
+        Args:
+            limit: Maximum number of hashtags to return (default: 100).
+            
+        Returns:
+            List of hashtag dictionaries with count information.
+            Each dict contains:
+            - tag: Hashtag string
+            - count: Total usage count across both platforms
+            - instagram_count: Usage count in Instagram posts
+            - telegram_count: Usage count in Telegram messages
+            - source: Platform source ("instagram", "telegram", or "both")
+            
+        Example:
+            >>> db = SocialMediaDatabase()
+            >>> hashtags = db.get_all_hashtags(limit=50)
+            >>> for tag in hashtags[:3]:
+            ...     print(f"{tag['tag']}: {tag['count']} uses ({tag['source']})")
+            recipe: 125 uses (both)
+            cooking: 89 uses (instagram)
+            italian: 67 uses (telegram)
+        """
+        with self as db:
+            # Query Instagram hashtags
+            db._cursor.execute("""
+                SELECT hashtag, COUNT(*) as count
+                FROM instagram_hashtags
+                GROUP BY hashtag
+                ORDER BY count DESC
+            """)
+            instagram_hashtags = {row[0]: row[1] for row in db._cursor.fetchall()}
+            
+            # Query Telegram hashtags
+            db._cursor.execute("""
+                SELECT hashtag, COUNT(*) as count
+                FROM telegram_hashtags
+                GROUP BY hashtag
+                ORDER BY count DESC
+            """)
+            telegram_hashtags = {row[0]: row[1] for row in db._cursor.fetchall()}
+            
+            # Merge and aggregate
+            all_hashtags = {}
+            for tag, count in instagram_hashtags.items():
+                all_hashtags[tag] = {
+                    "tag": tag,
+                    "count": count,
+                    "instagram_count": count,
+                    "telegram_count": 0,
+                    "source": "instagram"
+                }
+            
+            for tag, count in telegram_hashtags.items():
+                if tag in all_hashtags:
+                    all_hashtags[tag]["count"] += count
+                    all_hashtags[tag]["telegram_count"] = count
+                    all_hashtags[tag]["source"] = "both"
+                else:
+                    all_hashtags[tag] = {
+                        "tag": tag,
+                        "count": count,
+                        "instagram_count": 0,
+                        "telegram_count": count,
+                        "source": "telegram"
+                    }
+            
+            # Sort by total count and limit
+            sorted_hashtags = sorted(
+                all_hashtags.values(),
+                key=lambda x: x["count"],
+                reverse=True
+            )[:limit]
+            
+            return sorted_hashtags

@@ -43,6 +43,8 @@ dependencies = [
     "python-multipart>=0.0.9,<1.0.0",
     "email-validator>=2.0.0,<3.0.0",
     "websockets>=12.0,<13.0.0",
+    "redis>=5.0.0,<6.0.0",
+    "python-json-logger>=2.0.0,<3.0.0",
 ]
 
 [project.optional-dependencies]
@@ -56,6 +58,7 @@ dev = [
     "mypy>=1.5.0",
     "pylint>=2.17.5",
     "httpx>=0.27.0",
+    "fakeredis>=2.20.0,<3.0.0",
 ]
 docs = [
     "mkdocs",
@@ -113,4 +116,5 @@ filterwarnings = [
 markers = [
     "integration: marks tests as integration tests requiring external services",
     "slow: marks tests as slow running tests (deselect with '-m \"not slow\"')",
+    "cache: marks tests requiring Redis or cache functionality",
 ]

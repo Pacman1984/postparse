@@ -356,9 +356,11 @@ class TestResponseFormats:
         assert "filters_applied" in data
         assert "pagination" in data
         
-        # Check pagination structure
+        # Check pagination structure (cursor-based)
         assert "limit" in data["pagination"]
-        assert "offset" in data["pagination"]
+        assert "cursor" in data["pagination"]
+        assert "next_cursor" in data["pagination"]
+        assert "has_more" in data["pagination"]
 
 
 class TestErrorHandling:

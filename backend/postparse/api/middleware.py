@@ -13,6 +13,8 @@ import time
 import uuid
 import logging
 import threading
+import json
+import traceback
 from typing import Callable, List, Optional, Dict, Any
 from fastapi import Request, Response, status
 from fastapi.responses import JSONResponse
@@ -122,14 +124,18 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     """
-    Request/response logging middleware.
+    Enhanced request/response logging middleware with structured JSON logging.
 
     Logs all incoming requests with:
     - Request ID (UUID for tracing)
     - Method and path
     - Client IP and user agent
+    - Request/response bodies (truncated, optional)
+    - Query parameters and filters
     - Response status code
     - Processing time
+    - Cache status (if available)
+    - Error details (for 4xx/5xx responses)
     """
 
     def __init__(self, app, config: ConfigManager):
@@ -138,16 +144,112 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
         Args:
             app: FastAPI application instance.
-            config: ConfigManager for reading log level.
+            config: ConfigManager for reading log level and logging options.
         """
         super().__init__(app)
         self.config = config
         log_level = config.get("api.log_level", "info").upper()
         logger.setLevel(getattr(logging, log_level, logging.INFO))
+        
+        # Get logging options from config
+        self.log_request_body = config.get("api.log_request_body", default=False)
+        self.log_response_body = config.get("api.log_response_body", default=False)
+        self.log_format = config.get("api.log_format", default="text")
+        
+        # Configure JSON formatter if requested
+        if self.log_format == "json":
+            try:
+                from pythonjsonlogger import jsonlogger
+                json_handler = logging.StreamHandler()
+                formatter = jsonlogger.JsonFormatter(
+                    '%(asctime)s %(name)s %(levelname)s %(message)s'
+                )
+                json_handler.setFormatter(formatter)
+                logger.handlers = [json_handler]
+            except ImportError:
+                logger.warning("python-json-logger not installed, using text format")
+                self.log_format = "text"
+    
+    def _redact_sensitive_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Redact sensitive fields from log data.
+        
+        Args:
+            data: Dictionary that may contain sensitive data.
+            
+        Returns:
+            Dictionary with sensitive fields redacted.
+        """
+        sensitive_fields = {
+            "password", "token", "secret", "api_key", "apikey",
+            "authorization", "auth", "credential", "private_key"
+        }
+        
+        redacted = {}
+        for key, value in data.items():
+            key_lower = key.lower()
+            if any(field in key_lower for field in sensitive_fields):
+                redacted[key] = "***REDACTED***"
+            elif isinstance(value, dict):
+                redacted[key] = self._redact_sensitive_data(value)
+            else:
+                redacted[key] = value
+        
+        return redacted
+    
+    async def _extract_request_body(self, request: Request) -> Optional[str]:
+        """
+        Extract and truncate request body if logging is enabled.
+        
+        Args:
+            request: FastAPI Request object.
+            
+        Returns:
+            Truncated request body as string or None.
+        """
+        if not self.log_request_body:
+            return None
+        
+        if request.method in ["POST", "PUT", "PATCH"]:
+            try:
+                body = await request.body()
+                if body:
+                    body_str = body.decode("utf-8")
+                    # Truncate to 500 chars
+                    return body_str[:500] + "..." if len(body_str) > 500 else body_str
+            except Exception as e:
+                logger.debug(f"Could not extract request body: {e}")
+        
+        return None
+    
+    def _extract_filters_from_params(self, request: Request) -> Dict[str, Any]:
+        """
+        Extract filter parameters from query string.
+        
+        Args:
+            request: FastAPI Request object.
+            
+        Returns:
+            Dictionary of filter parameters.
+        """
+        filters = {}
+        query_params = dict(request.query_params)
+        
+        # Common filter fields
+        filter_fields = {
+            "hashtags", "date_range", "content_type", "owner_username",
+            "channel_username", "limit", "cursor", "offset"
+        }
+        
+        for field in filter_fields:
+            if field in query_params:
+                filters[field] = query_params[field]
+        
+        return filters
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         """
-        Process request and log details.
+        Process request and log structured details.
 
         Args:
             request: Incoming HTTP request.
@@ -163,29 +265,112 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         # Get client info
         client_ip = request.client.host if request.client else "unknown"
         user_agent = request.headers.get("user-agent", "unknown")
-
-        # Log incoming request
-        logger.info(
-            f"[{request_id}] {request.method} {request.url.path} - "
-            f"Client: {client_ip} - User-Agent: {user_agent}"
-        )
+        
+        # Extract request body if enabled
+        request_body = await self._extract_request_body(request)
+        
+        # Extract filter parameters
+        filters = self._extract_filters_from_params(request)
 
         # Process request and measure time
         start_time = time.time()
-        response = await call_next(request)
-        processing_time = time.time() - start_time
-
-        # Log response
-        logger.info(
-            f"[{request_id}] {request.method} {request.url.path} - "
-            f"Status: {response.status_code} - Time: {processing_time:.3f}s"
-        )
-
-        # Add request ID to response headers
-        response.headers["X-Request-ID"] = request_id
-        response.headers["X-Processing-Time"] = f"{processing_time:.3f}"
-
-        return response
+        
+        try:
+            response = await call_next(request)
+            processing_time = time.time() - start_time
+            
+            # Extract cache status from response headers
+            cache_status = response.headers.get("X-Cache-Status", None)
+            
+            # Build log data
+            log_data = {
+                "request_id": request_id,
+                "method": request.method,
+                "path": request.url.path,
+                "status": response.status_code,
+                "duration": round(processing_time, 3),
+                "client_ip": client_ip,
+                "user_agent": user_agent
+            }
+            
+            if filters:
+                log_data["filters"] = filters
+            
+            if cache_status:
+                log_data["cache_status"] = cache_status
+            
+            if request_body:
+                log_data["request_body"] = request_body
+            
+            # Extract response body for errors
+            if response.status_code >= 400 and self.log_response_body:
+                try:
+                    # Response body extraction would require response streaming
+                    # which is complex; skip for now but log error flag
+                    log_data["is_error"] = True
+                except Exception:
+                    pass
+            
+            # Redact sensitive data before logging
+            log_data = self._redact_sensitive_data(log_data)
+            
+            # Log with appropriate format
+            if self.log_format == "json":
+                logger.info(json.dumps(log_data))
+            else:
+                log_msg = (
+                    f"[{request_id}] {request.method} {request.url.path} - "
+                    f"Status: {response.status_code} - Time: {processing_time:.3f}s"
+                )
+                if cache_status:
+                    log_msg += f" - Cache: {cache_status}"
+                if filters:
+                    log_msg += f" - Filters: {filters}"
+                logger.info(log_msg)
+            
+            # Add request ID to response headers
+            response.headers["X-Request-ID"] = request_id
+            response.headers["X-Processing-Time"] = f"{processing_time:.3f}"
+            
+            return response
+            
+        except Exception as e:
+            processing_time = time.time() - start_time
+            
+            # Log error with full details
+            error_data = {
+                "request_id": request_id,
+                "method": request.method,
+                "path": request.url.path,
+                "status": 500,
+                "duration": round(processing_time, 3),
+                "client_ip": client_ip,
+                "user_agent": user_agent,
+                "error": str(e),
+                "error_type": type(e).__name__
+            }
+            
+            if filters:
+                error_data["filters"] = filters
+            
+            # Add stack trace for 500 errors
+            if isinstance(e, Exception):
+                error_data["traceback"] = traceback.format_exc()
+            
+            # Redact sensitive data before logging
+            error_data = self._redact_sensitive_data(error_data)
+            
+            if self.log_format == "json":
+                logger.error(json.dumps(error_data))
+            else:
+                logger.error(
+                    f"[{request_id}] {request.method} {request.url.path} - "
+                    f"Error: {str(e)} - Time: {processing_time:.3f}s",
+                    exc_info=True
+                )
+            
+            # Re-raise the exception
+            raise
 
 
 def configure_cors(app, config: ConfigManager) -> None:

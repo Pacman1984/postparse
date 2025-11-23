@@ -34,17 +34,17 @@ class TestSearchFiltersApplied:
     @pytest.mark.integration
     def test_owner_username_filter_not_misleading(self, client: TestClient):
         """
-        Test that owner_username filter is NOT added to filters_applied when not implemented.
+        Test that owner_username filter is correctly applied and reflected in filters_applied.
         
-        This test verifies the fix for the bug where owner_username was added to
-        filters_applied even though the filter wasn't actually being applied,
-        causing misleading results.
+        This test verifies that the owner_username filter is now implemented and
+        correctly reported in filters_applied.
         
         Verifies:
-        - When owner_username is provided without hashtags, results are NOT filtered
-        - filters_applied does NOT include owner_username (since it's not implemented)
+        - When owner_username is provided, results ARE filtered by that owner
+        - filters_applied DOES include owner_username (since it's now implemented)
         - Clients receive accurate information about which filters were applied
         """
+        # Mock only user1's posts (filtered)
         mock_posts = [
             {
                 "shortcode": "ABC123",
@@ -54,21 +54,12 @@ class TestSearchFiltersApplied:
                 "likes": 100,
                 "hashtags": [],
                 "created_at": "2025-11-23T10:30:00Z",
-            },
-            {
-                "shortcode": "XYZ789",
-                "owner_username": "user2",
-                "caption": "Post from user2",
-                "is_video": False,
-                "likes": 50,
-                "hashtags": [],
-                "created_at": "2025-11-22T15:45:00Z",
             }
         ]
         
         mock_db = MagicMock()
-        mock_db.get_instagram_posts.return_value = mock_posts
-        mock_db.count_instagram_posts.return_value = 2
+        mock_db.search_instagram_posts.return_value = (mock_posts, None)
+        mock_db.count_instagram_posts_filtered.return_value = 1
         
         from backend.postparse.api import dependencies
         original_get_db = dependencies.get_db
@@ -87,18 +78,16 @@ class TestSearchFiltersApplied:
             
             # Verify results exist
             assert "results" in data
-            assert len(data["results"]) == 2  # All posts returned, not filtered
+            assert len(data["results"]) == 1  # Only user1's posts
             
-            # Critical: filters_applied should NOT include owner_username
-            # because the filter is not actually implemented
+            # filters_applied should NOW include owner_username (feature is implemented)
             assert "filters_applied" in data
-            assert "owner_username" not in data["filters_applied"]
-            assert data["filters_applied"] == {}  # Should be empty
+            assert "owner_username" in data["filters_applied"]
+            assert data["filters_applied"]["owner_username"] == "user1"
             
-            # Both users' posts should be in results (no filtering applied)
+            # Only user1's posts should be in results
             usernames = [r["owner_username"] for r in data["results"]]
-            assert "user1" in usernames
-            assert "user2" in usernames
+            assert all(u == "user1" for u in usernames)
         finally:
             app.dependency_overrides.clear()
 
@@ -166,38 +155,31 @@ class TestSearchFiltersApplied:
     @pytest.mark.integration
     def test_messages_unimplemented_filters_not_reported(self, client: TestClient):
         """
-        Test that unimplemented filters in messages endpoint are not reported.
+        Test that implemented filters are correctly reported in filters_applied.
         
-        This verifies that hashtags and channel_username filters for messages
-        are NOT added to filters_applied when they're not implemented.
+        This verifies that hashtag filters for messages are added to filters_applied
+        since they're implemented. Also verifies that unsupported filters like
+        channel_username are rejected with a 400 error.
         
         Verifies:
-        - hashtags filter is not reported in filters_applied
-        - channel_username filter is not reported in filters_applied
-        - filters_applied is empty when no filters are actually applied
+        - hashtags filter IS reported in filters_applied when used
+        - channel_username filter is REJECTED with 400 (not supported)
+        - filters_applied accurately reflects applied filters
         """
+        # Test 1: hashtags filter works and is reported
         mock_messages = [
             {
                 "message_id": 12345,
-                "channel_username": "channel1",
-                "content": "Message from channel1",
-                "content_type": "text",
-                "hashtags": ["test"],
-                "created_at": "2025-11-23T08:00:00Z",
-            },
-            {
-                "message_id": 67890,
-                "channel_username": "channel2",
-                "content": "Message from channel2",
+                "content": "Message with recipe hashtag",
                 "content_type": "text",
                 "hashtags": ["recipe"],
-                "created_at": "2025-11-22T10:00:00Z",
+                "created_at": "2025-11-23T08:00:00Z",
             }
         ]
         
         mock_db = MagicMock()
-        mock_db.get_telegram_messages.return_value = mock_messages
-        mock_db.count_telegram_messages.return_value = 2
+        mock_db.search_telegram_messages.return_value = (mock_messages, None)
+        mock_db.count_telegram_messages_filtered.return_value = 1
         
         from backend.postparse.api import dependencies
         original_get_db = dependencies.get_db
@@ -208,28 +190,45 @@ class TestSearchFiltersApplied:
         app.dependency_overrides[original_get_db] = override_get_db
         
         try:
-            # Request with unimplemented filters
-            response = client.get(
-                "/api/v1/search/messages?hashtags=recipe&channel_username=channel1&limit=10"
-            )
+            # Request with hashtags filter only
+            from backend.postparse.api.schemas.search import SearchMessagesRequest
+            
+            def mock_search_request_hashtags():
+                return SearchMessagesRequest(
+                    hashtags=["recipe"],
+                    limit=10
+                )
+            
+            app.dependency_overrides[SearchMessagesRequest] = mock_search_request_hashtags
+            
+            response = client.get("/api/v1/search/messages")
             
             assert response.status_code == 200
             data = response.json()
             
-            # Verify results exist but no filtering was applied
-            assert len(data["results"]) == 2
-            
-            # Critical: filters_applied should be EMPTY
-            # because these filters are not yet implemented
+            # Verify hashtags filter is reported
             assert "filters_applied" in data
-            assert "hashtags" not in data["filters_applied"]
-            assert "channel_username" not in data["filters_applied"]
-            assert data["filters_applied"] == {}
+            assert "hashtags" in data["filters_applied"]
+            assert data["filters_applied"]["hashtags"] == ["recipe"]
             
-            # Both channels' messages should be in results
-            channels = [r["channel_username"] for r in data["results"]]
-            assert "channel1" in channels
-            assert "channel2" in channels
+            # Test 2: channel_username is rejected with 400
+            def mock_search_request_channel():
+                return SearchMessagesRequest(
+                    hashtags=["recipe"],
+                    channel_username="channel1",
+                    limit=10
+                )
+            
+            app.dependency_overrides[SearchMessagesRequest] = mock_search_request_channel
+            
+            response2 = client.get("/api/v1/search/messages")
+            
+            # Should return 400 Bad Request for unsupported filter
+            assert response2.status_code == 400
+            error_data = response2.json()
+            assert "channel_username" in error_data["detail"].lower()
+            assert "not supported" in error_data["detail"].lower()
+            
         finally:
             app.dependency_overrides.clear()
 
@@ -256,8 +255,8 @@ class TestSearchFiltersApplied:
         ]
         
         mock_db = MagicMock()
-        mock_db.get_instagram_posts.return_value = mock_posts
-        mock_db.count_instagram_posts.return_value = 1
+        mock_db.search_instagram_posts.return_value = (mock_posts, None)
+        mock_db.count_instagram_posts_filtered.return_value = 1
         
         from backend.postparse.api import dependencies
         original_get_db = dependencies.get_db

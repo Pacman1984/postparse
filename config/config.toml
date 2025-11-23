@@ -115,6 +115,11 @@ workers = 1    # Number of worker processes (increase for production)
 log_level = "info"  # Logging level (debug, info, warning, error)
 environment = "development"  # Environment mode (development, production)
 
+# Logging configuration
+log_request_body = false  # Log request bodies (enable for debugging, disable for production)
+log_response_body = false  # Log response bodies (enable for debugging, disable for production)
+log_format = "text"  # Log format: "text" or "json" (use "json" for structured logging in production)
+
 # API rate limiting and request management (legacy - for parsers)
 max_requests_per_session = 100
 request_delay_min = 1.0
@@ -151,6 +156,16 @@ cleanup_interval_minutes = 60  # Run cleanup every hour
 # WebSocket configuration
 heartbeat_interval = 30  # Send heartbeat every 30 seconds to keep connection alive
 max_connections_per_job = 10  # Maximum WebSocket connections per job
+
+[api.cache]
+# Redis caching configuration (optional)
+# Enable for production with high traffic to improve response times
+# When Redis is unavailable, the system automatically falls back to in-memory caching
+enabled = false  # Enable for production, disable for development
+redis_url = "redis://localhost:6379/0"  # Redis connection URL (can be overridden by REDIS_URL env var)
+default_ttl = 300  # Default cache TTL in seconds (5 minutes)
+search_ttl = 600  # Cache TTL for search results (10 minutes)
+max_memory_mb = 100  # Max memory for in-memory fallback cache (MB)
 
 [paths]
 # Default directory paths

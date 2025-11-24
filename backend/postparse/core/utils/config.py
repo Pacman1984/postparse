@@ -28,6 +28,15 @@ class ConfigManager:
         self._config_path = self._find_config_file(config_path)
         self._config_data = self._load_config()
     
+    @property
+    def config_path(self) -> str:
+        """Get the path to the configuration file as a string.
+        
+        Returns:
+            String representation of the configuration file path
+        """
+        return str(self._config_path)
+    
     def _find_config_file(self, config_path: Optional[Union[str, Path]] = None) -> Path:
         """Find the configuration file.
         

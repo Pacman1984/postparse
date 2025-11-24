@@ -37,6 +37,113 @@ cd postparse
 uv sync
 ```
 
+## CLI Usage
+
+PostParse provides a beautiful command-line interface built with Click and Rich for easy access to all features.
+
+### Quick Start
+
+After installation, the `postparse` command is available:
+
+```bash
+# Show help and available commands
+postparse --help
+
+# Check database and for new content
+postparse stats
+postparse check
+
+# Extract Telegram messages (from Saved Messages folder)
+postparse extract telegram --api-id 12345 --api-hash abc123
+
+# Classify text
+postparse classify single "Mix flour and water to make dough"
+
+# Start the API server
+postparse serve --port 8080
+```
+
+### Available Commands
+
+- **`stats`** - View database statistics
+  
+- **`check`** - Check for new content (fast preview, no download)
+  - `telegram` - Check Telegram for new messages
+  - `instagram` - Check Instagram for new posts
+  - `all` - Check both platforms (default)
+
+- **`extract`** - Extract data from social media platforms
+  - `telegram` - Extract from Telegram Saved Messages
+  - `instagram` - Extract Instagram saved posts
+  
+- **`classify`** - Classify content as recipe/not recipe
+  - `single` - Classify a single text (supports stdin)
+  - `batch` - Classify multiple items from database
+  
+- **`search`** - Search stored posts and messages
+  - `posts` - Search Instagram posts with filters
+  - `messages` - Search Telegram messages with filters
+  
+- **`serve`** - Start the FastAPI server
+  
+- **`db`** - Database operations and statistics
+  - `stats` - Show database statistics
+  - `export` - Export database to JSON/CSV
+  
+- **`config`** - Configuration management
+  - `show` - Display current configuration
+  - `validate` - Validate configuration file
+
+### Example Workflows
+
+**Extract and classify Telegram messages:**
+
+```bash
+# Check for new content first
+postparse check telegram
+
+# Extract messages (from Saved Messages folder)
+postparse extract telegram --api-id $TELEGRAM_API_ID --api-hash $TELEGRAM_API_HASH --limit 100
+
+# Classify them
+postparse classify batch --source messages --detailed
+
+# Search for recipes
+postparse search messages --hashtag recipe
+```
+
+**Export database:**
+
+```bash
+# Export all data to JSON
+postparse db export data.json
+
+# Export only posts to CSV
+postparse db export posts.csv --format csv --source posts --limit 1000
+```
+
+**Start API server for frontend:**
+
+```bash
+# Development mode with auto-reload
+postparse serve --reload --port 8080
+
+# Production mode with multiple workers
+postparse serve --workers 4 --log-level info
+```
+
+### Getting Help
+
+Get help for any command using the `--help` flag:
+
+```bash
+postparse extract telegram --help
+postparse classify batch --help
+postparse search posts --help
+```
+
+For comprehensive CLI documentation, see **[CLI Reference](docs/cli_reference.md)**.
+
 ## Quick Example
 
 ```python

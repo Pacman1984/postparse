@@ -17,8 +17,8 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 import concurrent.futures
 import threading
 
-from backend.postparse.core.data.database import SocialMediaDatabase
-from backend.postparse.core.utils.config import get_config
+from postparse.core.data.database import SocialMediaDatabase
+from postparse.core.utils.config import get_config
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -302,22 +302,27 @@ class InstaloaderParser(BaseInstagramParser):
         try:
             profile = self._get_profile()
             
-            # Get total count of saved posts for progress bar
-            try:
-                saved_posts = list(profile.get_saved_posts())
-                total_posts = len(saved_posts)
-                desc = "Fetching posts (force update)" if force_update else "Fetching posts"
-                logger.info(f"Found {total_posts} saved posts{' (force update)' if force_update else ''}")
-                pbar = tqdm(total=total_posts, desc=desc, unit="post")
-            except Exception as e:
-                logger.warning(f"Could not get total post count: {str(e)}")
-                saved_posts = profile.get_saved_posts()
+            # Get saved posts iterator
+            saved_posts = profile.get_saved_posts()
+            
+            # For small limits (sampling), don't pre-load all posts
+            if limit and limit <= 100:
+                logger.info(f"Sampling up to {limit} newest posts...")
+                pbar = tqdm(total=limit, desc="Checking posts", unit="post")
+            else:
+                # For full extraction, try to get total count
+                try:
+                    saved_posts_list = list(saved_posts)
+                    total_posts = len(saved_posts_list)
+                    desc = "Fetching posts (force update)" if force_update else "Fetching posts"
+                    logger.info(f"Found {total_posts} saved posts{' (force update)' if force_update else ''}")
+                    pbar = tqdm(total=total_posts, desc=desc, unit="post")
+                    saved_posts = saved_posts_list
+                except Exception as e:
+                    logger.warning(f"Could not get total post count: {str(e)}")
+                    pbar = None
             
             for post in saved_posts:
-                if limit and post_count >= limit:
-                    logger.info(f"Reached post limit of {limit}")
-                    break
-                
                 try:
                     # Only check database if not forcing update
                     if db and not force_update:
@@ -331,6 +336,10 @@ class InstaloaderParser(BaseInstagramParser):
                                     'mode': 'force update' if force_update else 'normal'
                                 })
                                 pbar.update(1)
+                            # Check limit after updating progress
+                            if limit and (post_count + skipped_count) >= limit:
+                                logger.info(f"Reached post limit of {limit}")
+                                break
                             continue
                     
                     # Smart delay calculation
@@ -347,12 +356,20 @@ class InstaloaderParser(BaseInstagramParser):
                     time.sleep(delay)
                     
                     post_data = self._parse_post(post)
+                    
+                    # Always update progress bar
+                    if pbar:
+                        pbar.update(1)
+                    
                     if post_data:
                         yield post_data
                         post_count += 1
                         recent_errors = max(0, recent_errors - 1)  # Decrease error count on success
-                        if pbar:
-                            pbar.update(1)
+                    
+                    # Check limit after processing
+                    if limit and post_count >= limit:
+                        logger.info(f"Reached post limit of {limit}")
+                        break
                     
                 except Exception as e:
                     logger.error(f"Error processing post {post.shortcode}: {str(e)}")

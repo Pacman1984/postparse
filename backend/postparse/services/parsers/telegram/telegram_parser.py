@@ -15,8 +15,8 @@ from telethon.errors import SessionPasswordNeededError
 from telethon.tl.types import Message, MessageMediaPhoto, MessageMediaDocument
 from tqdm import tqdm
 
-from backend.postparse.core.data.database import SocialMediaDatabase
-from backend.postparse.core.utils.config import get_config, get_paths_config
+from postparse.core.data.database import SocialMediaDatabase
+from postparse.core.utils.config import get_config, get_paths_config
 
 # Enable nested event loops for Jupyter
 nest_asyncio.apply()
@@ -311,8 +311,12 @@ class TelegramParser:
                 messages.append(message)
             
             total_messages = len(messages)
-            desc = "Fetching messages (force update)" if force_update else "Fetching messages"
-            print(f"Found {total_messages} saved messages{' (force update)' if force_update else ''}")
+            desc = "Checking messages" if limit and limit <= 100 else ("Fetching messages (force update)" if force_update else "Fetching messages")
+            # Show if this is a sample or full extraction
+            if limit and limit <= 100:
+                print(f"Sampling {total_messages} newest messages (limit: {limit})...")
+            else:
+                print(f"Found {total_messages} saved messages{' (force update)' if force_update else ''}")
             pbar = tqdm(total=total_messages, desc=desc, unit="msg")
             
             for message in messages:
@@ -349,11 +353,18 @@ class TelegramParser:
                         })
                     
                     message_data = await self._parse_message(message)
+                    
+                    # Always update progress bar
+                    if pbar:
+                        pbar.update(1)
+                    
                     if message_data:
                         yield message_data
                         message_count += 1
-                        if pbar:
-                            pbar.update(1)
+                    
+                    # Check if we've reached the limit after processing
+                    if limit and (message_count + skipped_count) >= limit:
+                        break
                     
                 except Exception as e:
                     print(f"Error processing message {message.id}: {str(e)}")

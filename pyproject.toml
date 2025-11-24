@@ -45,7 +45,13 @@ dependencies = [
     "websockets>=12.0,<13.0.0",
     "redis>=5.0.0,<6.0.0",
     "python-json-logger>=2.0.0,<3.0.0",
+    "click>=8.1.0,<9.0.0",
+    "rich>=13.0.0,<14.0.0",
+    "rich-click>=1.8.0,<2.0.0",
 ]
+
+[project.scripts]
+postparse = "postparse.cli.main:cli"
 
 [project.optional-dependencies]
 dev = [

@@ -73,8 +73,13 @@ postparse check all                # Explicitly check all
 Extract data from social media platforms.
 
 **Subcommands:**
+- `all` - Extract from both platforms (default)
 - `telegram` - Extract from Telegram Saved Messages
 - `instagram` - Extract Instagram saved posts
+
+**Options (all):**
+- `--limit` - Maximum items to extract per platform
+- `--force` - Force re-fetch existing items
 
 **Options (telegram):**
 - `--api-id` - Telegram API ID (required, or `TELEGRAM_API_ID` env var)
@@ -93,6 +98,9 @@ Extract data from social media platforms.
 
 **Examples:**
 ```bash
+postparse extract                    # Extract from all platforms
+postparse extract all                # Explicitly extract from all
+postparse extract all --limit 100    # Limit items per platform
 postparse extract telegram --api-id 12345 --api-hash abc123
 postparse extract telegram --limit 100
 postparse extract instagram --username myuser --password mypass
@@ -371,8 +379,8 @@ postparse config env
 
 **Check and extract:**
 ```bash
-postparse check telegram
-postparse extract telegram --api-id 12345 --api-hash abc123 --limit 100
+postparse check all
+postparse extract all --limit 100
 ```
 
 **Classify and search:**

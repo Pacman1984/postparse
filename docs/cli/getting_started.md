@@ -92,6 +92,20 @@ postparse config validate --fix
 
 ## First Extraction
 
+### Quick Start: Extract from All Platforms
+
+The easiest way to extract is using the `all` command:
+
+```bash
+# Extract from all configured platforms
+postparse extract all --limit 10
+
+# Or simply (same behavior)
+postparse extract --limit 10
+```
+
+This will extract from both Telegram and Instagram, skipping any platform without credentials.
+
 ### Telegram Setup
 
 > **Note:** PostParse extracts messages from your **Saved Messages** folder only (not channels or chats).

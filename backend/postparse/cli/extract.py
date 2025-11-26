@@ -7,6 +7,7 @@ including Telegram and Instagram.
 Example:
     $ postparse extract telegram --api-id 12345 --api-hash abc123
     $ postparse extract instagram --username myuser --limit 100
+    $ postparse extract all
 """
 
 import os
@@ -14,6 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 import rich_click as click
+from rich.panel import Panel
 from rich.table import Table
 
 from backend.postparse.cli.utils import (
@@ -23,6 +25,7 @@ from backend.postparse.cli.utils import (
     print_success,
     print_error,
     print_info,
+    print_warning,
     print_panel,
     create_progress,
     run_async,
@@ -30,10 +33,16 @@ from backend.postparse.cli.utils import (
 )
 
 
-@click.group()
-def extract():
-    """📥 Extract data from Telegram and Instagram."""
-    pass
+@click.group(invoke_without_command=True)
+@click.pass_context
+def extract(ctx):
+    """📥 Extract data from Telegram and Instagram.
+    
+    Runs 'extract all' by default if no platform specified.
+    """
+    if ctx.invoked_subcommand is None:
+        # Default to extracting from all platforms
+        ctx.invoke(all_platforms)
 
 
 @extract.command()
@@ -266,4 +275,135 @@ def instagram(ctx, username, password, session, limit, force):
         if ctx.obj.get('verbose'):
             console.print_exception()
         raise click.Abort()
+
+
+@extract.command(name='all')
+@click.option(
+    '--limit',
+    type=int,
+    help='Maximum items to extract per platform',
+)
+@click.option(
+    '--force',
+    is_flag=True,
+    help='Force re-fetch existing items',
+)
+@click.pass_context
+def all_platforms(ctx, limit: Optional[int] = None, force: bool = False):
+    """
+    Extract from all platforms (Telegram and Instagram).
+
+    Extracts data from both Telegram and Instagram. Skips platforms where
+    credentials are not provided via environment variables.
+
+    Examples:
+        postparse extract all
+
+        postparse extract all --limit 100
+
+        postparse extract all --force
+
+        postparse extract  # Same as 'extract all'
+    """
+    console = get_console()
+
+    console.print()
+    console.print("[bold cyan]📥 Extracting From All Platforms[/bold cyan]")
+    console.print()
+
+    # Get credentials from environment
+    telegram_api_id = os.getenv('TELEGRAM_API_ID')
+    telegram_api_hash = os.getenv('TELEGRAM_API_HASH')
+    telegram_phone = os.getenv('TELEGRAM_PHONE')
+    telegram_session = 'telegram_session'
+
+    instagram_username = os.getenv('INSTAGRAM_USERNAME')
+    instagram_password = os.getenv('INSTAGRAM_PASSWORD')
+    instagram_session = 'instagram_session'
+
+    results = {
+        'telegram': {'extracted': False, 'count': 0, 'error': None},
+        'instagram': {'extracted': False, 'count': 0, 'error': None},
+    }
+
+    # Extract from Telegram if credentials provided
+    if telegram_api_id and telegram_api_hash:
+        print_info("Extracting from Telegram...")
+        try:
+            ctx.invoke(
+                telegram,
+                api_id=telegram_api_id,
+                api_hash=telegram_api_hash,
+                phone=telegram_phone,
+                session=telegram_session,
+                limit=limit,
+                force=force,
+            )
+            results['telegram']['extracted'] = True
+        except click.Abort:
+            results['telegram']['error'] = "Aborted"
+        except Exception as e:
+            results['telegram']['error'] = str(e)
+            if ctx.obj and ctx.obj.get('verbose'):
+                print_error(f"Telegram extraction failed: {e}")
+    else:
+        print_warning(
+            "Skipping Telegram (no credentials). "
+            "Set TELEGRAM_API_ID and TELEGRAM_API_HASH."
+        )
+
+    console.print()
+
+    # Extract from Instagram if credentials provided
+    if instagram_username and instagram_password:
+        print_info("Extracting from Instagram...")
+        try:
+            ctx.invoke(
+                instagram,
+                username=instagram_username,
+                password=instagram_password,
+                session=instagram_session,
+                limit=limit,
+                force=force,
+            )
+            results['instagram']['extracted'] = True
+        except click.Abort:
+            results['instagram']['error'] = "Aborted"
+        except Exception as e:
+            results['instagram']['error'] = str(e)
+            if ctx.obj and ctx.obj.get('verbose'):
+                print_error(f"Instagram extraction failed: {e}")
+    else:
+        print_warning(
+            "Skipping Instagram (no credentials). "
+            "Set INSTAGRAM_USERNAME and INSTAGRAM_PASSWORD."
+        )
+
+    # Summary
+    console.print()
+    console.print("[bold cyan]═══════════════════════════════[/bold cyan]")
+
+    extracted_count = sum(1 for r in results.values() if r['extracted'])
+    error_count = sum(1 for r in results.values() if r['error'])
+
+    if extracted_count == 0 and error_count == 0:
+        print_warning(
+            "No platforms extracted. Please set credentials via environment variables."
+        )
+        console.print()
+        console.print("  [dim]# Telegram[/dim]")
+        console.print("  export TELEGRAM_API_ID=12345678")
+        console.print("  export TELEGRAM_API_HASH=abc123def456")
+        console.print()
+        console.print("  [dim]# Instagram[/dim]")
+        console.print("  export INSTAGRAM_USERNAME=myuser")
+        console.print("  export INSTAGRAM_PASSWORD=mypass")
+    elif extracted_count > 0:
+        print_success(f"Extraction completed for {extracted_count} platform(s)")
+        if error_count > 0:
+            print_warning(f"{error_count} platform(s) had errors")
+    else:
+        print_error(f"All {error_count} platform(s) failed")
+
+    console.print()
 

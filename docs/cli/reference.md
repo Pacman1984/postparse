@@ -75,6 +75,56 @@ Displays:
 
 Extract data from social media platforms.
 
+#### `postparse extract all`
+
+Extract from both Telegram and Instagram platforms at once.
+
+> **Default Behavior:** Running `postparse extract` without a subcommand invokes `extract all`.
+
+**Options:**
+
+| Option | Type | Required | Description |
+|--------|------|----------|-------------|
+| `--limit` | Integer | No | Maximum items to extract per platform |
+| `--force` | Flag | No | Force re-fetch existing items |
+
+**Examples:**
+
+```bash
+# Extract from all platforms (uses environment variables)
+postparse extract all
+
+# Same as above (default behavior)
+postparse extract
+
+# Limit items per platform
+postparse extract all --limit 100
+
+# Force re-fetch
+postparse extract all --force
+```
+
+**Output:**
+
+```
+📥 Extracting From All Platforms
+
+ℹ Extracting from Telegram...
+ℹ Connecting to Telegram...
+✓ Connected to Telegram!
+[Progress...]
+✓ Extraction completed!
+
+ℹ Extracting from Instagram...
+[Progress...]
+✓ Extraction completed!
+
+═══════════════════════════════
+✓ Extraction completed for 2 platform(s)
+```
+
+**Note:** Platforms without credentials configured are automatically skipped with a warning.
+
 #### `postparse extract telegram`
 
 Extract Telegram messages from your **Saved Messages** folder.

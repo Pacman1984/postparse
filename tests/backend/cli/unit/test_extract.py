@@ -391,6 +391,234 @@ class TestExtractInstagram:
                     assert result.exit_code == 0
 
 
+class TestExtractAll:
+    """Test extract all command."""
+
+    def test_extract_all_with_no_credentials_shows_warning(self) -> None:
+        """
+        Test that extract all shows warnings when no credentials are set.
+
+        Verifies that the command handles missing credentials gracefully
+        and provides helpful guidance.
+        """
+        runner = CliRunner()
+
+        # Run without any credentials
+        result = runner.invoke(
+            cli,
+            ["extract", "all"],
+            env={
+                "TELEGRAM_API_ID": "",
+                "TELEGRAM_API_HASH": "",
+                "INSTAGRAM_USERNAME": "",
+                "INSTAGRAM_PASSWORD": "",
+            },
+        )
+
+        # Should complete but show warnings
+        output_lower = result.output.lower()
+        assert "skipping" in output_lower or "no credentials" in output_lower
+
+    def test_extract_all_with_telegram_credentials_only(self) -> None:
+        """Test extract all with only Telegram credentials."""
+        runner = CliRunner()
+
+        with patch("backend.postparse.cli.extract.load_config") as mock_load:
+            with patch("backend.postparse.cli.extract.get_database") as mock_get_db:
+                with patch("backend.postparse.services.parsers.telegram.telegram_parser.TelegramParser") as mock_parser_class:
+                    with patch("backend.postparse.cli.extract.run_async") as mock_run_async:
+                        mock_config = MagicMock()
+                        mock_load.return_value = mock_config
+
+                        mock_db = MagicMock()
+                        mock_get_db.return_value = mock_db
+
+                        mock_parser = MagicMock()
+                        mock_parser.__aenter__ = AsyncMock(return_value=mock_parser)
+                        mock_parser.__aexit__ = AsyncMock(return_value=None)
+                        mock_parser.save_messages_to_db = AsyncMock(return_value=10)
+                        mock_parser_class.return_value = mock_parser
+
+                        mock_run_async.return_value = 10
+
+                        result = runner.invoke(
+                            cli,
+                            ["extract", "all"],
+                            env={
+                                "TELEGRAM_API_ID": "12345",
+                                "TELEGRAM_API_HASH": "abc123",
+                                "INSTAGRAM_USERNAME": "",
+                                "INSTAGRAM_PASSWORD": "",
+                            },
+                        )
+
+                        assert result.exit_code == 0
+                        output_lower = result.output.lower()
+                        # Should show Instagram skipped
+                        assert "skipping instagram" in output_lower
+
+    def test_extract_all_with_instagram_credentials_only(self) -> None:
+        """Test extract all with only Instagram credentials."""
+        runner = CliRunner()
+
+        with patch("backend.postparse.cli.extract.load_config") as mock_load:
+            with patch("backend.postparse.cli.extract.get_database") as mock_get_db:
+                with patch("backend.postparse.services.parsers.instagram.instagram_parser.InstaloaderParser") as mock_parser_class:
+                    mock_config = MagicMock()
+                    mock_load.return_value = mock_config
+
+                    mock_db = MagicMock()
+                    mock_get_db.return_value = mock_db
+
+                    mock_parser = MagicMock()
+                    mock_parser.save_posts_to_db.return_value = 15
+                    mock_parser_class.return_value = mock_parser
+
+                    result = runner.invoke(
+                        cli,
+                        ["extract", "all"],
+                        env={
+                            "TELEGRAM_API_ID": "",
+                            "TELEGRAM_API_HASH": "",
+                            "INSTAGRAM_USERNAME": "testuser",
+                            "INSTAGRAM_PASSWORD": "testpass",
+                        },
+                    )
+
+                    assert result.exit_code == 0
+                    output_lower = result.output.lower()
+                    # Should show Telegram skipped
+                    assert "skipping telegram" in output_lower
+
+    def test_extract_all_with_both_credentials(self) -> None:
+        """Test extract all with both Telegram and Instagram credentials."""
+        runner = CliRunner()
+
+        with patch("backend.postparse.cli.extract.load_config") as mock_load:
+            with patch("backend.postparse.cli.extract.get_database") as mock_get_db:
+                with patch("backend.postparse.services.parsers.telegram.telegram_parser.TelegramParser") as mock_tg_parser_class:
+                    with patch("backend.postparse.services.parsers.instagram.instagram_parser.InstaloaderParser") as mock_ig_parser_class:
+                        with patch("backend.postparse.cli.extract.run_async") as mock_run_async:
+                            mock_config = MagicMock()
+                            mock_load.return_value = mock_config
+
+                            mock_db = MagicMock()
+                            mock_get_db.return_value = mock_db
+
+                            # Mock Telegram parser
+                            mock_tg_parser = MagicMock()
+                            mock_tg_parser.__aenter__ = AsyncMock(
+                                return_value=mock_tg_parser
+                            )
+                            mock_tg_parser.__aexit__ = AsyncMock(return_value=None)
+                            mock_tg_parser.save_messages_to_db = AsyncMock(
+                                return_value=10
+                            )
+                            mock_tg_parser_class.return_value = mock_tg_parser
+
+                            # Mock Instagram parser
+                            mock_ig_parser = MagicMock()
+                            mock_ig_parser.save_posts_to_db.return_value = 15
+                            mock_ig_parser_class.return_value = mock_ig_parser
+
+                            mock_run_async.return_value = 10
+
+                            result = runner.invoke(
+                                cli,
+                                ["extract", "all"],
+                                env={
+                                    "TELEGRAM_API_ID": "12345",
+                                    "TELEGRAM_API_HASH": "abc123",
+                                    "INSTAGRAM_USERNAME": "testuser",
+                                    "INSTAGRAM_PASSWORD": "testpass",
+                                },
+                            )
+
+                            assert result.exit_code == 0
+                            output_lower = result.output.lower()
+                            # Should show success for both
+                            assert "completed" in output_lower
+
+    def test_extract_all_with_limit_option(self) -> None:
+        """Test extract all with --limit option."""
+        runner = CliRunner()
+
+        with patch("backend.postparse.cli.extract.load_config") as mock_load:
+            with patch("backend.postparse.cli.extract.get_database") as mock_get_db:
+                with patch("backend.postparse.services.parsers.instagram.instagram_parser.InstaloaderParser") as mock_parser_class:
+                    mock_config = MagicMock()
+                    mock_load.return_value = mock_config
+
+                    mock_db = MagicMock()
+                    mock_get_db.return_value = mock_db
+
+                    mock_parser = MagicMock()
+                    mock_parser.save_posts_to_db.return_value = 5
+                    mock_parser_class.return_value = mock_parser
+
+                    result = runner.invoke(
+                        cli,
+                        ["extract", "all", "--limit", "5"],
+                        env={
+                            "TELEGRAM_API_ID": "",
+                            "TELEGRAM_API_HASH": "",
+                            "INSTAGRAM_USERNAME": "testuser",
+                            "INSTAGRAM_PASSWORD": "testpass",
+                        },
+                    )
+
+                    assert result.exit_code == 0
+
+    def test_extract_all_with_force_option(self) -> None:
+        """Test extract all with --force option."""
+        runner = CliRunner()
+
+        with patch("backend.postparse.cli.extract.load_config") as mock_load:
+            with patch("backend.postparse.cli.extract.get_database") as mock_get_db:
+                with patch("backend.postparse.services.parsers.instagram.instagram_parser.InstaloaderParser") as mock_parser_class:
+                    mock_config = MagicMock()
+                    mock_load.return_value = mock_config
+
+                    mock_db = MagicMock()
+                    mock_get_db.return_value = mock_db
+
+                    mock_parser = MagicMock()
+                    mock_parser.save_posts_to_db.return_value = 20
+                    mock_parser_class.return_value = mock_parser
+
+                    result = runner.invoke(
+                        cli,
+                        ["extract", "all", "--force"],
+                        env={
+                            "TELEGRAM_API_ID": "",
+                            "TELEGRAM_API_HASH": "",
+                            "INSTAGRAM_USERNAME": "testuser",
+                            "INSTAGRAM_PASSWORD": "testpass",
+                        },
+                    )
+
+                    assert result.exit_code == 0
+
+    def test_extract_default_invokes_all(self) -> None:
+        """Test that 'extract' without subcommand invokes 'extract all'."""
+        runner = CliRunner()
+
+        # Run extract without subcommand
+        result = runner.invoke(
+            cli,
+            ["extract"],
+            env={
+                "TELEGRAM_API_ID": "",
+                "TELEGRAM_API_HASH": "",
+                "INSTAGRAM_USERNAME": "",
+                "INSTAGRAM_PASSWORD": "",
+            },
+        )
+
+        # Should show the "all platforms" header
+        assert "all platforms" in result.output.lower()
+
+
 class TestExtractHelp:
     """Test extract command help output."""
 
@@ -403,6 +631,7 @@ class TestExtractHelp:
         output_lower = result.output.lower()
         assert "telegram" in output_lower
         assert "instagram" in output_lower
+        assert "all" in output_lower
 
     def test_extract_telegram_help(self) -> None:
         """Test extract telegram --help displays help text."""

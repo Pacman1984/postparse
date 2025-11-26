@@ -24,11 +24,12 @@ Complete command reference and options.
 postparse stats
 
 # Check for new content (fast preview)
-postparse check
+postparse check all
 
-# Extract from Telegram (Saved Messages only)
-export TELEGRAM_API_ID=12345678
-export TELEGRAM_API_HASH=abc123def456
+# Extract from all platforms
+postparse extract all --limit 100
+
+# Or extract from specific platform
 postparse extract telegram --limit 100
 
 # Search for recipes

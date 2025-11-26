@@ -18,14 +18,17 @@ postparse check instagram
 ### Extract and View Data
 
 ```bash
-# Extract limited data for testing
-postparse extract telegram --limit 50
+# Extract from all platforms at once
+postparse extract all --limit 50
 postparse stats
 
-# Extract all saved content
+# Or extract from specific platforms
+postparse extract telegram --limit 50
+postparse extract instagram --limit 50
+
+# Extract all saved content (no limit)
 # Note: Telegram extracts from "Saved Messages" folder only
-postparse extract telegram
-postparse extract instagram
+postparse extract all
 ```
 
 ### Search and Filter
@@ -90,17 +93,16 @@ postparse db export recent.json --limit 1000
 # Set credentials (or use config/.env)
 export TELEGRAM_API_ID=12345678
 export TELEGRAM_API_HASH=abc123def456
+export INSTAGRAM_USERNAME=myuser
+export INSTAGRAM_PASSWORD=mypass
 
 # Check for new content first
 echo "Checking for new content..."
-postparse check
+postparse check all
 
-# Extract new data
-echo "Extracting Telegram messages (from Saved Messages)..."
-postparse extract telegram --limit 100
-
-echo "Extracting Instagram posts..."
-postparse extract instagram --limit 50
+# Extract new data from all platforms
+echo "Extracting from all platforms..."
+postparse extract all --limit 100
 
 # Show stats
 postparse stats
@@ -112,9 +114,8 @@ postparse db export "backup_$(date +%Y%m%d).json"
 ### Recipe Collection Pipeline
 
 ```bash
-# 1. Extract from both platforms
-postparse extract telegram --limit 500
-postparse extract instagram --limit 200
+# 1. Extract from both platforms at once
+postparse extract all --limit 500
 
 # 2. Find all recipe-related content
 postparse search posts --hashtag recipe --hashtag cooking --output json > recipes_posts.json
@@ -144,9 +145,8 @@ postparse stats --detailed
 ### Batch Processing
 
 ```bash
-# Process large dataset efficiently
-postparse extract telegram --limit 5000
-postparse extract instagram --limit 1000
+# Process large dataset efficiently from all platforms
+postparse extract all --limit 5000
 
 # Classify in batches
 postparse classify batch --source posts --limit 500

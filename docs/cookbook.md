@@ -39,7 +39,7 @@ print(f"Successfully saved {count} messages")
 ```python
 import asyncio
 from postparse.telegram.telegram_parser import TelegramParser
-from postparse.data.database import SocialMediaDatabase
+from postparse.core.data.database import SocialMediaDatabase
 
 async def extract_with_progress():
     db = SocialMediaDatabase("my_telegram_data.db")
@@ -80,7 +80,7 @@ asyncio.run(extract_with_progress())
 
 ```python
 from postparse.instagram.instagram_parser import InstaloaderParser
-from postparse.data.database import SocialMediaDatabase
+from postparse.core.data.database import SocialMediaDatabase
 import logging
 
 # Set up logging to track progress
@@ -181,12 +181,60 @@ for post, result in zip(posts, results):
         print(f"  Details: {result.details}")
 ```
 
+**Saving Results to Database**
+
+```python
+from postparse.core.data.database import SocialMediaDatabase
+from postparse.services.analysis.classifiers import RecipeLLMClassifier
+
+db = SocialMediaDatabase("my_data.db")
+classifier = RecipeLLMClassifier()
+
+# Classify and save results to database
+messages = db.get_telegram_messages(limit=100)
+
+for msg in messages:
+    if not msg['content']:
+        continue
+    
+    # Skip if already classified
+    if db.has_classification(msg['id'], 'telegram', 'recipe_llm'):
+        continue
+    
+    result = classifier.predict(msg['content'])
+    
+    # Extract reasoning if present (for multi-class)
+    reasoning = result.details.pop('reasoning', None) if result.details else None
+    
+    # Save classification result
+    db.save_classification_result(
+        content_id=msg['id'],
+        content_source='telegram',
+        classifier_name='recipe_llm',
+        label=result.label,
+        confidence=result.confidence,
+        details=result.details,
+        reasoning=reasoning,
+        llm_metadata=classifier.get_llm_metadata()
+    )
+    
+    print(f"Saved: {result.label} ({result.confidence:.0%})")
+
+# Query saved results
+results = db.get_classification_results(msg['id'], 'telegram')
+for r in results:
+    print(f"Label: {r['label']}, Confidence: {r['confidence']:.0%}")
+    if r['reasoning']:
+        print(f"  Reasoning: {r['reasoning']}")
+```
+
 **What's happening:**
 - `RecipeLLMClassifier` uses LangChain + LiteLLM for universal LLM support
 - Zero-shot classification (no training required)
 - Returns structured Pydantic models with rich metadata
 - Automatically works with ANY LiteLLM provider (Ollama, LM Studio, OpenAI, etc.)
 - Includes confidence scores and detailed recipe attributes
+- Results saved to `content_analysis` table with full LLM metadata tracking
 
 ---
 
@@ -197,7 +245,7 @@ for post, result in zip(posts, results):
 **Key APIs:** [`SocialMediaDatabase`](api_reference.md#postparsedatadatabasesocialmediadatabase) query methods
 
 ```python
-from postparse.data.database import SocialMediaDatabase
+from postparse.core.data.database import SocialMediaDatabase
 from datetime import datetime, timedelta
 
 db = SocialMediaDatabase("my_data.db")

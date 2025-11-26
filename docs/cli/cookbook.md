@@ -52,18 +52,22 @@ postparse search posts --hashtag recipe --hashtag cooking --type video
 ### Classification
 
 ```bash
-# Classify single text
-postparse classify single "Mix flour and water to make dough"
+# Classify single text (ad-hoc)
+postparse classify text "Mix flour and water to make dough"
 
 # From stdin
-echo "Boil pasta for 10 minutes" | postparse classify single -
+echo "Boil pasta for 10 minutes" | postparse classify text -
 
-# Batch classification
-postparse classify batch --source posts --limit 100
-postparse classify batch --filter-hashtag recipe --detailed
+# Multi-class classification
+postparse classify text "Check out FastAPI!" --classifier multiclass \
+  --classes '{"recipe": "Cooking", "tech": "Technology"}'
+
+# Database classification (saves results)
+postparse classify db --source instagram --limit 100
+postparse classify db --filter-hashtag recipe
 
 # With specific LLM provider
-postparse classify batch --provider openai --detailed
+postparse classify db --provider openai
 ```
 
 ### Data Export
@@ -122,7 +126,7 @@ postparse search posts --hashtag recipe --hashtag cooking --output json > recipe
 postparse search messages --hashtag recipe --output json > recipes_messages.json
 
 # 3. Classify with LLM
-postparse classify batch --filter-hashtag recipe --detailed
+postparse classify db --filter-hashtag recipe
 
 # 4. Export verified recipes
 postparse db export recipes_verified.json --limit 1000
@@ -136,7 +140,7 @@ postparse serve --reload --log-level debug
 
 # In another terminal, test with small dataset
 postparse extract telegram --limit 10
-postparse classify batch --source messages --limit 10
+postparse classify db --source telegram --limit 10
 
 # Check results
 postparse stats --detailed
@@ -149,8 +153,8 @@ postparse stats --detailed
 postparse extract all --limit 5000
 
 # Classify in batches
-postparse classify batch --source posts --limit 500
-postparse classify batch --source messages --limit 500
+postparse classify db --source instagram --limit 500
+postparse classify db --source telegram --limit 500
 
 # Export results
 postparse db export classified_$(date +%Y%m%d).json

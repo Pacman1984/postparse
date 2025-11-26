@@ -100,8 +100,9 @@ class RecipeLLMClassifier(BaseClassifier):
         # Select provider: use specified or default from config
         selected_provider = provider_name or llm_config.default_provider
         
-        # Get provider configuration
+        # Get provider configuration and store for metadata access
         provider_cfg = get_provider_config(llm_config, selected_provider)
+        self._provider_config = provider_cfg
         
         # Build llm_kwargs from provider configuration
         llm_kwargs = {
@@ -216,4 +217,38 @@ If it's not a recipe, set is_recipe to false and leave other fields as null."""
         # More filled fields = higher confidence, using configured thresholds
         base_confidence = self.min_confidence
         confidence_increment = (self.max_confidence - self.min_confidence) / 4  # 4 optional fields
-        return min(base_confidence + (filled_fields * confidence_increment), self.max_confidence) 
+        return min(base_confidence + (filled_fields * confidence_increment), self.max_confidence)
+
+    def get_llm_metadata(self) -> dict:
+        """Get LLM configuration metadata for storage/tracking.
+
+        Returns:
+            Dictionary with provider configuration (excluding sensitive api_key).
+
+        Example:
+            >>> classifier = RecipeLLMClassifier(provider_name='lm_studio')
+            >>> metadata = classifier.get_llm_metadata()
+            >>> print(metadata)
+            {
+                'provider': 'lm_studio',
+                'model': 'qwen/qwen3-vl-8b',
+                'temperature': 0.7,
+                'max_tokens': 1000,
+                'timeout': 60,
+                'api_base': 'http://localhost:1234/v1'
+            }
+        """
+        cfg = self._provider_config
+        metadata = {
+            "provider": cfg.name,
+            "model": cfg.model,
+            "temperature": cfg.temperature,
+        }
+        # Add optional fields if present
+        if cfg.max_tokens:
+            metadata["max_tokens"] = cfg.max_tokens
+        if cfg.timeout:
+            metadata["timeout"] = cfg.timeout
+        if cfg.api_base:
+            metadata["api_base"] = cfg.api_base
+        return metadata 

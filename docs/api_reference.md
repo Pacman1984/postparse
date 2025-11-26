@@ -285,9 +285,9 @@ Explore the API interactively at:
 
 ### Data Storage
 
-#### `postparse.data.database.SocialMediaDatabase`
+#### `postparse.core.data.database.SocialMediaDatabase`
 
-The main database interface for storing and retrieving social media content.
+The main database interface for storing and retrieving social media content and classification results.
 
 **Constructor:**
 
@@ -301,7 +301,7 @@ SocialMediaDatabase(db_path: str = "social_media.db")
 **Example:**
 
 ```python
-from postparse.data.database import SocialMediaDatabase
+from postparse.core.data.database import SocialMediaDatabase
 
 db = SocialMediaDatabase("my_data.db")
 ```
@@ -376,6 +376,84 @@ Check if a Telegram message exists in the database.
 
 **Returns:**
 - `True` if message exists, `False` otherwise
+
+##### `save_classification_result(content_id, content_source, classifier_name, label, confidence, details=None, classification_type='single', run_id=None, reasoning=None, llm_metadata=None) -> int`
+
+Save a classification result to the database.
+
+**Parameters:**
+- `content_id` (int): ID of the content (instagram_posts.id or telegram_messages.id)
+- `content_source` (str): Source of content (`'instagram'` or `'telegram'`)
+- `classifier_name` (str): Name of classifier (e.g., `'recipe_llm'`, `'multi_class_llm'`)
+- `label` (str): Classification label
+- `confidence` (float): Confidence score (0.0 to 1.0)
+- `details` (dict, optional): Additional classification details (stored as key-value pairs)
+- `classification_type` (str): Type of classification (`'single'` or `'multi_label'`)
+- `run_id` (str, optional): UUID to group multi-label results
+- `reasoning` (str, optional): LLM's reasoning for the classification
+- `llm_metadata` (dict, optional): LLM configuration metadata (stored as JSON)
+
+**Returns:**
+- ID of the inserted `content_analysis` record
+
+**Example:**
+
+```python
+db.save_classification_result(
+    content_id=42,
+    content_source='instagram',
+    classifier_name='recipe_llm',
+    label='recipe',
+    confidence=0.95,
+    details={'cuisine_type': 'italian', 'difficulty': 'easy'},
+    reasoning='Contains cooking instructions and ingredient list',
+    llm_metadata={'provider': 'lm_studio', 'model': 'qwen/qwen3-vl-8b'}
+)
+```
+
+##### `get_classification_results(content_id, content_source, classifier_name=None, run_id=None) -> List[Dict]`
+
+Retrieve classification results for content.
+
+**Parameters:**
+- `content_id` (int): ID of the content
+- `content_source` (str): Source of content (`'instagram'` or `'telegram'`)
+- `classifier_name` (str, optional): Filter by classifier name
+- `run_id` (str, optional): Filter by run_id (for multi-label grouping)
+
+**Returns:**
+- List of classification result dictionaries with keys: `id`, `classifier_name`, `classification_type`, `run_id`, `label`, `confidence`, `reasoning`, `llm_metadata`, `analyzed_at`, `details`
+
+**Example:**
+
+```python
+results = db.get_classification_results(42, 'instagram')
+for r in results:
+    print(f"{r['label']} ({r['confidence']:.0%})")
+    if r['reasoning']:
+        print(f"  Reasoning: {r['reasoning']}")
+```
+
+##### `has_classification(content_id, content_source, classifier_name) -> bool`
+
+Check if content has been classified by a specific classifier.
+
+**Parameters:**
+- `content_id` (int): ID of the content
+- `content_source` (str): Source of content (`'instagram'` or `'telegram'`)
+- `classifier_name` (str): Name of classifier to check
+
+**Returns:**
+- `True` if classification exists, `False` otherwise
+
+**Example:**
+
+```python
+if not db.has_classification(42, 'instagram', 'recipe_llm'):
+    # Classify and save result
+    result = classifier.predict(text)
+    db.save_classification_result(...)
+```
 
 ---
 

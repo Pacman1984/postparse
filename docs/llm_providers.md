@@ -491,35 +491,33 @@ curl -X POST "http://localhost:8000/api/v1/classify/multi/batch" \
 
 ### CLI Usage
 
-**Single classification:**
+**Ad-hoc classification (doesn't save to database):**
 
 ```bash
-# Using classes from config
-postparse classify multi "Check out this new FastAPI library!"
-
 # Using runtime classes (JSON)
-postparse classify multi "Apple announces iPhone 16" \
+postparse classify text "Apple announces iPhone 16" \
+  --classifier multiclass \
   --classes '{"recipe": "Cooking", "tech_news": "Technology news", "sports": "Sports"}'
 
 # Using classes from file
-postparse classify multi "Some text" --classes @classes.json
+postparse classify text "Some text" --classifier multiclass --classes @classes.json
 
 # With specific provider
-postparse classify multi "Some text" --provider openai
+postparse classify text "Some text" --classifier multiclass --provider openai
 ```
 
-**Batch classification:**
+**Database classification (saves results):**
 
 ```bash
-# From command line arguments
-postparse classify multi-batch "Text 1" "Text 2" "Text 3" \
+# Classify posts with multiclass
+postparse classify db --classifier multiclass \
   --classes '{"recipe": "Cooking", "tech": "Technology"}' \
-  --output results.json
+  --source instagram --limit 100
 
-# From file (one text per line)
-postparse classify multi-batch @texts.txt \
+# Classify messages with multiclass
+postparse classify db --classifier multiclass \
   --classes @classes.json \
-  --output results.json
+  --source telegram
 ```
 
 ### Best Practices

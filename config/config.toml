@@ -132,7 +132,6 @@ If it's not a recipe, set is_recipe to false and leave other fields as null."""
 [database]
 # Database configuration
 default_db_path = "data/social_media.db"
-analysis_db_path = "data/analysis.db"
 
 [api]
 # FastAPI server configuration

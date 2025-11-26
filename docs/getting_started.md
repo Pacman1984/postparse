@@ -344,10 +344,27 @@ classifier = RecipeLLMClassifier()
 # Get recent messages
 messages = db.get_telegram_messages(limit=10)
 
-# Classify each message
+# Classify each message and save to database
 for msg in messages:
     if msg['content']:
+        # Skip if already classified
+        if db.has_classification(msg['id'], 'telegram', 'recipe_llm'):
+            print(f"Message {msg['message_id']}: already classified")
+            continue
+        
         result = classifier.predict(msg['content'])
+        
+        # Save result to database
+        db.save_classification_result(
+            content_id=msg['id'],
+            content_source='telegram',
+            classifier_name='recipe_llm',
+            label=result.label,
+            confidence=result.confidence,
+            details=result.details,
+            llm_metadata=classifier.get_llm_metadata()
+        )
+        
         print(f"Message {msg['message_id']}: {result.label} (confidence: {result.confidence:.2f})")
         if result.details:
             print(f"  Details: {result.details}")

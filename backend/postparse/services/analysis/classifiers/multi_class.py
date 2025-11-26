@@ -191,6 +191,7 @@ class MultiClassLLMClassifier(BaseClassifier):
 
         # Get provider configuration (will not raise since we validated above)
         provider_cfg = get_provider_config(llm_config, selected_provider)
+        self._provider_config = provider_cfg
 
         # Build llm_kwargs from provider configuration
         llm_kwargs = {
@@ -418,4 +419,38 @@ class MultiClassLLMClassifier(BaseClassifier):
             ```
         """
         return list(self.classes.keys())
+
+    def get_llm_metadata(self) -> Dict[str, Any]:
+        """Get LLM configuration metadata for storage/tracking.
+
+        Returns:
+            Dictionary with provider configuration (excluding sensitive api_key).
+
+        Example:
+            ```python
+            classifier = MultiClassLLMClassifier(provider_name='openai')
+            metadata = classifier.get_llm_metadata()
+            print(metadata)
+            # {
+            #     'provider': 'openai',
+            #     'model': 'gpt-4o-mini',
+            #     'temperature': 0.7,
+            #     'max_tokens': 1000
+            # }
+            ```
+        """
+        cfg = self._provider_config
+        metadata: Dict[str, Any] = {
+            "provider": cfg.name,
+            "model": cfg.model,
+            "temperature": cfg.temperature,
+        }
+        # Add optional fields if present
+        if cfg.max_tokens:
+            metadata["max_tokens"] = cfg.max_tokens
+        if cfg.timeout:
+            metadata["timeout"] = cfg.timeout
+        if cfg.api_base:
+            metadata["api_base"] = cfg.api_base
+        return metadata
 

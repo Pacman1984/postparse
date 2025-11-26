@@ -23,9 +23,9 @@ PostParse is a Python package for extracting, storing, and analyzing saved posts
 Here's a minimal example showing how to extract Telegram messages and classify content:
 
 ```python
-from postparse.telegram.telegram_parser import TelegramParser
-from postparse.data.database import SocialMediaDatabase
-from postparse.analysis.classifiers.recipe_classifier import RecipeClassifier
+from postparse.services.parsers.telegram.telegram_parser import TelegramParser
+from postparse.core.data.database import SocialMediaDatabase
+from postparse.services.analysis.classifiers import RecipeLLMClassifier
 
 # Initialize database
 db = SocialMediaDatabase("my_data.db")
@@ -38,20 +38,33 @@ async with TelegramParser(
 ) as parser:
     await parser.save_messages_to_db(db, limit=100)
 
-# Classify content
-classifier = RecipeClassifier()
+# Classify content and save results
+classifier = RecipeLLMClassifier()
 messages = db.get_telegram_messages(limit=10)
 
 for msg in messages:
     if msg['content']:
         result = classifier.predict(msg['content'])
-        print(f"Message {msg['message_id']}: {result}")
+        
+        # Save to database
+        db.save_classification_result(
+            content_id=msg['id'],
+            content_source='telegram',
+            classifier_name='recipe_llm',
+            label=result.label,
+            confidence=result.confidence,
+            details=result.details
+        )
+        
+        print(f"Message {msg['message_id']}: {result.label} ({result.confidence:.0%})")
 ```
 
 ## Documentation Structure
 
 - **[Getting Started](getting_started.md)** - Installation, setup, and your first steps
 - **[Cookbook](cookbook.md)** - Practical recipes for common tasks
+- **[Database Architecture](database.md)** - Schema design and classification storage
+- **[LLM Providers](llm_providers.md)** - Configuring LLM providers for classification
 - **[API Reference](api_reference.md)** - Complete reference for all public APIs
 
 ## Key Features

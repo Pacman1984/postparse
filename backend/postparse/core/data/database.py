@@ -14,7 +14,6 @@ class SocialMediaDatabase:
     """Handles all database operations for social media data."""
     
     INSTAGRAM_BASE_URL = "https://instagram.com/p/"
-    CURRENT_VERSION = 1  # Increment this when schema changes
     
     def __init__(self, db_path: str = "social_media.db"):
         """Initialize database connection and create tables if they don't exist.
@@ -39,63 +38,13 @@ class SocialMediaDatabase:
             self._conn.close()
     
     def __initialize_database(self):
-        """Initialize database and handle migrations."""
-        # Check if database exists
-        is_new_db = not self._db_path.exists()
+        """Initialize database and ensure all tables exist.
         
+        Uses CREATE TABLE IF NOT EXISTS for all tables, so existing data is preserved
+        and missing tables are created automatically.
+        """
         with self as db:
-            if is_new_db:
-                db.__create_tables()
-                db.__set_version(self.CURRENT_VERSION)
-            else:
-                # Check version and migrate if necessary
-                current_version = db.__get_version()
-                if current_version < self.CURRENT_VERSION:
-                    db.__migrate_database(current_version)
-    
-    def __get_version(self) -> int:
-        """Get current database version."""
-        try:
-            self._cursor.execute("SELECT version FROM schema_version")
-            return self._cursor.fetchone()[0]
-        except sqlite3.OperationalError:
-            return 0
-    
-    def __set_version(self, version: int):
-        """Set database version."""
-        self._cursor.execute("""
-            CREATE TABLE IF NOT EXISTS schema_version (
-                version INTEGER NOT NULL
-            )
-        """)
-        self._cursor.execute("DELETE FROM schema_version")
-        self._cursor.execute("INSERT INTO schema_version VALUES (?)", (version,))
-        self._conn.commit()
-    
-    def __migrate_database(self, current_version: int):
-        """Migrate database to latest version."""
-        print(f"Migrating database from version {current_version} to {self.CURRENT_VERSION}")
-        
-        # Backup tables
-        self._cursor.execute("BEGIN TRANSACTION")
-        try:
-            # Drop existing tables
-            self._cursor.execute("DROP TABLE IF EXISTS instagram_posts")
-            self._cursor.execute("DROP TABLE IF EXISTS instagram_hashtags")
-            self._cursor.execute("DROP TABLE IF EXISTS instagram_mentions")
-            
-            # Create new tables
-            self.__create_tables()
-            
-            # Update version
-            self.__set_version(self.CURRENT_VERSION)
-            
-            self._conn.commit()
-            print("Migration completed successfully")
-        except Exception as e:
-            self._conn.rollback()
-            print(f"Migration failed: {str(e)}")
-            raise
+            db.__create_tables()
     
     def __create_tables(self):
         """Create necessary database tables if they don't exist."""
@@ -170,7 +119,46 @@ class SocialMediaDatabase:
             )
         """)
         
+        # Create content analysis table for classification results
+        self._cursor.execute("""
+            CREATE TABLE IF NOT EXISTS content_analysis (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                content_id INTEGER NOT NULL,
+                content_source TEXT NOT NULL,
+                classifier_name TEXT NOT NULL,
+                classification_type TEXT NOT NULL DEFAULT 'single',
+                run_id TEXT,
+                label TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                reasoning TEXT,
+                llm_metadata TEXT,
+                llm_provider TEXT,
+                llm_model TEXT,
+                details_json TEXT,
+                analyzed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # Ensure columns exist for older databases
+        self.__add_column_if_not_exists('content_analysis', 'llm_provider', 'TEXT')
+        self.__add_column_if_not_exists('content_analysis', 'llm_model', 'TEXT')
+        self.__add_column_if_not_exists('content_analysis', 'details_json', 'TEXT')
+        
         self._conn.commit()
+    
+    def __add_column_if_not_exists(self, table: str, column: str, col_type: str) -> None:
+        """Add a column to a table if it doesn't already exist.
+        
+        Args:
+            table: Name of the table.
+            column: Name of the column to add.
+            col_type: SQL type for the column.
+        """
+        try:
+            self._cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+        except sqlite3.OperationalError:
+            # Column already exists, ignore
+            pass
     
     def _insert_instagram_post(self, shortcode: str, owner_username: str = None,
                              owner_id: int = None, caption: str = None,
@@ -1030,3 +1018,323 @@ class SocialMediaDatabase:
             )[:limit]
             
             return sorted_hashtags
+
+    # ==================== Classification Methods ====================
+
+    def save_classification_result(
+        self,
+        content_id: int,
+        content_source: str,
+        classifier_name: str,
+        label: str,
+        confidence: float,
+        details: Optional[Dict[str, Any]] = None,
+        classification_type: str = "single",
+        run_id: Optional[str] = None,
+        reasoning: Optional[str] = None,
+        llm_metadata: Optional[Dict[str, Any]] = None
+    ) -> int:
+        """Save a classification result to the database.
+
+        Args:
+            content_id: ID of the analyzed content (instagram post or telegram message).
+            content_source: Source of the content ('instagram' or 'telegram').
+            classifier_name: Name of the classifier used (e.g., 'recipe_llm', 'multi_class').
+            label: Classification label (e.g., 'recipe', 'non_recipe', 'tech_news').
+            confidence: Confidence score between 0.0 and 1.0.
+            details: Optional dictionary of additional classification details.
+            classification_type: Type of classification ('single' or 'multi_label').
+            run_id: Optional UUID to group multi-label results from the same run.
+            reasoning: Optional reasoning explanation from the classifier.
+            llm_metadata: Optional dictionary of LLM configuration used for classification.
+                Example: {'provider': 'openai', 'model': 'gpt-4o-mini', 'temperature': 0.7}
+
+        Returns:
+            The ID of the inserted content_analysis record.
+
+        Example:
+            >>> db = SocialMediaDatabase()
+            >>> # Single-label classification with LLM metadata
+            >>> analysis_id = db.save_classification_result(
+            ...     content_id=42,
+            ...     content_source='instagram',
+            ...     classifier_name='recipe_llm',
+            ...     label='recipe',
+            ...     confidence=0.95,
+            ...     details={'cuisine_type': 'italian', 'difficulty': 'easy'},
+            ...     reasoning='Contains cooking instructions and ingredient list',
+            ...     llm_metadata={
+            ...         'provider': 'lm_studio',
+            ...         'model': 'qwen/qwen3-vl-8b',
+            ...         'temperature': 0.7,
+            ...         'max_tokens': 1000
+            ...     }
+            ... )
+            >>> # Multi-label classification (multiple labels per content)
+            >>> import uuid
+            >>> run_id = str(uuid.uuid4())
+            >>> llm_meta = {'provider': 'openai', 'model': 'gpt-4o-mini', 'temperature': 0.5}
+            >>> db.save_classification_result(
+            ...     content_id=42, content_source='instagram',
+            ...     classifier_name='multi_label_llm', label='recipe',
+            ...     confidence=0.95, classification_type='multi_label',
+            ...     run_id=run_id, reasoning='Post discusses cooking techniques',
+            ...     llm_metadata=llm_meta
+            ... )
+        """
+        # Serialize to JSON
+        llm_metadata_json = json.dumps(llm_metadata) if llm_metadata else None
+        details_json = json.dumps(details) if details else None
+        
+        # Extract provider and model from llm_metadata for dedicated columns
+        llm_provider = llm_metadata.get('provider') if llm_metadata else None
+        llm_model = llm_metadata.get('model') if llm_metadata else None
+
+        with self as db:
+            db._cursor.execute(
+                """
+                INSERT INTO content_analysis (
+                    content_id, content_source, classifier_name,
+                    classification_type, run_id, label, confidence, reasoning,
+                    llm_metadata, llm_provider, llm_model, details_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    content_id, content_source, classifier_name,
+                    classification_type, run_id, label, confidence, reasoning,
+                    llm_metadata_json, llm_provider, llm_model, details_json
+                )
+            )
+            db._conn.commit()
+            return db._cursor.lastrowid
+
+    def get_classification_results(
+        self,
+        content_id: int,
+        content_source: str,
+        classifier_name: Optional[str] = None,
+        run_id: Optional[str] = None,
+        llm_model: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Retrieve classification results for content.
+
+        Args:
+            content_id: ID of the content.
+            content_source: Source of the content ('instagram' or 'telegram').
+            classifier_name: Optional filter by classifier name.
+            run_id: Optional filter by run_id (for multi-label grouping).
+            llm_model: Optional filter by LLM model name.
+
+        Returns:
+            List of classification result dictionaries with details.
+
+        Example:
+            >>> db = SocialMediaDatabase()
+            >>> results = db.get_classification_results(42, 'instagram')
+            >>> for r in results:
+            ...     print(f"{r['label']} ({r['confidence']:.2%})")
+            >>> # Get multi-label results by run_id
+            >>> results = db.get_classification_results(42, 'instagram', run_id='abc-123')
+            >>> # Get results from specific model
+            >>> results = db.get_classification_results(42, 'instagram', llm_model='gpt-4o')
+        """
+        with self as db:
+            query = """
+                SELECT 
+                    id, classifier_name, classification_type,
+                    run_id, label, confidence, reasoning,
+                    llm_metadata, analyzed_at, llm_provider, llm_model,
+                    details_json
+                FROM content_analysis
+                WHERE content_id = ? AND content_source = ?
+            """
+            params: List[Any] = [content_id, content_source]
+
+            if classifier_name:
+                query += " AND classifier_name = ?"
+                params.append(classifier_name)
+
+            if run_id:
+                query += " AND run_id = ?"
+                params.append(run_id)
+
+            if llm_model:
+                query += " AND llm_model = ?"
+                params.append(llm_model)
+
+            db._cursor.execute(query, params)
+            rows = db._cursor.fetchall()
+
+            results = []
+            for row in rows:
+                # Parse JSON fields
+                llm_metadata = json.loads(row[7]) if row[7] else None
+                details = json.loads(row[11]) if row[11] else {}
+
+                results.append({
+                    "id": row[0],
+                    "classifier_name": row[1],
+                    "classification_type": row[2],
+                    "run_id": row[3],
+                    "label": row[4],
+                    "confidence": row[5],
+                    "reasoning": row[6],
+                    "llm_metadata": llm_metadata,
+                    "analyzed_at": row[8],
+                    "llm_provider": row[9],
+                    "llm_model": row[10],
+                    "details": details
+                })
+
+            return results
+
+    def has_classification(
+        self,
+        content_id: int,
+        content_source: str,
+        classifier_name: str,
+        llm_model: Optional[str] = None
+    ) -> bool:
+        """Check if content has already been classified by a specific classifier.
+
+        Args:
+            content_id: ID of the content.
+            content_source: Source of the content ('instagram' or 'telegram').
+            classifier_name: Name of the classifier.
+            llm_model: Optional LLM model name. If provided, checks for classification
+                with that specific model. If None, checks for any classification.
+
+        Returns:
+            True if classification exists, False otherwise.
+
+        Example:
+            >>> db = SocialMediaDatabase()
+            >>> # Check for any classification by recipe_llm
+            >>> if not db.has_classification(42, 'instagram', 'recipe_llm'):
+            ...     pass
+            >>> # Check for classification with specific model
+            >>> if not db.has_classification(42, 'instagram', 'recipe_llm', 'gpt-4o-mini'):
+            ...     pass
+        """
+        with self as db:
+            if llm_model:
+                db._cursor.execute(
+                    """
+                    SELECT 1 FROM content_analysis
+                    WHERE content_id = ? AND content_source = ? 
+                    AND classifier_name = ? AND llm_model = ?
+                    LIMIT 1
+                    """,
+                    (content_id, content_source, classifier_name, llm_model)
+                )
+            else:
+                db._cursor.execute(
+                    """
+                    SELECT 1 FROM content_analysis
+                    WHERE content_id = ? AND content_source = ? AND classifier_name = ?
+                    LIMIT 1
+                    """,
+                    (content_id, content_source, classifier_name)
+                )
+            return db._cursor.fetchone() is not None
+
+    def get_classification_id(
+        self,
+        content_id: int,
+        content_source: str,
+        classifier_name: str,
+        llm_model: Optional[str] = None
+    ) -> Optional[int]:
+        """Get the ID of an existing classification record.
+
+        Args:
+            content_id: ID of the content.
+            content_source: Source of the content ('instagram' or 'telegram').
+            classifier_name: Name of the classifier.
+            llm_model: Optional LLM model name. If provided, looks for classification
+                with that specific model.
+
+        Returns:
+            The analysis ID if found, None otherwise.
+
+        Example:
+            >>> db = SocialMediaDatabase()
+            >>> analysis_id = db.get_classification_id(42, 'instagram', 'recipe_llm', 'gpt-4o')
+            >>> if analysis_id:
+            ...     db.update_classification(analysis_id, ...)
+        """
+        with self as db:
+            if llm_model:
+                db._cursor.execute(
+                    """
+                    SELECT id FROM content_analysis
+                    WHERE content_id = ? AND content_source = ? 
+                    AND classifier_name = ? AND llm_model = ?
+                    ORDER BY analyzed_at DESC, id DESC
+                    LIMIT 1
+                    """,
+                    (content_id, content_source, classifier_name, llm_model)
+                )
+            else:
+                db._cursor.execute(
+                    """
+                    SELECT id FROM content_analysis
+                    WHERE content_id = ? AND content_source = ? AND classifier_name = ?
+                    ORDER BY analyzed_at DESC, id DESC
+                    LIMIT 1
+                    """,
+                    (content_id, content_source, classifier_name)
+                )
+            row = db._cursor.fetchone()
+            return row[0] if row else None
+
+    def update_classification(
+        self,
+        analysis_id: int,
+        label: str,
+        confidence: float,
+        reasoning: Optional[str] = None,
+        llm_metadata: Optional[Dict[str, Any]] = None,
+        details: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Update an existing classification record.
+
+        Args:
+            analysis_id: ID of the content_analysis record to update.
+            label: New classification label.
+            confidence: New confidence score between 0.0 and 1.0.
+            reasoning: Optional new reasoning explanation.
+            llm_metadata: Optional new LLM metadata dictionary.
+            details: Optional new details dictionary (replaces existing details).
+
+        Example:
+            >>> db = SocialMediaDatabase()
+            >>> db.update_classification(
+            ...     analysis_id=123,
+            ...     label='recipe',
+            ...     confidence=0.95,
+            ...     reasoning='Updated classification',
+            ...     llm_metadata={'provider': 'openai', 'model': 'gpt-4o'}
+            ... )
+        """
+        # Serialize to JSON
+        llm_metadata_json = json.dumps(llm_metadata) if llm_metadata else None
+        details_json = json.dumps(details) if details else None
+        
+        # Extract provider and model from llm_metadata for dedicated columns
+        llm_provider = llm_metadata.get('provider') if llm_metadata else None
+        llm_model = llm_metadata.get('model') if llm_metadata else None
+
+        with self as db:
+            db._cursor.execute(
+                """
+                UPDATE content_analysis
+                SET label = ?, confidence = ?, reasoning = ?,
+                    llm_metadata = ?, llm_provider = ?, llm_model = ?,
+                    details_json = ?, analyzed_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (label, confidence, reasoning, llm_metadata_json,
+                 llm_provider, llm_model, details_json, analysis_id)
+            )
+            db._conn.commit()

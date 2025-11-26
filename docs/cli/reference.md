@@ -271,17 +271,17 @@ Similar to Telegram extraction, displays progress and summary:
 
 ### Classify Commands
 
-Classify content using ML/LLM models.
+Classify content using LLM classifiers.
 
-#### `postparse classify single`
+#### `postparse classify text`
 
-Classify a single text as recipe or not.
+Classify free-form text (ad-hoc, doesn't save to database).
 
 **Arguments:**
 
 | Argument | Type | Required | Description |
 |----------|------|----------|-------------|
-| `text` | Text | Yes* | Text to classify (or `-` for stdin) |
+| `CONTENT` | Text | Yes* | Text to classify (or `-` for stdin) |
 
 *Can be piped from stdin
 
@@ -289,98 +289,110 @@ Classify a single text as recipe or not.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
+| `--classifier` | Choice | recipe | Classifier type (recipe/multiclass) |
+| `--classes` | Text | None | For multiclass: class definitions (JSON or @file) |
 | `--provider` | Text | From config | LLM provider to use |
-| `--detailed` | Flag | False | Use detailed LLM classifier |
 | `--output` | Choice | text | Output format (text/json) |
 
 **Examples:**
 
 ```bash
-# Classify direct text
-postparse classify single "Mix flour and water to make dough"
+# Recipe classification
+postparse classify text "Mix flour and water to make dough"
+
+# Multi-class classification
+postparse classify text "Check out FastAPI!" \
+  --classifier multiclass \
+  --classes '{"recipe": "Cooking", "tech": "Technology"}'
 
 # Classify from stdin
-echo "Boil pasta for 10 minutes" | postparse classify single -
-
-# Use detailed LLM classifier
-postparse classify single --detailed "Preheat oven to 350°F..."
+echo "Boil pasta for 10 minutes" | postparse classify text -
 
 # Specify LLM provider
-postparse classify single --provider openai --detailed "Recipe text..."
+postparse classify text --provider openai "Recipe text..."
 
 # JSON output for scripting
-postparse classify single --output json "Mix ingredients" | jq .
+postparse classify text --output json "Mix ingredients" | jq .
 ```
 
 **Output (text format):**
 
 ```
-ℹ Initializing simple classifier...
+ℹ Initializing recipe classifier...
 ℹ Classifying text...
 
 ╭─────── Classification Result ───────╮
 │ Label: recipe                       │
 │ Confidence: 92.50%                  │
+│ Details:                            │
+│   • cuisine_type: italian           │
+│   • difficulty: easy                │
 ╰─────────────────────────────────────╯
 ```
 
-**Output (JSON format):**
+**Note:** Results are NOT saved to database. Use `classify db` for persistent classification.
 
-```json
-{
-  "label": "recipe",
-  "confidence": 0.925,
-  "details": {
-    "has_ingredients": true,
-    "has_instructions": true,
-    "cooking_verbs": ["mix", "boil", "bake"]
-  }
-}
-```
+#### `postparse classify db`
 
-**Troubleshooting:**
+Classify database content and save results.
 
-- **LLM errors**: Ensure provider is configured in config.toml
-- **Low confidence**: Try `--detailed` for better accuracy
-- **Slow response**: LLM classification takes longer than simple classifier
-
-#### `postparse classify batch`
-
-Classify multiple items from the database.
+> **Important:** Classification results are saved to the database (`content_analysis` table). Items already classified by the same classifier+model are automatically skipped (unless `--force` is used).
 
 **Options:**
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `--source` | Choice | posts | Source to classify (posts/messages) |
+| `--source` | Choice | all | Database source (all/instagram/telegram) |
+| `--classifier` | Choice | recipe | Classifier type (recipe/multiclass) |
+| `--classes` | Text | None | For multiclass: class definitions (JSON or @file) |
 | `--limit` | Integer | None | Maximum items to classify |
 | `--filter-hashtag` | Text | None | Filter by hashtag (multiple allowed) |
 | `--provider` | Text | From config | LLM provider to use |
-| `--detailed` | Flag | False | Use detailed LLM classifier |
+| `--force` | Flag | False | Force reclassification (adds new entry) |
+| `--replace` | Flag | False | With --force: replace existing entry instead of adding new |
+
+**Duplicate Detection:**
+
+By default, items already classified by the same classifier AND model are skipped. This means:
+- Same post classified with `recipe_llm` using **gpt-4o** ✅
+- Same post classified with `recipe_llm` using **llama3** ✅ (different model)
+- Same post classified with `recipe_llm` using **gpt-4o** again ❌ (skipped)
+
+Use `--force` to override this behavior.
 
 **Examples:**
 
 ```bash
-# Classify all posts
-postparse classify batch --source posts
+# Classify all content (Instagram + Telegram, default)
+postparse classify db --limit 100
 
-# Classify limited items
-postparse classify batch --source messages --limit 100
+# Classify only Instagram posts
+postparse classify db --source instagram --limit 100
 
-# Filter by hashtag
-postparse classify batch --filter-hashtag recipe
+# Classify only Telegram messages
+postparse classify db --source telegram --provider openai
 
-# Multiple hashtag filters
-postparse classify batch --filter-hashtag recipe --filter-hashtag cooking
+# Filter by hashtag first
+postparse classify db --filter-hashtag recipe --limit 50
 
-# Use detailed classifier
-postparse classify batch --detailed --provider ollama
+# Multi-class classification
+postparse classify db --classifier multiclass \
+  --classes '{"recipe": "Cooking", "tech": "Technology", "other": "Other"}'
+
+# Multi-class with classes from file
+postparse classify db --classifier multiclass --classes @classes.json
+
+# Force reclassification (adds new entry with new timestamp)
+postparse classify db --force --limit 50
+
+# Force reclassification and replace existing entry (overwrites)
+postparse classify db --force --replace --limit 50
 ```
 
 **Output:**
 
 ```
-ℹ Initializing simple classifier...
+ℹ Initializing recipe classifier...
 ℹ Querying posts from database...
 ℹ Found 150 posts to classify
 [Progress bar]
@@ -396,15 +408,27 @@ postparse classify batch --detailed --provider ollama
 
 ℹ Showing first 20 of 150 results
 
-┏━━━━━━━━━━━━━━━━━━┳━━━━━━━━┓
-┃ Metric           ┃  Value ┃
-┡━━━━━━━━━━━━━━━━━━╇━━━━━━━━┩
-│ Total classified │    150 │
-│ Recipe           │     89 │
-│ Not recipe       │     61 │
-│ Avg confidence   │ 87.35% │
-└──────────────────┴────────┘
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┓
+┃ Metric                     ┃  Value ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━┩
+│ Total classified           │    140 │
+│ Skipped (already classified│     10 │
+│ Saved to database          │    140 │
+│ Recipe                     │     85 │
+│ Not recipe                 │     55 │
+│ Avg confidence             │ 87.35% │
+└────────────────────────────┴────────┘
 ```
+
+**Database Storage:**
+
+Results are stored in the `content_analysis` table with:
+- Label and confidence score
+- Reasoning (for multiclass classifier)
+- LLM metadata (provider, model, temperature)
+- Additional details (cuisine_type, difficulty, etc.)
+
+See [Database Architecture](../database.md) for schema details.
 
 ### Search Commands
 

@@ -51,7 +51,7 @@ dependencies = [
 ]
 
 [project.scripts]
-postparse = "postparse.cli.main:cli"
+postparse = "backend.postparse.cli.main:cli"
 
 [project.optional-dependencies]
 dev = [
@@ -86,7 +86,7 @@ all = [
 Homepage = "https://github.com/sebpachl/postparse"
 
 [tool.hatch.build.targets.wheel]
-packages = ["backend/postparse"]
+packages = ["backend"]
 
 [tool.uv]
 dev-dependencies = [

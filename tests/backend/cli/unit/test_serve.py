@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
-from postparse.cli.main import cli
+from backend.postparse.cli.main import cli
 
 
 class TestServeCommand:
@@ -25,7 +25,7 @@ class TestServeCommand:
         """
         runner = CliRunner()
 
-        with patch("postparse.cli.serve.load_config") as mock_load:
+        with patch("backend.postparse.cli.serve.load_config") as mock_load:
             with patch("uvicorn.run") as mock_uvicorn_run:
                 mock_config = MagicMock()
                 mock_config.get.side_effect = lambda key, default=None: {
@@ -42,7 +42,7 @@ class TestServeCommand:
                 # Mock uvicorn.run to verify config then simulate user stop
                 def verify_config_and_interrupt(app, **kwargs):
                     """Verify uvicorn receives correct config before simulating Ctrl+C."""
-                    assert app == "postparse.api.main:app"
+                    assert app == "backend.postparse.api.main:app"
                     assert kwargs["host"] == "0.0.0.0"
                     assert kwargs["port"] == 8000
                     assert kwargs["reload"] is False
@@ -62,7 +62,7 @@ class TestServeCommand:
         """Test serve command with custom host."""
         runner = CliRunner()
 
-        with patch("postparse.cli.serve.load_config") as mock_load:
+        with patch("backend.postparse.cli.serve.load_config") as mock_load:
             with patch("uvicorn.run") as mock_uvicorn_run:
                 mock_config = MagicMock()
                 mock_config.get.side_effect = lambda key, default=None: {
@@ -91,7 +91,7 @@ class TestServeCommand:
         """Test serve command with custom port."""
         runner = CliRunner()
 
-        with patch("postparse.cli.serve.load_config") as mock_load:
+        with patch("backend.postparse.cli.serve.load_config") as mock_load:
             with patch("uvicorn.run") as mock_uvicorn_run:
                 mock_config = MagicMock()
                 mock_config.get.side_effect = lambda key, default=None: {
@@ -120,7 +120,7 @@ class TestServeCommand:
         """Test serve command with --reload flag for development."""
         runner = CliRunner()
 
-        with patch("postparse.cli.serve.load_config") as mock_load:
+        with patch("backend.postparse.cli.serve.load_config") as mock_load:
             with patch("uvicorn.run") as mock_uvicorn_run:
                 mock_config = MagicMock()
                 mock_config.get.side_effect = lambda key, default=None: {
@@ -151,7 +151,7 @@ class TestServeCommand:
         """Test serve command with multiple workers."""
         runner = CliRunner()
 
-        with patch("postparse.cli.serve.load_config") as mock_load:
+        with patch("backend.postparse.cli.serve.load_config") as mock_load:
             with patch("uvicorn.run") as mock_uvicorn_run:
                 mock_config = MagicMock()
                 mock_config.get.side_effect = lambda key, default=None: {
@@ -180,7 +180,7 @@ class TestServeCommand:
         """Test serve command with custom log level."""
         runner = CliRunner()
 
-        with patch("postparse.cli.serve.load_config") as mock_load:
+        with patch("backend.postparse.cli.serve.load_config") as mock_load:
             with patch("uvicorn.run") as mock_uvicorn_run:
                 mock_config = MagicMock()
                 mock_config.get.side_effect = lambda key, default=None: {
@@ -209,7 +209,7 @@ class TestServeCommand:
         """Test that serve displays startup information."""
         runner = CliRunner()
 
-        with patch("postparse.cli.serve.load_config") as mock_load:
+        with patch("backend.postparse.cli.serve.load_config") as mock_load:
             with patch("uvicorn.run") as mock_uvicorn_run:
                 mock_config = MagicMock()
                 mock_config.get.side_effect = lambda key, default=None: {
@@ -236,7 +236,7 @@ class TestServeCommand:
         """Test that serve handles startup errors gracefully."""
         runner = CliRunner()
 
-        with patch("postparse.cli.serve.load_config") as mock_load:
+        with patch("backend.postparse.cli.serve.load_config") as mock_load:
             with patch("uvicorn.run") as mock_uvicorn_run:
                 mock_config = MagicMock()
                 mock_config.get.side_effect = lambda key, default=None: {
@@ -261,7 +261,7 @@ class TestServeCommand:
         """Test that serve uses config file settings when no CLI options provided."""
         runner = CliRunner()
 
-        with patch("postparse.cli.serve.load_config") as mock_load:
+        with patch("backend.postparse.cli.serve.load_config") as mock_load:
             with patch("uvicorn.run") as mock_uvicorn_run:
                 mock_config = MagicMock()
                 mock_config.get.side_effect = lambda key, default=None: {
@@ -296,7 +296,7 @@ class TestServeCommand:
         """Test that CLI options override config file settings."""
         runner = CliRunner()
 
-        with patch("postparse.cli.serve.load_config") as mock_load:
+        with patch("backend.postparse.cli.serve.load_config") as mock_load:
             with patch("uvicorn.run") as mock_uvicorn_run:
                 mock_config = MagicMock()
                 mock_config.get.side_effect = lambda key, default=None: {
@@ -329,7 +329,7 @@ class TestServeCommand:
         """Test that serve passes correct FastAPI app path to uvicorn."""
         runner = CliRunner()
 
-        with patch("postparse.cli.serve.load_config") as mock_load:
+        with patch("backend.postparse.cli.serve.load_config") as mock_load:
             with patch("uvicorn.run") as mock_uvicorn_run:
                 mock_config = MagicMock()
                 mock_config.get.side_effect = lambda key, default=None: {
@@ -345,7 +345,7 @@ class TestServeCommand:
 
                 # Verify correct app path is passed
                 def verify_app_path(app, **kwargs):
-                    assert app == "postparse.api.main:app"
+                    assert app == "backend.postparse.api.main:app"
                     raise KeyboardInterrupt()
                 
                 mock_uvicorn_run.side_effect = verify_app_path
@@ -401,7 +401,7 @@ class TestServeConfiguration:
         """Test that serve displays authentication status."""
         runner = CliRunner()
 
-        with patch("postparse.cli.serve.load_config") as mock_load:
+        with patch("backend.postparse.cli.serve.load_config") as mock_load:
             with patch("uvicorn.run") as mock_uvicorn_run:
                 mock_config = MagicMock()
                 mock_config.get.side_effect = lambda key, default=None: {
@@ -432,7 +432,7 @@ class TestServeConfiguration:
         """Test that serve displays rate limiting status."""
         runner = CliRunner()
 
-        with patch("postparse.cli.serve.load_config") as mock_load:
+        with patch("backend.postparse.cli.serve.load_config") as mock_load:
             with patch("uvicorn.run") as mock_uvicorn_run:
                 mock_config = MagicMock()
                 mock_config.get.side_effect = lambda key, default=None: {

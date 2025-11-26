@@ -61,7 +61,7 @@ class TestInstaloaderParser:
         assert parser._max_delay == 30.0
         assert parser._loader is not None
 
-    @patch('postparse.services.parsers.instagram.instagram_parser.instaloader.Profile')
+    @patch('backend.postparse.services.parsers.instagram.instagram_parser.instaloader.Profile')
     def test_get_saved_posts_normal_mode(self, mock_profile, mock_instaloader, mock_post, mock_db):
         """Test getting saved posts in normal mode."""
         # Setup mock profile
@@ -91,7 +91,7 @@ class TestInstaloaderParser:
         # Verify database check
         mock_db.post_exists.assert_called_once_with(mock_post.shortcode)
 
-    @patch('postparse.services.parsers.instagram.instagram_parser.instaloader.Profile')
+    @patch('backend.postparse.services.parsers.instagram.instagram_parser.instaloader.Profile')
     def test_get_saved_posts_force_update(self, mock_profile, mock_instaloader, mock_post, mock_db):
         """Test getting saved posts with force update."""
         # Setup mock profile
@@ -152,7 +152,7 @@ class TestInstaloaderParser:
             mock_db.post_exists.assert_not_called()
             mock_db._insert_instagram_post.assert_called_once()
 
-    @patch('postparse.services.parsers.instagram.instagram_parser.instaloader.Profile')
+    @patch('backend.postparse.services.parsers.instagram.instagram_parser.instaloader.Profile')
     def test_rate_limit_handling(self, mock_profile, mock_instaloader):
         """Test handling of rate limit errors."""
         # Setup mock profile to raise rate limit error

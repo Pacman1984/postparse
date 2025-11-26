@@ -320,13 +320,43 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
     Handle request validation errors.
 
     Returns 422 Unprocessable Entity with detailed validation error information.
+    Sanitizes error context to ensure JSON serializability (removes non-serializable
+    objects like ValueError instances from the 'ctx' field).
     """
+    # Sanitize errors to ensure JSON serializability
+    # Pydantic errors can contain ValueError objects in 'ctx' which aren't serializable
+    sanitized_errors = []
+    for error in exc.errors():
+        sanitized_error = {
+            "type": error.get("type"),
+            "loc": error.get("loc"),
+            "msg": error.get("msg"),
+            "input": error.get("input"),
+        }
+        # Convert ctx values to strings if they exist and contain non-serializable objects
+        if "ctx" in error:
+            ctx = error["ctx"]
+            sanitized_ctx = {}
+            for key, value in ctx.items():
+                if isinstance(value, Exception):
+                    sanitized_ctx[key] = str(value)
+                else:
+                    try:
+                        # Test if value is JSON serializable
+                        import json
+                        json.dumps(value)
+                        sanitized_ctx[key] = value
+                    except (TypeError, ValueError):
+                        sanitized_ctx[key] = str(value)
+            sanitized_error["ctx"] = sanitized_ctx
+        sanitized_errors.append(sanitized_error)
+
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content={
             "error_code": "VALIDATION_ERROR",
             "detail": "Request validation failed",
-            "errors": exc.errors(),
+            "errors": sanitized_errors,
         },
     )
 

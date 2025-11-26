@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
-from postparse.cli.main import cli
+from backend.postparse.cli.main import cli
 
 
 class TestClassifySingle:
@@ -24,8 +24,8 @@ class TestClassifySingle:
         """
         runner = CliRunner()
 
-        with patch("postparse.cli.classify.load_config") as mock_load:
-            with patch("postparse.services.analysis.classifiers.llm.RecipeLLMClassifier") as mock_classifier_class:
+        with patch("backend.postparse.cli.classify.load_config") as mock_load:
+            with patch("backend.postparse.services.analysis.classifiers.llm.RecipeLLMClassifier") as mock_classifier_class:
                 mock_config = MagicMock()
                 mock_config.get_section.return_value = {"providers": []}
                 mock_load.return_value = mock_config
@@ -55,8 +55,8 @@ class TestClassifySingle:
         """Test classify single reading from stdin."""
         runner = CliRunner()
 
-        with patch("postparse.cli.classify.load_config") as mock_load:
-            with patch("postparse.services.analysis.classifiers.llm.RecipeLLMClassifier") as mock_classifier_class:
+        with patch("backend.postparse.cli.classify.load_config") as mock_load:
+            with patch("backend.postparse.services.analysis.classifiers.llm.RecipeLLMClassifier") as mock_classifier_class:
                 mock_config = MagicMock()
                 mock_config.get_section.return_value = {"providers": []}
                 mock_load.return_value = mock_config
@@ -85,8 +85,8 @@ class TestClassifySingle:
         """Test classify single with --detailed flag showing extra info."""
         runner = CliRunner()
 
-        with patch("postparse.cli.classify.load_config") as mock_load:
-            with patch("postparse.services.analysis.classifiers.llm.RecipeLLMClassifier") as mock_classifier_class:
+        with patch("backend.postparse.cli.classify.load_config") as mock_load:
+            with patch("backend.postparse.services.analysis.classifiers.llm.RecipeLLMClassifier") as mock_classifier_class:
                 mock_config = MagicMock()
                 mock_config.get_section.return_value = {"providers": []}
                 mock_load.return_value = mock_config
@@ -121,8 +121,8 @@ class TestClassifySingle:
         """Test classify single with JSON output format."""
         runner = CliRunner()
 
-        with patch("postparse.cli.classify.load_config") as mock_load:
-            with patch("postparse.services.analysis.classifiers.llm.RecipeLLMClassifier") as mock_classifier_class:
+        with patch("backend.postparse.cli.classify.load_config") as mock_load:
+            with patch("backend.postparse.services.analysis.classifiers.llm.RecipeLLMClassifier") as mock_classifier_class:
                 mock_config = MagicMock()
                 mock_config.get_section.return_value = {"providers": []}
                 mock_load.return_value = mock_config
@@ -152,8 +152,8 @@ class TestClassifySingle:
         """Test classify single with specific LLM provider."""
         runner = CliRunner()
 
-        with patch("postparse.cli.classify.load_config") as mock_load:
-            with patch("postparse.services.analysis.classifiers.llm.RecipeLLMClassifier") as mock_classifier_class:
+        with patch("backend.postparse.cli.classify.load_config") as mock_load:
+            with patch("backend.postparse.services.analysis.classifiers.llm.RecipeLLMClassifier") as mock_classifier_class:
                 mock_config = MagicMock()
                 mock_config.get_section.return_value = {
                     "providers": [
@@ -195,8 +195,8 @@ class TestClassifySingle:
         """Test that classify single handles classifier errors."""
         runner = CliRunner()
 
-        with patch("postparse.cli.classify.load_config") as mock_load:
-            with patch("postparse.services.analysis.classifiers.llm.RecipeLLMClassifier") as mock_classifier_class:
+        with patch("backend.postparse.cli.classify.load_config") as mock_load:
+            with patch("backend.postparse.services.analysis.classifiers.llm.RecipeLLMClassifier") as mock_classifier_class:
                 mock_config = MagicMock()
                 mock_load.return_value = mock_config
 
@@ -221,9 +221,9 @@ class TestClassifyBatch:
         """
         runner = CliRunner()
 
-        with patch("postparse.cli.classify.load_config") as mock_load:
-            with patch("postparse.cli.classify.get_database") as mock_get_db:
-                with patch("postparse.services.analysis.classifiers.llm.RecipeLLMClassifier") as mock_classifier_class:
+        with patch("backend.postparse.cli.classify.load_config") as mock_load:
+            with patch("backend.postparse.cli.classify.get_database") as mock_get_db:
+                with patch("backend.postparse.services.analysis.classifiers.llm.RecipeLLMClassifier") as mock_classifier_class:
                     mock_config = MagicMock()
                     mock_config.get_section.return_value = {"providers": []}
                     mock_load.return_value = mock_config
@@ -259,9 +259,9 @@ class TestClassifyBatch:
         """Test batch classification of Telegram messages."""
         runner = CliRunner()
 
-        with patch("postparse.cli.classify.load_config") as mock_load:
-            with patch("postparse.cli.classify.get_database") as mock_get_db:
-                with patch("postparse.services.analysis.classifiers.llm.RecipeLLMClassifier") as mock_classifier_class:
+        with patch("backend.postparse.cli.classify.load_config") as mock_load:
+            with patch("backend.postparse.cli.classify.get_database") as mock_get_db:
+                with patch("backend.postparse.services.analysis.classifiers.llm.RecipeLLMClassifier") as mock_classifier_class:
                     mock_config = MagicMock()
                     mock_config.get_section.return_value = {"providers": []}
                     mock_load.return_value = mock_config
@@ -294,9 +294,9 @@ class TestClassifyBatch:
         """Test batch classification with hashtag filtering."""
         runner = CliRunner()
 
-        with patch("postparse.cli.classify.load_config") as mock_load:
-            with patch("postparse.cli.classify.get_database") as mock_get_db:
-                with patch("postparse.services.analysis.classifiers.llm.RecipeLLMClassifier") as mock_classifier_class:
+        with patch("backend.postparse.cli.classify.load_config") as mock_load:
+            with patch("backend.postparse.cli.classify.get_database") as mock_get_db:
+                with patch("backend.postparse.services.analysis.classifiers.llm.RecipeLLMClassifier") as mock_classifier_class:
                     mock_config = MagicMock()
                     mock_config.get_section.return_value = {"providers": []}
                     mock_load.return_value = mock_config
@@ -333,9 +333,9 @@ class TestClassifyBatch:
         """Test batch classification when no items found."""
         runner = CliRunner()
 
-        with patch("postparse.cli.classify.load_config") as mock_load:
-            with patch("postparse.cli.classify.get_database") as mock_get_db:
-                with patch("postparse.services.analysis.classifiers.llm.RecipeLLMClassifier") as mock_classifier_class:
+        with patch("backend.postparse.cli.classify.load_config") as mock_load:
+            with patch("backend.postparse.cli.classify.get_database") as mock_get_db:
+                with patch("backend.postparse.services.analysis.classifiers.llm.RecipeLLMClassifier") as mock_classifier_class:
                     mock_config = MagicMock()
                     mock_config.get_section.return_value = {"providers": []}
                     mock_load.return_value = mock_config
@@ -360,9 +360,9 @@ class TestClassifyBatch:
         """Test that batch handles individual classification errors gracefully."""
         runner = CliRunner()
 
-        with patch("postparse.cli.classify.load_config") as mock_load:
-            with patch("postparse.cli.classify.get_database") as mock_get_db:
-                with patch("postparse.services.analysis.classifiers.llm.RecipeLLMClassifier") as mock_classifier_class:
+        with patch("backend.postparse.cli.classify.load_config") as mock_load:
+            with patch("backend.postparse.cli.classify.get_database") as mock_get_db:
+                with patch("backend.postparse.services.analysis.classifiers.llm.RecipeLLMClassifier") as mock_classifier_class:
                     mock_config = MagicMock()
                     mock_config.get_section.return_value = {"providers": []}
                     mock_load.return_value = mock_config

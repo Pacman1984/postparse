@@ -377,9 +377,181 @@ api_base = "http://localhost:1234/v1"
 6. **Monitor costs**: Track OpenAI/Anthropic usage in their dashboards
 7. **Use appropriate models**: Balance quality, speed, and cost for your use case
 
+## Multi-Class Classification
+
+The `MultiClassLLMClassifier` provides flexible multi-class classification with custom categories defined via configuration or runtime parameters.
+
+### Features
+
+- **Dynamic Classes**: Define any number of classes (minimum 2) with custom descriptions
+- **Config + Runtime**: Load default classes from config.toml and override/extend at runtime
+- **Provider Flexibility**: Use any LLM provider (OpenAI, Anthropic, Ollama, LM Studio)
+- **Structured Output**: Returns predicted class, confidence score, and reasoning
+- **API + CLI**: Available via REST API and command-line interface
+
+### Configuration
+
+Define default classes in `config.toml`:
+
+```toml
+[[classification.classes]]
+name = "recipe"
+description = """A text containing cooking instructions, ingredients, or recipe details.
+Examples: 'Boil pasta for 10 minutes', 'Mix flour and eggs'"""
+
+[[classification.classes]]
+name = "python_package"
+description = """A text about Python packages, libraries, or pip installations.
+Examples: 'Install FastAPI with pip', 'This library provides async support'"""
+
+[[classification.classes]]
+name = "movie_review"
+description = """A text reviewing or discussing movies, films, or TV shows.
+Examples: 'Just watched an amazing thriller', 'The acting was superb'"""
+```
+
+### Python Usage
+
+**Using classes from config:**
+
+```python
+from postparse.services.analysis.classifiers import MultiClassLLMClassifier
+
+classifier = MultiClassLLMClassifier()
+result = classifier.predict("Check out this new FastAPI library!")
+print(result.label)  # "python_package"
+print(result.confidence)  # 0.92
+print(result.details['reasoning'])  # "The text mentions FastAPI library..."
+```
+
+**Using runtime classes:**
+
+```python
+classes = {
+    "recipe": "Cooking instructions or ingredients",
+    "tech_news": "Technology news or product announcements",
+    "sports": "Sports news, scores, or athlete updates"
+}
+
+classifier = MultiClassLLMClassifier(classes=classes, provider_name='openai')
+result = classifier.predict("Apple announces new iPhone 16")
+print(result.label)  # "tech_news"
+```
+
+**Batch classification:**
+
+```python
+texts = [
+    "Boil pasta for 10 minutes",
+    "New Python 3.13 released",
+    "Great movie last night"
+]
+
+results = classifier.predict_batch(texts)
+for text, result in zip(texts, results):
+    print(f"{text[:30]}... -> {result.label} ({result.confidence:.2f})")
+```
+
+### API Usage
+
+**Single classification with runtime classes:**
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/classify/multi" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "text": "Check out this new FastAPI library!",
+    "classes": {
+      "recipe": "Cooking instructions",
+      "python_package": "Python libraries",
+      "movie_review": "Movie discussion"
+    },
+    "provider_name": "openai"
+  }'
+```
+
+**Batch classification:**
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/classify/multi/batch" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "texts": [
+      "Boil pasta for 10 minutes",
+      "New Python 3.13 released",
+      "Great movie last night"
+    ],
+    "classes": {
+      "recipe": "Cooking instructions",
+      "python_package": "Python libraries",
+      "movie_review": "Movie discussion"
+    }
+  }'
+```
+
+### CLI Usage
+
+**Single classification:**
+
+```bash
+# Using classes from config
+postparse classify multi "Check out this new FastAPI library!"
+
+# Using runtime classes (JSON)
+postparse classify multi "Apple announces iPhone 16" \
+  --classes '{"recipe": "Cooking", "tech_news": "Technology news", "sports": "Sports"}'
+
+# Using classes from file
+postparse classify multi "Some text" --classes @classes.json
+
+# With specific provider
+postparse classify multi "Some text" --provider openai
+```
+
+**Batch classification:**
+
+```bash
+# From command line arguments
+postparse classify multi-batch "Text 1" "Text 2" "Text 3" \
+  --classes '{"recipe": "Cooking", "tech": "Technology"}' \
+  --output results.json
+
+# From file (one text per line)
+postparse classify multi-batch @texts.txt \
+  --classes @classes.json \
+  --output results.json
+```
+
+### Best Practices
+
+1. **Class Descriptions**: Provide clear, detailed descriptions with examples for better accuracy
+2. **Number of Classes**: 2-10 classes work best; too many classes reduce accuracy
+3. **Provider Selection**: Use GPT-4 or Claude for best accuracy; use Ollama/LM Studio for cost-effective local inference
+4. **Confidence Thresholds**: Consider results with confidence < 0.7 as uncertain
+5. **Class Overlap**: Avoid overlapping class definitions; make them mutually exclusive
+
+### Troubleshooting
+
+**Low Accuracy:**
+- Improve class descriptions with more examples
+- Use a more capable model (GPT-4 instead of GPT-3.5)
+- Reduce number of classes
+- Make class definitions more distinct
+
+**LLM Returns Invalid Class:**
+- Check that class descriptions are clear and unambiguous
+- Ensure LLM has enough context in the prompt
+- Try a different provider/model
+
+**Performance Issues:**
+- Use batch endpoints for multiple texts
+- Consider caching results for repeated queries
+- Use faster models (GPT-3.5, Claude Haiku) for less critical tasks
+
 ## See Also
 
 - [Getting Started Guide](getting_started.md) - Initial setup and configuration
 - [API Reference](api_reference.md) - Detailed API documentation
+- [CLI Reference](cli_reference.md) - Command-line interface documentation
 - [LiteLLM Documentation](https://docs.litellm.ai) - LiteLLM provider details
 

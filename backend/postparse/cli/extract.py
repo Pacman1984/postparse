@@ -16,7 +16,7 @@ from typing import Optional
 import rich_click as click
 from rich.table import Table
 
-from postparse.cli.utils import (
+from backend.postparse.cli.utils import (
     get_console,
     load_config,
     get_database,
@@ -111,7 +111,7 @@ def telegram(ctx, api_id, api_hash, phone, session, limit, force):
         print_info("Initializing Telegram parser...")
         
         # Import parser
-        from postparse.services.parsers.telegram.telegram_parser import (
+        from backend.postparse.services.parsers.telegram.telegram_parser import (
             TelegramParser
         )
         
@@ -231,7 +231,7 @@ def instagram(ctx, username, password, session, limit, force):
         print_info("Initializing Instagram parser...")
         
         # Import parser
-        from postparse.services.parsers.instagram.instagram_parser import (
+        from backend.postparse.services.parsers.instagram.instagram_parser import (
             InstaloaderParser
         )
         

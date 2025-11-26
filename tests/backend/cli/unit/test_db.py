@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, mock_open, patch
 import pytest
 from click.testing import CliRunner
 
-from postparse.cli.main import cli
+from backend.postparse.cli.main import cli
 
 
 class TestDbStats:
@@ -25,8 +25,8 @@ class TestDbStats:
         """
         runner = CliRunner()
 
-        with patch("postparse.cli.db.load_config") as mock_load:
-            with patch("postparse.cli.db.get_database") as mock_get_db:
+        with patch("backend.postparse.cli.db.load_config") as mock_load:
+            with patch("backend.postparse.cli.db.get_database") as mock_get_db:
                 mock_config = MagicMock()
                 mock_config.get.return_value = "data/test.db"
                 mock_load.return_value = mock_config
@@ -52,8 +52,8 @@ class TestDbStats:
         """Test db stats with empty database shows helpful message."""
         runner = CliRunner()
 
-        with patch("postparse.cli.db.load_config") as mock_load:
-            with patch("postparse.cli.db.get_database") as mock_get_db:
+        with patch("backend.postparse.cli.db.load_config") as mock_load:
+            with patch("backend.postparse.cli.db.get_database") as mock_get_db:
                 mock_config = MagicMock()
                 mock_config.get.return_value = "data/test.db"
                 mock_load.return_value = mock_config
@@ -73,8 +73,8 @@ class TestDbStats:
         """Test that stats displays date ranges for posts and messages."""
         runner = CliRunner()
 
-        with patch("postparse.cli.db.load_config") as mock_load:
-            with patch("postparse.cli.db.get_database") as mock_get_db:
+        with patch("backend.postparse.cli.db.load_config") as mock_load:
+            with patch("backend.postparse.cli.db.get_database") as mock_get_db:
                 mock_config = MagicMock()
                 mock_config.get.return_value = "data/test.db"
                 mock_load.return_value = mock_config
@@ -99,8 +99,8 @@ class TestDbStats:
         """Test that stats shows breakdown by content type."""
         runner = CliRunner()
 
-        with patch("postparse.cli.db.load_config") as mock_load:
-            with patch("postparse.cli.db.get_database") as mock_get_db:
+        with patch("backend.postparse.cli.db.load_config") as mock_load:
+            with patch("backend.postparse.cli.db.get_database") as mock_get_db:
                 mock_config = MagicMock()
                 mock_config.get.return_value = "data/test.db"
                 mock_load.return_value = mock_config
@@ -125,8 +125,8 @@ class TestDbStats:
         """Test that stats --detailed shows hashtag distribution."""
         runner = CliRunner()
 
-        with patch("postparse.cli.db.load_config") as mock_load:
-            with patch("postparse.cli.db.get_database") as mock_get_db:
+        with patch("backend.postparse.cli.db.load_config") as mock_load:
+            with patch("backend.postparse.cli.db.get_database") as mock_get_db:
                 mock_config = MagicMock()
                 mock_config.get.return_value = "data/test.db"
                 mock_load.return_value = mock_config
@@ -148,8 +148,8 @@ class TestDbStats:
         """Test that stats handles database errors gracefully."""
         runner = CliRunner()
 
-        with patch("postparse.cli.db.load_config") as mock_load:
-            with patch("postparse.cli.db.get_database") as mock_get_db:
+        with patch("backend.postparse.cli.db.load_config") as mock_load:
+            with patch("backend.postparse.cli.db.get_database") as mock_get_db:
                 mock_config = MagicMock()
                 mock_load.return_value = mock_config
 
@@ -174,8 +174,8 @@ class TestDbExport:
 
         runner = CliRunner()
 
-        with patch("postparse.cli.db.load_config") as mock_load:
-            with patch("postparse.cli.db.get_database") as mock_get_db:
+        with patch("backend.postparse.cli.db.load_config") as mock_load:
+            with patch("backend.postparse.cli.db.get_database") as mock_get_db:
                 mock_config = MagicMock()
                 mock_load.return_value = mock_config
 
@@ -203,8 +203,8 @@ class TestDbExport:
 
         runner = CliRunner()
 
-        with patch("postparse.cli.db.load_config") as mock_load:
-            with patch("postparse.cli.db.get_database") as mock_get_db:
+        with patch("backend.postparse.cli.db.load_config") as mock_load:
+            with patch("backend.postparse.cli.db.get_database") as mock_get_db:
                 mock_config = MagicMock()
                 mock_load.return_value = mock_config
 
@@ -232,8 +232,8 @@ class TestDbExport:
 
         runner = CliRunner()
 
-        with patch("postparse.cli.db.load_config") as mock_load:
-            with patch("postparse.cli.db.get_database") as mock_get_db:
+        with patch("backend.postparse.cli.db.load_config") as mock_load:
+            with patch("backend.postparse.cli.db.get_database") as mock_get_db:
                 mock_config = MagicMock()
                 mock_load.return_value = mock_config
 
@@ -257,8 +257,8 @@ class TestDbExport:
 
         runner = CliRunner()
 
-        with patch("postparse.cli.db.load_config") as mock_load:
-            with patch("postparse.cli.db.get_database") as mock_get_db:
+        with patch("backend.postparse.cli.db.load_config") as mock_load:
+            with patch("backend.postparse.cli.db.get_database") as mock_get_db:
                 mock_config = MagicMock()
                 mock_load.return_value = mock_config
 
@@ -282,8 +282,8 @@ class TestDbExport:
 
         runner = CliRunner()
 
-        with patch("postparse.cli.db.load_config") as mock_load:
-            with patch("postparse.cli.db.get_database") as mock_get_db:
+        with patch("backend.postparse.cli.db.load_config") as mock_load:
+            with patch("backend.postparse.cli.db.get_database") as mock_get_db:
                 mock_config = MagicMock()
                 mock_load.return_value = mock_config
 
@@ -310,8 +310,8 @@ class TestDbExport:
 
         runner = CliRunner()
 
-        with patch("postparse.cli.db.load_config") as mock_load:
-            with patch("postparse.cli.db.get_database") as mock_get_db:
+        with patch("backend.postparse.cli.db.load_config") as mock_load:
+            with patch("backend.postparse.cli.db.get_database") as mock_get_db:
                 mock_config = MagicMock()
                 mock_load.return_value = mock_config
 
@@ -335,8 +335,8 @@ class TestDbExport:
 
         runner = CliRunner()
 
-        with patch("postparse.cli.db.load_config") as mock_load:
-            with patch("postparse.cli.db.get_database") as mock_get_db:
+        with patch("backend.postparse.cli.db.load_config") as mock_load:
+            with patch("backend.postparse.cli.db.get_database") as mock_get_db:
                 mock_config = MagicMock()
                 mock_load.return_value = mock_config
 
@@ -395,8 +395,8 @@ class TestStatsAlias:
         """Test that 'postparse stats' works as alias for 'postparse db stats'."""
         runner = CliRunner()
 
-        with patch("postparse.cli.db.load_config") as mock_load:
-            with patch("postparse.cli.db.get_database") as mock_get_db:
+        with patch("backend.postparse.cli.db.load_config") as mock_load:
+            with patch("backend.postparse.cli.db.get_database") as mock_get_db:
                 mock_config = MagicMock()
                 mock_config.get.return_value = "data/test.db"
                 mock_load.return_value = mock_config

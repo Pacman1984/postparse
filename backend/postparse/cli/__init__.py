@@ -9,7 +9,7 @@ Example:
     >>> cli()
 """
 
-from postparse.cli.main import cli
+from backend.postparse.cli.main import cli
 
 __all__ = ['cli']
 

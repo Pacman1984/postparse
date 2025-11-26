@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
-from postparse.cli.main import cli
+from backend.postparse.cli.main import cli
 
 
 class TestExtractTelegram:
@@ -24,7 +24,7 @@ class TestExtractTelegram:
         """
         runner = CliRunner()
 
-        with patch("postparse.cli.extract.validate_credentials") as mock_validate:
+        with patch("backend.postparse.cli.extract.validate_credentials") as mock_validate:
             # Simulate missing credentials
             mock_validate.return_value = ["api_id", "api_hash"]
 
@@ -40,10 +40,10 @@ class TestExtractTelegram:
         """Test extract telegram with valid credentials and successful extraction."""
         runner = CliRunner()
 
-        with patch("postparse.cli.extract.load_config") as mock_load:
-            with patch("postparse.cli.extract.get_database") as mock_get_db:
-                with patch("postparse.services.parsers.telegram.telegram_parser.TelegramParser") as mock_parser_class:
-                    with patch("postparse.cli.extract.run_async") as mock_run_async:
+        with patch("backend.postparse.cli.extract.load_config") as mock_load:
+            with patch("backend.postparse.cli.extract.get_database") as mock_get_db:
+                with patch("backend.postparse.services.parsers.telegram.telegram_parser.TelegramParser") as mock_parser_class:
+                    with patch("backend.postparse.cli.extract.run_async") as mock_run_async:
                         mock_config = MagicMock()
                         mock_load.return_value = mock_config
 
@@ -80,10 +80,10 @@ class TestExtractTelegram:
         """Test extract telegram with message limit."""
         runner = CliRunner()
 
-        with patch("postparse.cli.extract.load_config") as mock_load:
-            with patch("postparse.cli.extract.get_database") as mock_get_db:
-                with patch("postparse.services.parsers.telegram.telegram_parser.TelegramParser") as mock_parser_class:
-                    with patch("postparse.cli.extract.run_async") as mock_run_async:
+        with patch("backend.postparse.cli.extract.load_config") as mock_load:
+            with patch("backend.postparse.cli.extract.get_database") as mock_get_db:
+                with patch("backend.postparse.services.parsers.telegram.telegram_parser.TelegramParser") as mock_parser_class:
+                    with patch("backend.postparse.cli.extract.run_async") as mock_run_async:
                         mock_config = MagicMock()
                         mock_load.return_value = mock_config
 
@@ -118,10 +118,10 @@ class TestExtractTelegram:
         """Test extract telegram with --force flag for re-fetching."""
         runner = CliRunner()
 
-        with patch("postparse.cli.extract.load_config") as mock_load:
-            with patch("postparse.cli.extract.get_database") as mock_get_db:
-                with patch("postparse.services.parsers.telegram.telegram_parser.TelegramParser") as mock_parser_class:
-                    with patch("postparse.cli.extract.run_async") as mock_run_async:
+        with patch("backend.postparse.cli.extract.load_config") as mock_load:
+            with patch("backend.postparse.cli.extract.get_database") as mock_get_db:
+                with patch("backend.postparse.services.parsers.telegram.telegram_parser.TelegramParser") as mock_parser_class:
+                    with patch("backend.postparse.cli.extract.run_async") as mock_run_async:
                         mock_config = MagicMock()
                         mock_load.return_value = mock_config
 
@@ -155,9 +155,9 @@ class TestExtractTelegram:
         """Test that extract telegram handles connection errors gracefully."""
         runner = CliRunner()
 
-        with patch("postparse.cli.extract.load_config") as mock_load:
-            with patch("postparse.cli.extract.get_database") as mock_get_db:
-                with patch("postparse.services.parsers.telegram.telegram_parser.TelegramParser") as mock_parser:
+        with patch("backend.postparse.cli.extract.load_config") as mock_load:
+            with patch("backend.postparse.cli.extract.get_database") as mock_get_db:
+                with patch("backend.postparse.services.parsers.telegram.telegram_parser.TelegramParser") as mock_parser:
                     mock_config = MagicMock()
                     mock_load.return_value = mock_config
 
@@ -185,10 +185,10 @@ class TestExtractTelegram:
         """Test that extract telegram uses environment variables for credentials."""
         runner = CliRunner()
 
-        with patch("postparse.cli.extract.load_config") as mock_load:
-            with patch("postparse.cli.extract.get_database") as mock_get_db:
-                with patch("postparse.services.parsers.telegram.telegram_parser.TelegramParser") as mock_parser_class:
-                    with patch("postparse.cli.extract.run_async") as mock_run_async:
+        with patch("backend.postparse.cli.extract.load_config") as mock_load:
+            with patch("backend.postparse.cli.extract.get_database") as mock_get_db:
+                with patch("backend.postparse.services.parsers.telegram.telegram_parser.TelegramParser") as mock_parser_class:
+                    with patch("backend.postparse.cli.extract.run_async") as mock_run_async:
                         mock_config = MagicMock()
                         mock_load.return_value = mock_config
 
@@ -223,7 +223,7 @@ class TestExtractInstagram:
         """Test that extract instagram validates username and password."""
         runner = CliRunner()
 
-        with patch("postparse.cli.extract.validate_credentials") as mock_validate:
+        with patch("backend.postparse.cli.extract.validate_credentials") as mock_validate:
             # Simulate missing credentials
             mock_validate.return_value = ["username", "password"]
 
@@ -239,9 +239,9 @@ class TestExtractInstagram:
         """Test extract instagram with valid credentials."""
         runner = CliRunner()
 
-        with patch("postparse.cli.extract.load_config") as mock_load:
-            with patch("postparse.cli.extract.get_database") as mock_get_db:
-                with patch("postparse.services.parsers.instagram.instagram_parser.InstaloaderParser") as mock_parser_class:
+        with patch("backend.postparse.cli.extract.load_config") as mock_load:
+            with patch("backend.postparse.cli.extract.get_database") as mock_get_db:
+                with patch("backend.postparse.services.parsers.instagram.instagram_parser.InstaloaderParser") as mock_parser_class:
                     mock_config = MagicMock()
                     mock_load.return_value = mock_config
 
@@ -272,9 +272,9 @@ class TestExtractInstagram:
         """Test extract instagram with post limit."""
         runner = CliRunner()
 
-        with patch("postparse.cli.extract.load_config") as mock_load:
-            with patch("postparse.cli.extract.get_database") as mock_get_db:
-                with patch("postparse.services.parsers.instagram.instagram_parser.InstaloaderParser") as mock_parser_class:
+        with patch("backend.postparse.cli.extract.load_config") as mock_load:
+            with patch("backend.postparse.cli.extract.get_database") as mock_get_db:
+                with patch("backend.postparse.services.parsers.instagram.instagram_parser.InstaloaderParser") as mock_parser_class:
                     mock_config = MagicMock()
                     mock_load.return_value = mock_config
 
@@ -305,9 +305,9 @@ class TestExtractInstagram:
         """Test extract instagram with --force flag."""
         runner = CliRunner()
 
-        with patch("postparse.cli.extract.load_config") as mock_load:
-            with patch("postparse.cli.extract.get_database") as mock_get_db:
-                with patch("postparse.services.parsers.instagram.instagram_parser.InstaloaderParser") as mock_parser_class:
+        with patch("backend.postparse.cli.extract.load_config") as mock_load:
+            with patch("backend.postparse.cli.extract.get_database") as mock_get_db:
+                with patch("backend.postparse.services.parsers.instagram.instagram_parser.InstaloaderParser") as mock_parser_class:
                     mock_config = MagicMock()
                     mock_load.return_value = mock_config
 
@@ -337,9 +337,9 @@ class TestExtractInstagram:
         """Test that extract instagram handles login errors."""
         runner = CliRunner()
 
-        with patch("postparse.cli.extract.load_config") as mock_load:
-            with patch("postparse.cli.extract.get_database") as mock_get_db:
-                with patch("postparse.services.parsers.instagram.instagram_parser.InstaloaderParser") as mock_parser:
+        with patch("backend.postparse.cli.extract.load_config") as mock_load:
+            with patch("backend.postparse.cli.extract.get_database") as mock_get_db:
+                with patch("backend.postparse.services.parsers.instagram.instagram_parser.InstaloaderParser") as mock_parser:
                     mock_config = MagicMock()
                     mock_load.return_value = mock_config
 
@@ -366,9 +366,9 @@ class TestExtractInstagram:
         """Test that extract instagram uses environment variables."""
         runner = CliRunner()
 
-        with patch("postparse.cli.extract.load_config") as mock_load:
-            with patch("postparse.cli.extract.get_database") as mock_get_db:
-                with patch("postparse.services.parsers.instagram.instagram_parser.InstaloaderParser") as mock_parser_class:
+        with patch("backend.postparse.cli.extract.load_config") as mock_load:
+            with patch("backend.postparse.cli.extract.get_database") as mock_get_db:
+                with patch("backend.postparse.services.parsers.instagram.instagram_parser.InstaloaderParser") as mock_parser_class:
                     mock_config = MagicMock()
                     mock_load.return_value = mock_config
 

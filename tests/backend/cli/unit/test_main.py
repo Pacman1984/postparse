@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 from click.testing import CliRunner
 
-from postparse.cli.main import (
+from backend.postparse.cli.main import (
     __version__,
     cli,
     info,
@@ -38,7 +38,7 @@ class TestEnvLoading:
         # Change to temp directory
         monkeypatch.chdir(tmp_path)
 
-        with patch("postparse.cli.main.load_dotenv") as mock_load:
+        with patch("backend.postparse.cli.main.load_dotenv") as mock_load:
             result = load_env_files()
 
             # Should have called load_dotenv with the found path
@@ -54,8 +54,8 @@ class TestEnvLoading:
         # Mock __file__ to point to temp directory so script_dir check also fails
         fake_file = str(tmp_path / "fake" / "cli" / "main.py")
         
-        with patch("postparse.cli.main.load_dotenv") as mock_load_dotenv:
-            with patch("postparse.cli.main.__file__", fake_file):
+        with patch("backend.postparse.cli.main.load_dotenv") as mock_load_dotenv:
+            with patch("backend.postparse.cli.main.__file__", fake_file):
                 result = load_env_files()
                 
                 # Should return None if no file found
@@ -74,7 +74,7 @@ class TestWelcomeBanner:
         Verifies that the welcome function calls console print methods
         without testing exact output formatting.
         """
-        with patch("postparse.cli.main.console") as mock_console:
+        with patch("backend.postparse.cli.main.console") as mock_console:
             show_welcome()
 
             # Should print multiple times (banner, examples, etc.)
@@ -82,7 +82,7 @@ class TestWelcomeBanner:
 
     def test_show_welcome_includes_version(self) -> None:
         """Test that welcome banner includes version information."""
-        with patch("postparse.cli.main.console") as mock_console:
+        with patch("backend.postparse.cli.main.console") as mock_console:
             show_welcome()
 
             # Should call print at least twice (panel and examples table)
@@ -113,7 +113,7 @@ class TestCLIGroup:
         runner = CliRunner()
 
         # Test --verbose flag
-        with patch("postparse.cli.main.show_welcome"):
+        with patch("backend.postparse.cli.main.show_welcome"):
             result = runner.invoke(cli, ["--verbose"])
 
             # Should succeed even without subcommand
@@ -123,7 +123,7 @@ class TestCLIGroup:
         """Test that CLI accepts --quiet option."""
         runner = CliRunner()
 
-        with patch("postparse.cli.main.show_welcome") as mock_welcome:
+        with patch("backend.postparse.cli.main.show_welcome") as mock_welcome:
             result = runner.invoke(cli, ["--quiet"])
 
             assert result.exit_code == 0
@@ -142,7 +142,7 @@ class TestCLIGroup:
         """Test that running CLI without command shows welcome banner."""
         runner = CliRunner()
 
-        with patch("postparse.cli.main.show_welcome") as mock_welcome:
+        with patch("backend.postparse.cli.main.show_welcome") as mock_welcome:
             result = runner.invoke(cli, [])
 
             assert result.exit_code == 0

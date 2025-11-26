@@ -27,7 +27,7 @@ from rich.progress import (
 )
 from rich.table import Table
 
-from postparse.core.utils.config import ConfigManager
+from backend.postparse.core.utils.config import ConfigManager
 
 # Singleton console instance
 _console: Optional[Console] = None
@@ -278,7 +278,7 @@ def get_database(config: ConfigManager):
         >>> db = get_database(config)
         >>> posts = db.get_instagram_posts(limit=10)
     """
-    from postparse.core.data.database import SocialMediaDatabase
+    from backend.postparse.core.data.database import SocialMediaDatabase
     
     # Get database path from config (try both 'path' and 'default_db_path')
     db_path = config.get('database.path') or config.get('database.default_db_path', default='data/postparse.db')

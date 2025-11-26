@@ -56,30 +56,30 @@ max_retries = 3
 temperature = 0.7
 # API key loaded from OPENAI_API_KEY env var (LM Studio uses OpenAI-compatible format)
 
-[[llm.providers]]
-name = "ollama"
-model = "qwen3:14b"
-api_base = "http://localhost:11434"  # Local endpoint; ensure Ollama is running with model loaded
-timeout = 30
-max_retries = 3
-temperature = 0.7
+# [[llm.providers]]
+# name = "ollama"
+# model = "qwen3:14b"
+# api_base = "http://localhost:11434"  # Local endpoint; ensure Ollama is running with model loaded
+# timeout = 30
+# max_retries = 3
+# temperature = 0.7
 
-[[llm.providers]]
-name = "openai"
-model = "gpt-4o-mini"  # Cost-effective model; upgrade to gpt-4o for better accuracy
-timeout = 30
-max_retries = 3
-temperature = 0.7
-max_tokens = 1000
-# API key loaded from OPENAI_API_KEY env var
+# [[llm.providers]]
+# name = "openai"
+# model = "gpt-4o-mini"  # Cost-effective model; upgrade to gpt-4o for better accuracy
+# timeout = 30
+# max_retries = 3
+# temperature = 0.7
+# max_tokens = 1000
+# # API key loaded from OPENAI_API_KEY env var
 
-[[llm.providers]]
-name = "anthropic"
-model = "claude-3-5-sonnet-20241022"  # High-quality model for production
-timeout = 30
-max_retries = 3
-temperature = 0.7
-max_tokens = 1000
+# [[llm.providers]]
+# name = "anthropic"
+# model = "claude-3-5-sonnet-20241022"  # High-quality model for production
+# timeout = 30
+# max_retries = 3
+# temperature = 0.7
+# max_tokens = 1000
 # API key loaded from ANTHROPIC_API_KEY env var
 
 [classification]
@@ -90,6 +90,34 @@ recipe_negative_label = "this text does not contain any recipe or cooking instru
 # Classification confidence thresholds
 min_confidence_threshold = 0.6
 max_confidence_threshold = 1.0
+
+# Multi-class classification class definitions
+# These are default classes available to MultiClassLLMClassifier
+# You can override or extend these at runtime via the classifier constructor or API request
+
+[[classification.classes]]
+name = "recipe"
+description = """A text containing cooking instructions, ingredients, recipe details, or food preparation steps. 
+Examples: 'Boil pasta for 10 minutes', 'Mix flour and eggs', 'Preheat oven to 350°F'"""
+
+[[classification.classes]]
+name = "python_package"
+description = """A text about Python packages, libraries, pip installations, or Python development tools. 
+Examples: 'Install FastAPI with pip', 'This library provides async support', 'Check out this new Django package'"""
+
+[[classification.classes]]
+name = "movie_review"
+description = """A text reviewing, discussing, or mentioning movies, films, cinema, or TV shows. 
+Examples: 'Just watched an amazing thriller', 'This movie has great cinematography', 'The acting was superb'"""
+
+[[classification.classes]]
+name = "tech_news"
+description = """A text about technology news, product launches, tech industry updates, or software releases. 
+Examples: 'Apple announced new iPhone', 'OpenAI releases GPT-5', 'Microsoft acquires startup'"""
+
+[[classification.classes]]
+name = "other"
+description = """Any text that doesn't fit into the above categories. General content, personal updates, or miscellaneous topics."""
 
 [prompts]
 # LLM prompts for various classification tasks

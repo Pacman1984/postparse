@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
-from postparse.cli.main import cli
+from backend.postparse.cli.main import cli
 
 
 class TestSearchPosts:
@@ -24,8 +24,8 @@ class TestSearchPosts:
         """
         runner = CliRunner()
 
-        with patch("postparse.cli.search.load_config") as mock_load:
-            with patch("postparse.cli.search.get_database") as mock_get_db:
+        with patch("backend.postparse.cli.search.load_config") as mock_load:
+            with patch("backend.postparse.cli.search.get_database") as mock_get_db:
                 mock_config = MagicMock()
                 mock_load.return_value = mock_config
 
@@ -60,8 +60,8 @@ class TestSearchPosts:
         """Test searching posts with hashtag filter."""
         runner = CliRunner()
 
-        with patch("postparse.cli.search.load_config") as mock_load:
-            with patch("postparse.cli.search.get_database") as mock_get_db:
+        with patch("backend.postparse.cli.search.load_config") as mock_load:
+            with patch("backend.postparse.cli.search.get_database") as mock_get_db:
                 mock_config = MagicMock()
                 mock_load.return_value = mock_config
 
@@ -93,8 +93,8 @@ class TestSearchPosts:
         """Test searching posts with multiple hashtag filters."""
         runner = CliRunner()
 
-        with patch("postparse.cli.search.load_config") as mock_load:
-            with patch("postparse.cli.search.get_database") as mock_get_db:
+        with patch("backend.postparse.cli.search.load_config") as mock_load:
+            with patch("backend.postparse.cli.search.get_database") as mock_get_db:
                 mock_config = MagicMock()
                 mock_load.return_value = mock_config
 
@@ -120,8 +120,8 @@ class TestSearchPosts:
         """Test searching posts with date range."""
         runner = CliRunner()
 
-        with patch("postparse.cli.search.load_config") as mock_load:
-            with patch("postparse.cli.search.get_database") as mock_get_db:
+        with patch("backend.postparse.cli.search.load_config") as mock_load:
+            with patch("backend.postparse.cli.search.get_database") as mock_get_db:
                 mock_config = MagicMock()
                 mock_load.return_value = mock_config
 
@@ -156,8 +156,8 @@ class TestSearchPosts:
         """Test searching posts with invalid date format."""
         runner = CliRunner()
 
-        with patch("postparse.cli.search.load_config") as mock_load:
-            with patch("postparse.cli.search.get_database") as mock_get_db:
+        with patch("backend.postparse.cli.search.load_config") as mock_load:
+            with patch("backend.postparse.cli.search.get_database") as mock_get_db:
                 mock_config = MagicMock()
                 mock_load.return_value = mock_config
 
@@ -177,8 +177,8 @@ class TestSearchPosts:
         """Test searching posts with content type filter."""
         runner = CliRunner()
 
-        with patch("postparse.cli.search.load_config") as mock_load:
-            with patch("postparse.cli.search.get_database") as mock_get_db:
+        with patch("backend.postparse.cli.search.load_config") as mock_load:
+            with patch("backend.postparse.cli.search.get_database") as mock_get_db:
                 mock_config = MagicMock()
                 mock_load.return_value = mock_config
 
@@ -199,8 +199,8 @@ class TestSearchPosts:
         """Test searching posts with username filter."""
         runner = CliRunner()
 
-        with patch("postparse.cli.search.load_config") as mock_load:
-            with patch("postparse.cli.search.get_database") as mock_get_db:
+        with patch("backend.postparse.cli.search.load_config") as mock_load:
+            with patch("backend.postparse.cli.search.get_database") as mock_get_db:
                 mock_config = MagicMock()
                 mock_load.return_value = mock_config
 
@@ -221,8 +221,8 @@ class TestSearchPosts:
         """Test searching posts with JSON output format."""
         runner = CliRunner()
 
-        with patch("postparse.cli.search.load_config") as mock_load:
-            with patch("postparse.cli.search.get_database") as mock_get_db:
+        with patch("backend.postparse.cli.search.load_config") as mock_load:
+            with patch("backend.postparse.cli.search.get_database") as mock_get_db:
                 mock_config = MagicMock()
                 mock_load.return_value = mock_config
 
@@ -244,8 +244,8 @@ class TestSearchPosts:
         """Test searching posts with result limit."""
         runner = CliRunner()
 
-        with patch("postparse.cli.search.load_config") as mock_load:
-            with patch("postparse.cli.search.get_database") as mock_get_db:
+        with patch("backend.postparse.cli.search.load_config") as mock_load:
+            with patch("backend.postparse.cli.search.get_database") as mock_get_db:
                 mock_config = MagicMock()
                 mock_load.return_value = mock_config
 
@@ -267,8 +267,8 @@ class TestSearchPosts:
         """Test searching posts when no results found."""
         runner = CliRunner()
 
-        with patch("postparse.cli.search.load_config") as mock_load:
-            with patch("postparse.cli.search.get_database") as mock_get_db:
+        with patch("backend.postparse.cli.search.load_config") as mock_load:
+            with patch("backend.postparse.cli.search.get_database") as mock_get_db:
                 mock_config = MagicMock()
                 mock_load.return_value = mock_config
 
@@ -290,8 +290,8 @@ class TestSearchMessages:
         """Test searching messages without any filters."""
         runner = CliRunner()
 
-        with patch("postparse.cli.search.load_config") as mock_load:
-            with patch("postparse.cli.search.get_database") as mock_get_db:
+        with patch("backend.postparse.cli.search.load_config") as mock_load:
+            with patch("backend.postparse.cli.search.get_database") as mock_get_db:
                 mock_config = MagicMock()
                 mock_load.return_value = mock_config
 
@@ -324,8 +324,8 @@ class TestSearchMessages:
         """Test searching messages with hashtag filter."""
         runner = CliRunner()
 
-        with patch("postparse.cli.search.load_config") as mock_load:
-            with patch("postparse.cli.search.get_database") as mock_get_db:
+        with patch("backend.postparse.cli.search.load_config") as mock_load:
+            with patch("backend.postparse.cli.search.get_database") as mock_get_db:
                 mock_config = MagicMock()
                 mock_load.return_value = mock_config
 
@@ -354,8 +354,8 @@ class TestSearchMessages:
         """Test searching messages with content type filter."""
         runner = CliRunner()
 
-        with patch("postparse.cli.search.load_config") as mock_load:
-            with patch("postparse.cli.search.get_database") as mock_get_db:
+        with patch("backend.postparse.cli.search.load_config") as mock_load:
+            with patch("backend.postparse.cli.search.get_database") as mock_get_db:
                 mock_config = MagicMock()
                 mock_load.return_value = mock_config
 
@@ -376,8 +376,8 @@ class TestSearchMessages:
         """Test searching messages with date range."""
         runner = CliRunner()
 
-        with patch("postparse.cli.search.load_config") as mock_load:
-            with patch("postparse.cli.search.get_database") as mock_get_db:
+        with patch("backend.postparse.cli.search.load_config") as mock_load:
+            with patch("backend.postparse.cli.search.get_database") as mock_get_db:
                 mock_config = MagicMock()
                 mock_load.return_value = mock_config
 
@@ -406,8 +406,8 @@ class TestSearchMessages:
         """Test searching messages with JSON output."""
         runner = CliRunner()
 
-        with patch("postparse.cli.search.load_config") as mock_load:
-            with patch("postparse.cli.search.get_database") as mock_get_db:
+        with patch("backend.postparse.cli.search.load_config") as mock_load:
+            with patch("backend.postparse.cli.search.get_database") as mock_get_db:
                 mock_config = MagicMock()
                 mock_load.return_value = mock_config
 
@@ -429,8 +429,8 @@ class TestSearchMessages:
         """Test searching messages when no results found."""
         runner = CliRunner()
 
-        with patch("postparse.cli.search.load_config") as mock_load:
-            with patch("postparse.cli.search.get_database") as mock_get_db:
+        with patch("backend.postparse.cli.search.load_config") as mock_load:
+            with patch("backend.postparse.cli.search.get_database") as mock_get_db:
                 mock_config = MagicMock()
                 mock_load.return_value = mock_config
 

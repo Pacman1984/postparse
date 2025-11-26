@@ -17,7 +17,7 @@ import rich_click as click
 from rich.table import Table
 from rich.panel import Panel
 
-from postparse.cli.utils import (
+from backend.postparse.cli.utils import (
     get_console,
     load_config,
     get_database,

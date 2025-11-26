@@ -10,6 +10,7 @@ A Python package for extracting and analyzing saved posts from social media plat
 - Analyze content using ML and LLM models
 - Structured data storage with SQLite
 - Content classification (recipes, tutorials, etc.)
+- **Multi-Class Classification**: Classify text into custom categories with dynamic class definitions (config or runtime)
 
 ## Documentation
 
@@ -173,6 +174,50 @@ for msg in messages:
 
 For more examples, see the **[Cookbook](docs/cookbook.md)**.
 
+### Multi-Class Classification
+
+Classify text into custom categories:
+
+```python
+from postparse.services.analysis.classifiers import MultiClassLLMClassifier
+
+# Define your classes
+classes = {
+    "recipe": "Cooking instructions or ingredients",
+    "tech_news": "Technology news or product announcements",
+    "sports": "Sports news, scores, or athlete updates"
+}
+
+classifier = MultiClassLLMClassifier(classes=classes)
+result = classifier.predict("Apple announces new iPhone 16")
+print(f"Category: {result.label} (confidence: {result.confidence:.2f})")
+# Output: Category: tech_news (confidence: 0.92)
+```
+
+Or via CLI:
+
+```bash
+postparse classify multi "Apple announces iPhone 16" \
+  --classes '{"recipe": "Cooking", "tech_news": "Tech news", "sports": "Sports"}'
+```
+
+Or via API:
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/classify/multi" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "text": "Apple announces iPhone 16",
+    "classes": {
+      "recipe": "Cooking instructions",
+      "tech_news": "Technology news",
+      "sports": "Sports news"
+    }
+  }'
+```
+
+For more details, see **[LLM Providers Documentation](docs/llm_providers.md)**.
+
 ## API Server
 
 PostParse now includes a REST API built with FastAPI for programmatic access to all features.
@@ -200,6 +245,7 @@ Once the server is running, access the interactive API documentation:
 - **Telegram**: `/api/v1/telegram/extract`, `/api/v1/telegram/messages`
 - **Instagram**: `/api/v1/instagram/extract`, `/api/v1/instagram/posts`
 - **Classification**: `/api/v1/classify/recipe`, `/api/v1/classify/batch`
+- **Multi-Class**: `/api/v1/classify/multi`, `/api/v1/classify/multi/batch`
 - **Search**: `/api/v1/search/posts`, `/api/v1/search/messages`
 - **Jobs**: `/api/v1/jobs/{job_id}` (unified job status for all platforms)
 - **Health**: `/health`, `/health/ready`, `/metrics`

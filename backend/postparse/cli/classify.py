@@ -3,20 +3,27 @@ Classify commands for PostParse CLI.
 
 This module provides commands for classifying content using ML/LLM models.
 
+Commands include:
+- Recipe classification (single/batch)
+- Multi-class classification with custom categories
+
 Example:
     $ postparse classify single "Mix flour and water..."
     $ postparse classify batch --source posts --limit 100
+    $ postparse classify multi "Check out FastAPI!" --classes '{"recipe": "Cooking", "tech": "Technology"}'
+    $ postparse classify multi-batch "Text 1" "Text 2" --classes @classes.json
 """
 
 import sys
 import json
-from typing import Optional
+from pathlib import Path
+from typing import Optional, Dict
 
 import rich_click as click
 from rich.table import Table
 from rich.panel import Panel
 
-from postparse.cli.utils import (
+from backend.postparse.cli.utils import (
     get_console,
     load_config,
     get_database,
@@ -91,7 +98,7 @@ def single(ctx, text, provider, detailed, output):
         # Initialize classifier (always use RecipeLLMClassifier)
         print_info("Initializing LLM classifier...")
         
-        from postparse.services.analysis.classifiers.llm import (
+        from backend.postparse.services.analysis.classifiers.llm import (
             RecipeLLMClassifier
         )
         
@@ -209,7 +216,7 @@ def batch(ctx, source, limit, filter_hashtag, provider, detailed):
         # Initialize classifier (always use RecipeLLMClassifier)
         print_info("Initializing LLM classifier...")
         
-        from postparse.services.analysis.classifiers.llm import (
+        from backend.postparse.services.analysis.classifiers.llm import (
             RecipeLLMClassifier
         )
         
@@ -366,6 +373,350 @@ def batch(ctx, source, limit, filter_hashtag, provider, detailed):
         pass
     except Exception as e:
         print_error(f"Batch classification failed: {e}")
+        if ctx.obj.get('verbose'):
+            console.print_exception()
+        raise click.Abort()
+
+
+def _parse_classes_arg(classes_arg: Optional[str]) -> Optional[Dict[str, str]]:
+    """
+    Parse the --classes argument.
+
+    Supports JSON string or file path prefixed with @.
+
+    Args:
+        classes_arg: JSON string or @filepath
+
+    Returns:
+        Dictionary of classes or None
+
+    Raises:
+        click.ClickException: If parsing fails
+    """
+    if not classes_arg:
+        return None
+
+    # If starts with @, read from file
+    if classes_arg.startswith('@'):
+        file_path = Path(classes_arg[1:])
+        if not file_path.exists():
+            raise click.ClickException(f"Classes file not found: {file_path}")
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                classes = json.load(f)
+        except json.JSONDecodeError as e:
+            raise click.ClickException(f"Invalid JSON in classes file: {e}")
+    else:
+        # Parse as JSON string
+        try:
+            classes = json.loads(classes_arg)
+        except json.JSONDecodeError as e:
+            raise click.ClickException(f"Invalid JSON in --classes: {e}")
+
+    if not isinstance(classes, dict):
+        raise click.ClickException("Classes must be a JSON object (dict)")
+
+    if len(classes) < 2:
+        raise click.ClickException("At least 2 classes are required")
+
+    return classes
+
+
+@classify.command()
+@click.argument('text', required=False)
+@click.option(
+    '--classes',
+    'classes_arg',
+    help='Class definitions as JSON string or @filepath. Format: {"class1": "description1", ...}',
+)
+@click.option(
+    '--provider',
+    help='LLM provider to use (default: from config)',
+)
+@click.option(
+    '--output',
+    type=click.Choice(['text', 'json']),
+    default='text',
+    help='Output format (default: text)',
+)
+@click.pass_context
+def multi(ctx, text, classes_arg, provider, output):
+    """
+    Classify text into custom categories using multi-class LLM.
+
+    Classify a single TEXT into one of your custom categories.
+
+    Classes can be defined via:
+    - --classes JSON string: '{"recipe": "Cooking", "tech": "Technology"}'
+    - --classes @file.json: Read classes from JSON file
+    - Config file: Uses [classification.classes] from config.toml if --classes not provided
+
+    Examples:
+        postparse classify multi "Check out this new FastAPI library!"
+
+        postparse classify multi "Apple announces iPhone 16" \\
+          --classes '{"recipe": "Cooking", "tech_news": "Tech news", "sports": "Sports"}'
+
+        postparse classify multi "Some text" --classes @my_classes.json
+
+        postparse classify multi "Some text" --provider openai
+
+        echo "Recipe text" | postparse classify multi -
+    """
+    console = get_console()
+
+    try:
+        # Handle stdin input
+        if text == '-' or text is None:
+            if sys.stdin.isatty() and text is None:
+                print_error("No text provided. Use: postparse classify multi TEXT or pipe to stdin")
+                raise click.Abort()
+            text = sys.stdin.read().strip()
+            if not text:
+                print_error("No text provided from stdin")
+                raise click.Abort()
+
+        # Load config
+        config_path = ctx.obj.get('config')
+        config = load_config(config_path)
+
+        # Parse classes argument
+        classes = _parse_classes_arg(classes_arg)
+
+        # Validate provider if specified
+        if provider:
+            llm_providers = config.get_section('llm').get('providers', [])
+
+            if not llm_providers:
+                print_error("No LLM providers configured in config file")
+                raise click.Abort()
+
+            provider_found = False
+            for p in llm_providers:
+                if p.get('name', '').lower() == provider.lower():
+                    provider_found = True
+                    break
+            if not provider_found:
+                print_error(f"Provider '{provider}' not found in config")
+                raise click.Abort()
+
+        # Initialize classifier
+        print_info("Initializing multi-class LLM classifier...")
+
+        from backend.postparse.services.analysis.classifiers.multi_class import (
+            MultiClassLLMClassifier
+        )
+
+        classifier = MultiClassLLMClassifier(
+            classes=classes,
+            provider_name=provider,
+            config_path=config_path,
+        )
+
+        # Classify
+        print_info("Classifying text...")
+        result = classifier.predict(text)
+
+        # Output result
+        if output == 'json':
+            output_data = {
+                'label': result.label,
+                'confidence': result.confidence,
+                'reasoning': result.details.get('reasoning') if result.details else None,
+                'available_classes': result.details.get('available_classes', []) if result.details else [],
+            }
+            console.print_json(json.dumps(output_data))
+        else:
+            # Display in panel
+            label = result.label
+            confidence = result.confidence
+            reasoning = result.details.get('reasoning', '') if result.details else ''
+            available_classes = result.details.get('available_classes', []) if result.details else []
+
+            content = f"[bold]Predicted Class:[/bold] {label}\n"
+            content += f"[bold]Confidence:[/bold] {confidence:.2%}\n"
+            if reasoning:
+                content += f"[bold]Reasoning:[/bold] {reasoning}\n"
+            content += f"[bold]Available Classes:[/bold] {', '.join(available_classes)}"
+
+            print_panel(content, title="Classification Result", style="cyan")
+
+    except click.Abort:
+        pass
+    except click.ClickException:
+        raise
+    except Exception as e:
+        print_error(f"Multi-class classification failed: {e}")
+        if ctx.obj.get('verbose'):
+            console.print_exception()
+        raise click.Abort()
+
+
+@classify.command('multi-batch')
+@click.argument('texts', nargs=-1, required=False)
+@click.option(
+    '--classes',
+    'classes_arg',
+    help='Class definitions as JSON string or @filepath. Format: {"class1": "description1", ...}',
+)
+@click.option(
+    '--provider',
+    help='LLM provider to use (default: from config)',
+)
+@click.option(
+    '--output',
+    type=click.Path(),
+    help='Save results to JSON file',
+)
+@click.pass_context
+def multi_batch(ctx, texts, classes_arg, provider, output):
+    """
+    Classify multiple texts into custom categories.
+
+    Provide TEXTS as multiple arguments or use @file to read from a file
+    (one text per line).
+
+    Examples:
+        postparse classify multi-batch "Text 1" "Text 2" "Text 3" \\
+          --classes '{"recipe": "Cooking", "tech": "Tech news"}'
+
+        postparse classify multi-batch @texts.txt \\
+          --classes @classes.json \\
+          --output results.json
+
+        postparse classify multi-batch "Text 1" "Text 2" --provider openai
+    """
+    console = get_console()
+
+    try:
+        # Handle file input for texts
+        texts_list = list(texts)
+        if len(texts_list) == 1 and texts_list[0].startswith('@'):
+            file_path = Path(texts_list[0][1:])
+            if not file_path.exists():
+                print_error(f"Texts file not found: {file_path}")
+                raise click.Abort()
+            with open(file_path, 'r', encoding='utf-8') as f:
+                texts_list = [line.strip() for line in f if line.strip()]
+
+        if not texts_list:
+            print_error("No texts provided. Use: postparse classify multi-batch TEXT1 TEXT2 ...")
+            raise click.Abort()
+
+        # Load config
+        config_path = ctx.obj.get('config')
+        config = load_config(config_path)
+
+        # Parse classes argument
+        classes = _parse_classes_arg(classes_arg)
+
+        # Validate provider if specified
+        if provider:
+            llm_providers = config.get_section('llm').get('providers', [])
+
+            if not llm_providers:
+                print_error("No LLM providers configured in config file")
+                raise click.Abort()
+
+            provider_found = False
+            for p in llm_providers:
+                if p.get('name', '').lower() == provider.lower():
+                    provider_found = True
+                    break
+            if not provider_found:
+                print_error(f"Provider '{provider}' not found in config")
+                raise click.Abort()
+
+        # Initialize classifier
+        print_info("Initializing multi-class LLM classifier...")
+
+        from backend.postparse.services.analysis.classifiers.multi_class import (
+            MultiClassLLMClassifier
+        )
+
+        classifier = MultiClassLLMClassifier(
+            classes=classes,
+            provider_name=provider,
+            config_path=config_path,
+        )
+
+        print_info(f"Classifying {len(texts_list)} texts...")
+
+        # Classify all texts
+        results = []
+        stats: Dict[str, int] = {}
+
+        with create_progress() as progress:
+            task = progress.add_task(
+                "[cyan]Classifying texts...",
+                total=len(texts_list)
+            )
+
+            for text_item in texts_list:
+                try:
+                    result = classifier.predict(text_item)
+                    results.append({
+                        'text': text_item,
+                        'label': result.label,
+                        'confidence': result.confidence,
+                        'reasoning': result.details.get('reasoning') if result.details else None,
+                    })
+
+                    # Track stats
+                    stats[result.label] = stats.get(result.label, 0) + 1
+
+                except Exception as e:
+                    if ctx.obj.get('verbose'):
+                        print_error(f"Error classifying: {e}")
+                    results.append({
+                        'text': text_item,
+                        'label': 'ERROR',
+                        'confidence': 0.0,
+                        'reasoning': str(e),
+                    })
+                    stats['ERROR'] = stats.get('ERROR', 0) + 1
+
+                progress.update(task, advance=1)
+
+        # Save to file if requested
+        if output:
+            with open(output, 'w', encoding='utf-8') as f:
+                json.dump(results, f, indent=2)
+            print_success(f"Results saved to {output}")
+
+        # Display results table
+        console.print()
+
+        table = Table(title="Classification Results", show_header=True)
+        table.add_column("Text", style="cyan", max_width=40)
+        table.add_column("Predicted Class", style="green")
+        table.add_column("Confidence", justify="right")
+
+        for result in results[:20]:  # Show first 20
+            confidence_str = f"{result['confidence']:.2%}" if result['confidence'] > 0 else "-"
+            table.add_row(
+                truncate_text(result['text'], 40),
+                result['label'],
+                confidence_str,
+            )
+
+        console.print(table)
+
+        if len(results) > 20:
+            print_info(f"Showing first 20 of {len(results)} results")
+
+        # Summary stats
+        console.print()
+        summary_parts = [f"{label} ({count})" for label, count in sorted(stats.items())]
+        print_success(f"Summary: {len(results)} texts classified")
+        console.print(f"  Distribution: {', '.join(summary_parts)}")
+
+    except click.Abort:
+        pass
+    except click.ClickException:
+        raise
+    except Exception as e:
+        print_error(f"Batch multi-class classification failed: {e}")
         if ctx.obj.get('verbose'):
             console.print_exception()
         raise click.Abort()

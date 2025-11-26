@@ -270,7 +270,7 @@ def info():
 
 
 # Register subcommands
-from postparse.cli import extract, classify, search, serve, db, config, check
+from backend.postparse.cli import extract, classify, search, serve, db, config, check
 
 cli.add_command(extract.extract)
 cli.add_command(classify.classify)

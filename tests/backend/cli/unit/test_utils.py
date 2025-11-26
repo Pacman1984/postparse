@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 from rich.console import Console
 
-from postparse.cli.utils import (
+from backend.postparse.cli.utils import (
     create_progress,
     format_message,
     format_post,
@@ -56,7 +56,7 @@ class TestConsoleOutput:
 
         Verifies that success messages are printed with appropriate styling.
         """
-        with patch("postparse.cli.utils.get_console") as mock_console:
+        with patch("backend.postparse.cli.utils.get_console") as mock_console:
             mock_console_instance = MagicMock()
             mock_console.return_value = mock_console_instance
 
@@ -70,7 +70,7 @@ class TestConsoleOutput:
 
     def test_print_error_outputs_correctly(self) -> None:
         """Test that print_error outputs formatted error message."""
-        with patch("postparse.cli.utils.get_console") as mock_console:
+        with patch("backend.postparse.cli.utils.get_console") as mock_console:
             mock_console_instance = MagicMock()
             mock_console.return_value = mock_console_instance
 
@@ -83,7 +83,7 @@ class TestConsoleOutput:
 
     def test_print_warning_outputs_correctly(self) -> None:
         """Test that print_warning outputs formatted warning message."""
-        with patch("postparse.cli.utils.get_console") as mock_console:
+        with patch("backend.postparse.cli.utils.get_console") as mock_console:
             mock_console_instance = MagicMock()
             mock_console.return_value = mock_console_instance
 
@@ -96,7 +96,7 @@ class TestConsoleOutput:
 
     def test_print_info_outputs_correctly(self) -> None:
         """Test that print_info outputs formatted info message."""
-        with patch("postparse.cli.utils.get_console") as mock_console:
+        with patch("backend.postparse.cli.utils.get_console") as mock_console:
             mock_console_instance = MagicMock()
             mock_console.return_value = mock_console_instance
 
@@ -109,7 +109,7 @@ class TestConsoleOutput:
 
     def test_print_panel_creates_panel(self) -> None:
         """Test that print_panel creates and displays a panel."""
-        with patch("postparse.cli.utils.get_console") as mock_console:
+        with patch("backend.postparse.cli.utils.get_console") as mock_console:
             mock_console_instance = MagicMock()
             mock_console.return_value = mock_console_instance
 
@@ -124,7 +124,7 @@ class TestConsoleOutput:
             {"id": 2, "name": "Item 2"},
         ]
 
-        with patch("postparse.cli.utils.get_console") as mock_console:
+        with patch("backend.postparse.cli.utils.get_console") as mock_console:
             mock_console_instance = MagicMock()
             mock_console.return_value = mock_console_instance
 
@@ -134,8 +134,8 @@ class TestConsoleOutput:
 
     def test_print_table_with_empty_data(self) -> None:
         """Test that print_table handles empty data gracefully."""
-        with patch("postparse.cli.utils.get_console") as mock_console:
-            with patch("postparse.cli.utils.print_warning") as mock_warning:
+        with patch("backend.postparse.cli.utils.get_console") as mock_console:
+            with patch("backend.postparse.cli.utils.print_warning") as mock_warning:
                 print_table([], title="Empty Table")
 
                 # Should call print_warning instead of printing table
@@ -160,7 +160,7 @@ path = "test.db"
 port = 8000
 """)
 
-        with patch("postparse.cli.utils.ConfigManager") as mock_config_manager:
+        with patch("backend.postparse.cli.utils.ConfigManager") as mock_config_manager:
             mock_config_instance = MagicMock()
             mock_config_manager.return_value = mock_config_instance
 
@@ -190,7 +190,7 @@ path = "test.db"
         # Change to temp directory
         monkeypatch.chdir(tmp_path)
 
-        with patch("postparse.cli.utils.ConfigManager") as mock_config_manager:
+        with patch("backend.postparse.cli.utils.ConfigManager") as mock_config_manager:
             mock_config_instance = MagicMock()
             mock_config_manager.return_value = mock_config_instance
 
@@ -200,7 +200,7 @@ path = "test.db"
 
     def test_validate_config_with_valid_config(self) -> None:
         """Test config validation with valid configuration."""
-        with patch("postparse.cli.utils.load_config") as mock_load:
+        with patch("backend.postparse.cli.utils.load_config") as mock_load:
             mock_config = MagicMock()
             mock_config.get.side_effect = lambda key, default=None: {
                 "database.path": "data/test.db",
@@ -216,7 +216,7 @@ path = "test.db"
 
     def test_validate_config_with_missing_database_path(self) -> None:
         """Test config validation detects missing database path."""
-        with patch("postparse.cli.utils.load_config") as mock_load:
+        with patch("backend.postparse.cli.utils.load_config") as mock_load:
             mock_config = MagicMock()
             mock_config.get.return_value = None
             mock_config.get_section.return_value = {"providers": []}
@@ -240,7 +240,7 @@ class TestDatabaseAccess:
         Mocks the database class at the boundary to test that the function
         correctly instantiates and returns a database object.
         """
-        with patch("postparse.core.data.database.SocialMediaDatabase") as mock_db_class:
+        with patch("backend.postparse.core.data.database.SocialMediaDatabase") as mock_db_class:
             mock_config = MagicMock()
             mock_config.get.return_value = "data/test.db"
 
@@ -254,7 +254,7 @@ class TestDatabaseAccess:
 
     def test_get_database_with_default_path(self) -> None:
         """Test that get_database uses default path when not configured."""
-        with patch("postparse.core.data.database.SocialMediaDatabase") as mock_db_class:
+        with patch("backend.postparse.core.data.database.SocialMediaDatabase") as mock_db_class:
             mock_config = MagicMock()
             mock_config.get.side_effect = lambda key, default=None: {
                 "database.path": None,

@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
-from postparse.cli.main import cli
+from backend.postparse.cli.main import cli
 
 
 class TestConfigShow:
@@ -41,7 +41,7 @@ model_name = "test-model"
 
         runner = CliRunner()
 
-        with patch("postparse.cli.config.load_config") as mock_load:
+        with patch("backend.postparse.cli.config.load_config") as mock_load:
             mock_config = MagicMock()
             mock_config.config_path = config_file
             mock_config.get_section.side_effect = lambda section: {
@@ -64,7 +64,7 @@ model_name = "test-model"
         """Test showing specific configuration section."""
         runner = CliRunner()
 
-        with patch("postparse.cli.config.load_config") as mock_load:
+        with patch("backend.postparse.cli.config.load_config") as mock_load:
             mock_config = MagicMock()
             mock_config.config_path = Path("config.toml")
             mock_config.get_section.return_value = {"port": 8000, "host": "0.0.0.0"}
@@ -79,7 +79,7 @@ model_name = "test-model"
         """Test config show with JSON output format."""
         runner = CliRunner()
 
-        with patch("postparse.cli.config.load_config") as mock_load:
+        with patch("backend.postparse.cli.config.load_config") as mock_load:
             mock_config = MagicMock()
             mock_config.config_path = Path("config.toml")
             mock_config.get_section.return_value = {"providers": []}
@@ -96,7 +96,7 @@ model_name = "test-model"
         """Test that config show handles errors gracefully."""
         runner = CliRunner()
 
-        with patch("postparse.cli.config.load_config") as mock_load:
+        with patch("backend.postparse.cli.config.load_config") as mock_load:
             mock_load.side_effect = Exception("Config load failed")
 
             result = runner.invoke(cli, ["config", "show"])
@@ -117,7 +117,7 @@ class TestConfigValidate:
         """
         runner = CliRunner()
 
-        with patch("postparse.cli.config.load_config") as mock_load:
+        with patch("backend.postparse.cli.config.load_config") as mock_load:
             mock_config = MagicMock()
             mock_config.config_path = Path("config.toml")
             mock_config.get.side_effect = lambda key, default=None: {
@@ -143,7 +143,7 @@ class TestConfigValidate:
         """Test that validate detects missing database directory."""
         runner = CliRunner()
 
-        with patch("postparse.cli.config.load_config") as mock_load:
+        with patch("backend.postparse.cli.config.load_config") as mock_load:
             mock_config = MagicMock()
             mock_config.config_path = Path("config.toml")
             nonexistent_path = tmp_path / "nonexistent" / "test.db"
@@ -166,7 +166,7 @@ class TestConfigValidate:
 
         db_path = tmp_path / "data" / "test.db"
 
-        with patch("postparse.cli.config.load_config") as mock_load:
+        with patch("backend.postparse.cli.config.load_config") as mock_load:
             mock_config = MagicMock()
             mock_config.config_path = Path("config.toml")
             mock_config.get.side_effect = lambda key, default=None: {
@@ -186,7 +186,7 @@ class TestConfigValidate:
         """Test that validate detects invalid API port."""
         runner = CliRunner()
 
-        with patch("postparse.cli.config.load_config") as mock_load:
+        with patch("backend.postparse.cli.config.load_config") as mock_load:
             mock_config = MagicMock()
             mock_config.config_path = Path("config.toml")
             mock_config.get.side_effect = lambda key, default=None: {
@@ -206,7 +206,7 @@ class TestConfigValidate:
         """Test that validate warns about missing LLM providers."""
         runner = CliRunner()
 
-        with patch("postparse.cli.config.load_config") as mock_load:
+        with patch("backend.postparse.cli.config.load_config") as mock_load:
             mock_config = MagicMock()
             mock_config.config_path = Path("config.toml")
             mock_config.get.side_effect = lambda key, default=None: {
@@ -226,7 +226,7 @@ class TestConfigValidate:
         """Test that validate handles config loading errors."""
         runner = CliRunner()
 
-        with patch("postparse.cli.config.load_config") as mock_load:
+        with patch("backend.postparse.cli.config.load_config") as mock_load:
             mock_load.side_effect = Exception("Config not found")
 
             result = runner.invoke(cli, ["config", "validate"])
@@ -354,7 +354,7 @@ class TestDisplayValidationResults:
 
     def test_display_validation_results_with_passes(self) -> None:
         """Test displaying validation results with passed checks."""
-        from postparse.cli.config import display_validation_results
+        from backend.postparse.cli.config import display_validation_results
         from unittest.mock import MagicMock
 
         results = [
@@ -370,7 +370,7 @@ class TestDisplayValidationResults:
 
     def test_display_validation_results_with_failures(self) -> None:
         """Test displaying validation results with failures."""
-        from postparse.cli.config import display_validation_results
+        from backend.postparse.cli.config import display_validation_results
         from unittest.mock import MagicMock
 
         results = [
@@ -385,7 +385,7 @@ class TestDisplayValidationResults:
 
     def test_display_validation_results_formats_status_correctly(self) -> None:
         """Test that validation results format status correctly."""
-        from postparse.cli.config import display_validation_results
+        from backend.postparse.cli.config import display_validation_results
         from unittest.mock import MagicMock
 
         results = [

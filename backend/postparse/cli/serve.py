@@ -11,7 +11,7 @@ Example:
 import rich_click as click
 from rich.panel import Panel
 
-from postparse.cli.utils import (
+from backend.postparse.cli.utils import (
     get_console,
     load_config,
     print_success,
@@ -105,7 +105,7 @@ def serve(ctx, host, port, reload, workers, log_level):
         
         # Run server
         uvicorn.run(
-            "postparse.api.main:app",
+            "backend.postparse.api.main:app",
             host=server_host,
             port=server_port,
             reload=server_reload,

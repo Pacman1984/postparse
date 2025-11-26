@@ -1,8 +1,8 @@
 """
 FastAPI router for classification endpoints.
 
-This module provides HTTP endpoints for recipe classification using
-the existing RecipeClassifier and RecipeLLMClassifier implementations.
+This module provides HTTP endpoints for recipe classification and
+multi-class classification using LLM-based classifiers.
 """
 
 import time
@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from backend.postparse.services.analysis.classifiers.llm import RecipeLLMClassifier
+from backend.postparse.services.analysis.classifiers.multi_class import MultiClassLLMClassifier
 from backend.postparse.api.dependencies import (
     get_recipe_llm_classifier,
     get_optional_auth,
@@ -21,6 +22,12 @@ from backend.postparse.api.schemas import (
     BatchClassifyRequest,
     BatchClassifyResponse,
     ClassifierType,
+)
+from backend.postparse.api.schemas.classify import (
+    MultiClassifyRequest,
+    MultiClassifyResponse,
+    BatchMultiClassifyRequest,
+    BatchMultiClassifyResponse,
 )
 from backend.postparse.core.utils.config import ConfigManager
 
@@ -241,6 +248,238 @@ async def classify_batch(
     )
 
 
+@router.post(
+    "/multi",
+    response_model=MultiClassifyResponse,
+    summary="Classify text into custom categories",
+    description="""
+    Classify a single text into one of the custom categories using LLM-based multi-class classification.
+    
+    ## Features
+    
+    - **Dynamic Classes**: Define any number of classes (minimum 2)
+    - **Config + Runtime**: Use default classes from config.toml or override with runtime classes
+    - **Provider Flexibility**: Specify which LLM provider to use
+    - **Structured Output**: Returns predicted class, confidence score, and reasoning
+    
+    ## Class Definitions
+    
+    Classes can be defined in two ways:
+    
+    1. **Config-based**: Default classes defined in `config.toml` under `[classification.classes]`
+    2. **Runtime-based**: Pass a `classes` dict in the request to override/extend config classes
+    
+    Each class definition is a dictionary mapping class name to description. The description
+    should explain what content belongs to that class, ideally with examples.
+    
+    ## Provider Switching
+    
+    Specify `provider_name` in the request to use a different LLM provider
+    (e.g., "openai", "anthropic", "ollama", "lm_studio"). If not specified,
+    uses the default provider from configuration.
+    
+    ## Response
+    
+    Returns the predicted class label, confidence score (0.0-1.0), reasoning for the
+    classification, list of available classes, and processing time.
+    """,
+)
+async def classify_multi(
+    request: MultiClassifyRequest,
+    config: ConfigManager = Depends(get_config),
+    user: Optional[dict] = Depends(get_optional_auth),
+) -> MultiClassifyResponse:
+    """
+    Classify single text into custom categories.
+    
+    Args:
+        request: Multi-class classification request with text and optional classes.
+        config: ConfigManager instance (injected dependency).
+        user: Optional authenticated user info.
+        
+    Returns:
+        MultiClassifyResponse with label, confidence, reasoning, and available classes.
+        
+    Raises:
+        HTTPException: 400 if classes are invalid or provider_name is invalid.
+        HTTPException: 503 if LLM service is unavailable.
+        
+    Example:
+        POST /api/v1/classify/multi
+        {
+            "text": "Check out this new FastAPI library for building APIs!",
+            "classes": {
+                "recipe": "Cooking instructions or ingredients",
+                "python_package": "Python libraries or packages",
+                "movie_review": "Movie or film discussion"
+            },
+            "provider_name": "openai"
+        }
+        
+        Response:
+        {
+            "label": "python_package",
+            "confidence": 0.92,
+            "reasoning": "The text mentions FastAPI library and building APIs",
+            "available_classes": ["recipe", "python_package", "movie_review"],
+            "processing_time": 0.345,
+            "classifier_used": "multi_class_llm"
+        }
+    """
+    start_time = time.time()
+    
+    try:
+        # Create classifier with runtime classes and/or provider
+        classifier = MultiClassLLMClassifier(
+            classes=request.classes,
+            provider_name=request.provider_name,
+            config_path=config.config_path if hasattr(config, 'config_path') else None,
+        )
+        
+        # Perform classification
+        result = classifier.predict(request.text)
+        
+        processing_time = time.time() - start_time
+        
+        return MultiClassifyResponse(
+            label=result.label,
+            confidence=result.confidence,
+            reasoning=result.details.get('reasoning') if result.details else None,
+            available_classes=result.details.get('available_classes', []) if result.details else [],
+            processing_time=processing_time,
+            classifier_used="multi_class_llm",
+        )
+        
+    except ValueError as e:
+        # Handle validation errors (invalid classes, provider not found)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
+    except Exception as e:
+        # Handle LLM provider errors
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Multi-class classification failed: {str(e)}",
+        )
+
+
+@router.post(
+    "/multi/batch",
+    response_model=BatchMultiClassifyResponse,
+    summary="Classify multiple texts into custom categories",
+    description="""
+    Classify multiple texts into custom categories in a single request.
+    
+    This batch endpoint is more efficient than calling the single endpoint multiple times,
+    as it reuses the same classifier instance for all texts.
+    
+    ## Features
+    
+    - **Batch Processing**: Classify up to 100 texts in a single request
+    - **Shared Classifier**: Uses the same classifier instance for efficiency
+    - **Partial Failure Handling**: Continues processing even if individual texts fail
+    - **Aggregate Statistics**: Returns total processed, failed count, and total time
+    
+    ## Usage
+    
+    Same class definition and provider switching options as the single endpoint.
+    Individual failures are counted but don't stop the batch from completing.
+    """,
+)
+async def classify_multi_batch(
+    request: BatchMultiClassifyRequest,
+    config: ConfigManager = Depends(get_config),
+    user: Optional[dict] = Depends(get_optional_auth),
+) -> BatchMultiClassifyResponse:
+    """
+    Classify multiple texts into custom categories in batch.
+    
+    Args:
+        request: Batch multi-class classification request with texts and optional classes.
+        config: ConfigManager instance (injected dependency).
+        user: Optional authenticated user info.
+        
+    Returns:
+        BatchMultiClassifyResponse with results for all texts.
+        
+    Raises:
+        HTTPException: 400 if classes are invalid or provider_name is invalid.
+        
+    Example:
+        POST /api/v1/classify/multi/batch
+        {
+            "texts": [
+                "Boil pasta for 10 minutes",
+                "Check out FastAPI library",
+                "Great movie last night"
+            ],
+            "classes": {
+                "recipe": "Cooking instructions",
+                "python_package": "Python libraries",
+                "movie_review": "Movie discussion"
+            }
+        }
+        
+        Response:
+        {
+            "results": [...],
+            "total_processed": 3,
+            "failed_count": 0,
+            "total_processing_time": 1.234
+        }
+    """
+    start_time = time.time()
+    
+    try:
+        # Create classifier once for the batch
+        classifier = MultiClassLLMClassifier(
+            classes=request.classes,
+            provider_name=request.provider_name,
+            config_path=config.config_path if hasattr(config, 'config_path') else None,
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    
+    results = []
+    failed_count = 0
+    available_classes = classifier.get_class_names()
+    
+    # Process each text
+    for text in request.texts:
+        try:
+            text_start_time = time.time()
+            result = classifier.predict(text)
+            text_processing_time = time.time() - text_start_time
+            
+            results.append(MultiClassifyResponse(
+                label=result.label,
+                confidence=result.confidence,
+                reasoning=result.details.get('reasoning') if result.details else None,
+                available_classes=result.details.get('available_classes', available_classes) if result.details else available_classes,
+                processing_time=text_processing_time,
+                classifier_used="multi_class_llm",
+            ))
+        except Exception:
+            # Count failures but continue processing
+            failed_count += 1
+    
+    total_processing_time = time.time() - start_time
+    
+    return BatchMultiClassifyResponse(
+        results=results,
+        total_processed=len(request.texts),
+        failed_count=failed_count,
+        total_processing_time=total_processing_time,
+    )
+
+
 @router.get(
     "/classifiers",
     response_model=Dict[str, List[Dict[str, Any]]],
@@ -249,11 +488,9 @@ async def classify_batch(
     List all available classifiers and their configurations.
     
     Returns information about:
-    - Classifier types (currently only llm)
+    - Classifier types (llm for recipes, multi_class_llm for custom categories)
     - Available LLM providers
     - Provider configurations
-    
-    Note: A basic rule-based classifier is planned for a future phase.
     """,
 )
 async def list_classifiers(
@@ -276,7 +513,8 @@ async def list_classifiers(
         Response:
         {
             "classifiers": [
-                {"type": "llm", "name": "RecipeLLMClassifier"}
+                {"type": "llm", "name": "RecipeLLMClassifier"},
+                {"type": "multi_class_llm", "name": "MultiClassLLMClassifier"}
             ],
             "providers": [
                 {"name": "ollama", "status": "available"},
@@ -290,7 +528,16 @@ async def list_classifiers(
     
     return {
         "classifiers": [
-            {"type": "llm", "name": "RecipeLLMClassifier", "description": "LLM-based recipe classification"},
+            {
+                "type": "llm",
+                "name": "RecipeLLMClassifier",
+                "description": "LLM-based recipe classification (recipe/not_recipe)"
+            },
+            {
+                "type": "multi_class_llm",
+                "name": "MultiClassLLMClassifier",
+                "description": "LLM-based multi-class classification with custom categories"
+            },
         ],
         "providers": [
             {"name": "ollama", "status": "available", "default": default_provider == "ollama"},

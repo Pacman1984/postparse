@@ -42,38 +42,65 @@ def create_mock_message(**kwargs):
 
 
 @pytest.fixture
-def mock_telegram_client():
-    """Create a mock TelegramClient instance."""
+def mock_telegram_client(tmp_path):
+    """Create a mock TelegramClient instance with proper config mocking.
+    
+    Args:
+        tmp_path: Pytest fixture providing a temporary directory unique to the test.
+    
+    This fixture mocks:
+        - TelegramClient: The Telethon client
+        - get_config: Returns temp paths to prevent MagicMock folder creation
+        - get_paths_config: Mocked to prevent side effects
+    """
     with patch('backend.postparse.services.parsers.telegram.telegram_parser.TelegramClient') as mock:
-        client_instance = Mock()
-        
-        # Mock context manager methods
-        async def mock_aenter(*args, **kwargs):
-            return client_instance
-        async def mock_aexit(*args, **kwargs):
-            pass
-        
-        client_instance.__aenter__ = mock_aenter
-        client_instance.__aexit__ = mock_aexit
-        client_instance.is_user_authorized = AsyncMock(return_value=True)
-        client_instance.get_me = AsyncMock(return_value=Mock(id=123))
-        client_instance.connect = AsyncMock()
-        client_instance.disconnect = AsyncMock()
-        
-        # Mock iter_messages to return a list of messages
-        mock_messages = [create_mock_message()]
-        async def mock_iter_messages(*args, **kwargs):
-            for msg in mock_messages:
-                yield msg
-        client_instance.iter_messages = mock_iter_messages
-        
-        # Mock download_media
-        async def mock_download_media(*args, **kwargs):
-            return "/path/to/media.jpg"
-        client_instance.download_media = mock_download_media
-        
-        mock.return_value = client_instance
-        yield mock
+        with patch('backend.postparse.services.parsers.telegram.telegram_parser.get_config') as mock_get_config:
+            with patch('backend.postparse.services.parsers.telegram.telegram_parser.get_paths_config'):
+                # Configure mock config to return temp paths
+                mock_config = Mock()
+                mock_config.get.side_effect = lambda key, default=None: {
+                    'paths.cache_dir': str(tmp_path / 'cache'),
+                    'paths.telegram_downloads_dir': str(tmp_path / 'downloads'),
+                    'telegram.connection_retries': 3,
+                    'telegram.retry_delay': 1,
+                    'telegram.auto_reconnect': True,
+                    'telegram.request_retries': 3,
+                    'telegram.request_delay_base': 2.0,
+                    'telegram.request_delay_increment': 0.5,
+                    'telegram.media_timeout_image': 30,
+                    'telegram.media_timeout_document': 60,
+                }.get(key, default)
+                mock_get_config.return_value = mock_config
+                
+                client_instance = Mock()
+                
+                # Mock context manager methods
+                async def mock_aenter(*args, **kwargs):
+                    return client_instance
+                async def mock_aexit(*args, **kwargs):
+                    pass
+                
+                client_instance.__aenter__ = mock_aenter
+                client_instance.__aexit__ = mock_aexit
+                client_instance.is_user_authorized = AsyncMock(return_value=True)
+                client_instance.get_me = AsyncMock(return_value=Mock(id=123))
+                client_instance.connect = AsyncMock()
+                client_instance.disconnect = AsyncMock()
+                
+                # Mock iter_messages to return a list of messages
+                mock_messages = [create_mock_message()]
+                async def mock_iter_messages(*args, **kwargs):
+                    for msg in mock_messages:
+                        yield msg
+                client_instance.iter_messages = mock_iter_messages
+                
+                # Mock download_media
+                async def mock_download_media(*args, **kwargs):
+                    return "/path/to/media.jpg"
+                client_instance.download_media = mock_download_media
+                
+                mock.return_value = client_instance
+                yield mock
 
 
 @pytest.fixture

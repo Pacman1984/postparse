@@ -16,7 +16,7 @@ from rich.table import Table
 from rich.syntax import Syntax
 from rich.panel import Panel
 
-from postparse.cli.utils import (
+from backend.postparse.cli.utils import (
     get_console,
     load_config,
     print_success,

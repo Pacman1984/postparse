@@ -19,7 +19,7 @@ This cookbook provides practical recipes for common tasks with PostParse. Each r
 **Key APIs:** [`TelegramParser`](api_reference.md#postparsetelegramtelegram_parsertelegramparser), [`save_telegram_messages`](api_reference.md#postparsetelegramtelegram_parsersave_telegram_messages), [`SocialMediaDatabase`](api_reference.md#postparsedatadatabasesocialmediadatabase)
 
 ```python
-from postparse.telegram.telegram_parser import save_telegram_messages
+from backend.postparse.services.parsers.telegram.telegram_parser import save_telegram_messages
 
 # Simple approach: Use the helper function
 count = save_telegram_messages(
@@ -38,8 +38,8 @@ print(f"Successfully saved {count} messages")
 
 ```python
 import asyncio
-from postparse.telegram.telegram_parser import TelegramParser
-from postparse.core.data.database import SocialMediaDatabase
+from backend.postparse.services.parsers.telegram.telegram_parser import TelegramParser
+from backend.postparse.core.data.database import SocialMediaDatabase
 
 async def extract_with_progress():
     db = SocialMediaDatabase("my_telegram_data.db")
@@ -79,8 +79,8 @@ asyncio.run(extract_with_progress())
 **Key APIs:** [`InstaloaderParser`](api_reference.md#postparseinstagraminstagram_parserinstaloaderparser), [`SocialMediaDatabase`](api_reference.md#postparsedatadatabasesocialmediadatabase)
 
 ```python
-from postparse.instagram.instagram_parser import InstaloaderParser
-from postparse.core.data.database import SocialMediaDatabase
+from backend.postparse.services.parsers.instagram.instagram_parser import InstaloaderParser
+from backend.postparse.core.data.database import SocialMediaDatabase
 import logging
 
 # Set up logging to track progress
@@ -137,8 +137,8 @@ print(f"Added {new_count} new posts")
 **Key APIs:** [`RecipeLLMClassifier`](api_reference.md#postparseservicesanalysisclassifiersllmrecipellmclassifier), [`SocialMediaDatabase`](api_reference.md#postparsedatadatabasesocialmediadatabase)
 
 ```python
-from postparse.core.data.database import SocialMediaDatabase
-from postparse.services.analysis.classifiers import RecipeLLMClassifier
+from backend.postparse.core.data.database import SocialMediaDatabase
+from backend.postparse.services.analysis.classifiers import RecipeLLMClassifier
 
 # Initialize database and classifier (uses LangChain + LiteLLM)
 db = SocialMediaDatabase("my_data.db")
@@ -184,8 +184,8 @@ for post, result in zip(posts, results):
 **Saving Results to Database**
 
 ```python
-from postparse.core.data.database import SocialMediaDatabase
-from postparse.services.analysis.classifiers import RecipeLLMClassifier
+from backend.postparse.core.data.database import SocialMediaDatabase
+from backend.postparse.services.analysis.classifiers import RecipeLLMClassifier
 
 db = SocialMediaDatabase("my_data.db")
 classifier = RecipeLLMClassifier()
@@ -325,10 +325,10 @@ conn.close()
 
 ```python
 import asyncio
-from postparse.services.parsers.telegram.telegram_parser import TelegramParser
-from postparse.services.parsers.instagram.instagram_parser import InstaloaderParser
-from postparse.core.data.database import SocialMediaDatabase
-from postparse.services.analysis.classifiers import RecipeLLMClassifier
+from backend.postparse.services.parsers.telegram.telegram_parser import TelegramParser
+from backend.postparse.services.parsers.instagram.instagram_parser import InstaloaderParser
+from backend.postparse.core.data.database import SocialMediaDatabase
+from backend.postparse.services.analysis.classifiers import RecipeLLMClassifier
 
 class ContentPipeline:
     """End-to-end content extraction and analysis pipeline."""

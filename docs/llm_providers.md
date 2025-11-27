@@ -71,7 +71,7 @@ max_tokens = 1000
 Use the `provider_name` parameter to select a specific provider:
 
 ```python
-from postparse.services.analysis.classifiers import RecipeLLMClassifier
+from backend.postparse.services.analysis.classifiers import RecipeLLMClassifier
 
 # Use default provider from config
 classifier = RecipeLLMClassifier()
@@ -415,7 +415,7 @@ Examples: 'Just watched an amazing thriller', 'The acting was superb'"""
 **Using classes from config:**
 
 ```python
-from postparse.services.analysis.classifiers import MultiClassLLMClassifier
+from backend.postparse.services.analysis.classifiers import MultiClassLLMClassifier
 
 classifier = MultiClassLLMClassifier()
 result = classifier.predict("Check out this new FastAPI library!")
@@ -550,6 +550,6 @@ postparse classify db --classifier multiclass \
 
 - [Getting Started Guide](getting_started.md) - Initial setup and configuration
 - [API Reference](api_reference.md) - Detailed API documentation
-- [CLI Reference](cli_reference.md) - Command-line interface documentation
+- [CLI Reference](cli/reference.md) - Command-line interface documentation
 - [LiteLLM Documentation](https://docs.litellm.ai) - LiteLLM provider details
 

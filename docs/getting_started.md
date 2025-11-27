@@ -241,7 +241,7 @@ temperature = 0.7
 ### Using Different Providers in Code
 
 ```python
-from postparse.services.analysis.classifiers import RecipeLLMClassifier
+from backend.postparse.services.analysis.classifiers import RecipeLLMClassifier
 
 # Use default provider from config
 classifier = RecipeLLMClassifier()
@@ -283,8 +283,8 @@ api_base = "http://192.168.1.100:11434"
 
 ```python
 import asyncio
-from postparse.services.parsers.telegram.telegram_parser import TelegramParser, save_telegram_messages
-from postparse.core.data.database import SocialMediaDatabase
+from backend.postparse.services.parsers.telegram.telegram_parser import TelegramParser, save_telegram_messages
+from backend.postparse.core.data.database import SocialMediaDatabase
 
 # Option 1: Using the helper function (handles async automatically)
 saved_count = save_telegram_messages(
@@ -314,8 +314,8 @@ asyncio.run(extract_messages())
 ### Example 2: Extract Instagram Posts
 
 ```python
-from postparse.services.parsers.instagram.instagram_parser import InstaloaderParser
-from postparse.core.data.database import SocialMediaDatabase
+from backend.postparse.services.parsers.instagram.instagram_parser import InstaloaderParser
+from backend.postparse.core.data.database import SocialMediaDatabase
 
 # Initialize database
 db = SocialMediaDatabase("my_data.db")
@@ -335,7 +335,7 @@ print(f"Saved {saved_count} posts")
 
 ```python
 from postparse.core.data.database import SocialMediaDatabase
-from postparse.services.analysis.classifiers import RecipeLLMClassifier
+from backend.postparse.services.analysis.classifiers import RecipeLLMClassifier
 
 # Initialize database and classifier (uses default provider from config)
 db = SocialMediaDatabase("my_data.db")
@@ -450,7 +450,7 @@ If classification fails, check your LLM provider setup:
 
 **Quick Test:**
 ```python
-from postparse.services.analysis.classifiers import RecipeLLMClassifier
+from backend.postparse.services.analysis.classifiers import RecipeLLMClassifier
 
 # Test default provider
 classifier = RecipeLLMClassifier()

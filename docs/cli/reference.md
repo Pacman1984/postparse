@@ -803,7 +803,7 @@ postparse config show --section api
 │         "name": "ollama",             │
 │         "base_url": "http://loca...  │
 │         "api_key": null,              │
-│         "model_name": "llama3.2"     │
+│         "model": "llama3.2"          │
 │       }                               │
 │     ]                                 │
 │   },                                  │

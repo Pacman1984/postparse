@@ -169,8 +169,8 @@ allowed_headers = ["*"]
 
 [api.rate_limiting]
 # Rate limiting configuration
-# Enable in production to prevent abuse. Disable for development if needed.
-enabled = true
+# Enable in production to prevent abuse. Disabled by default for development/testing.
+enabled = false
 requests_per_minute = 60
 burst_size = 10
 

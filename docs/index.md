@@ -23,9 +23,9 @@ PostParse is a Python package for extracting, storing, and analyzing saved posts
 Here's a minimal example showing how to extract Telegram messages and classify content:
 
 ```python
-from postparse.services.parsers.telegram.telegram_parser import TelegramParser
-from postparse.core.data.database import SocialMediaDatabase
-from postparse.services.analysis.classifiers import RecipeLLMClassifier
+from backend.postparse.services.parsers.telegram.telegram_parser import TelegramParser
+from backend.postparse.core.data.database import SocialMediaDatabase
+from backend.postparse.services.analysis.classifiers import RecipeLLMClassifier
 
 # Initialize database
 db = SocialMediaDatabase("my_data.db")

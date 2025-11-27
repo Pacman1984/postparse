@@ -58,7 +58,7 @@ postparse check
 postparse extract telegram --api-id 12345 --api-hash abc123
 
 # Classify text
-postparse classify single "Mix flour and water to make dough"
+postparse classify text "Mix flour and water to make dough"
 
 # Start the API server
 postparse serve --port 8080
@@ -107,7 +107,7 @@ postparse check telegram
 postparse extract telegram --api-id $TELEGRAM_API_ID --api-hash $TELEGRAM_API_HASH --limit 100
 
 # Classify them
-postparse classify batch --source messages --detailed
+postparse classify db --source telegram --limit 100
 
 # Search for recipes
 postparse search messages --hashtag recipe
@@ -139,18 +139,18 @@ Get help for any command using the `--help` flag:
 
 ```bash
 postparse extract telegram --help
-postparse classify batch --help
+postparse classify db --help
 postparse search posts --help
 ```
 
-For comprehensive CLI documentation, see **[CLI Reference](docs/cli_reference.md)**.
+For comprehensive CLI documentation, see **[CLI Reference](docs/cli/reference.md)**.
 
 ## Quick Example
 
 ```python
-from postparse.services.parsers.telegram.telegram_parser import save_telegram_messages
-from postparse.core.data.database import SocialMediaDatabase
-from postparse.services.analysis.classifiers import RecipeLLMClassifier
+from backend.postparse.services.parsers.telegram.telegram_parser import save_telegram_messages
+from backend.postparse.core.data.database import SocialMediaDatabase
+from backend.postparse.services.analysis.classifiers import RecipeLLMClassifier
 
 # Extract Telegram messages
 count = save_telegram_messages(
@@ -179,7 +179,7 @@ For more examples, see the **[Cookbook](docs/cookbook.md)**.
 Classify text into custom categories:
 
 ```python
-from postparse.services.analysis.classifiers import MultiClassLLMClassifier
+from backend.postparse.services.analysis.classifiers import MultiClassLLMClassifier
 
 # Define your classes
 classes = {
@@ -389,7 +389,7 @@ For Telegram extraction, you need:
 **First-time Setup (Interactive):**
 
 ```python
-from postparse.services.parsers.telegram import TelegramParser
+from backend.postparse.services.parsers.telegram.telegram_parser import TelegramParser
 
 # Run once interactively to create session
 parser = TelegramParser(api_id="...", api_hash="...", phone="+1234567890")

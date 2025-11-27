@@ -69,13 +69,8 @@ erDiagram
         text llm_metadata
         text llm_provider "e.g. openai, ollama"
         text llm_model "e.g. gpt-4o, llama3"
+        text details_json "JSON-encoded classification details"
         timestamp analyzed_at
-    }
-
-    analysis_details {
-        int analysis_id PK,FK
-        text key PK
-        text value
     }
 
     instagram_posts ||--o{ instagram_hashtags : "has"
@@ -83,7 +78,6 @@ erDiagram
     instagram_posts ||--o{ content_analysis : "classified as"
     telegram_messages ||--o{ telegram_hashtags : "has"
     telegram_messages ||--o{ content_analysis : "classified as"
-    content_analysis ||--o{ analysis_details : "has"
 ```
 
 > **Note:** The `content_analysis` table uses a polymorphic reference pattern:
@@ -108,8 +102,7 @@ erDiagram
 
 | Table | Purpose |
 |-------|---------|
-| `content_analysis` | Classification results linking to source content |
-| `analysis_details` | Key-value storage for classification details |
+| `content_analysis` | Classification results linking to source content (includes details as JSON) |
 
 ## Classification Storage Design
 
@@ -131,25 +124,12 @@ CREATE TABLE content_analysis (
     llm_metadata TEXT,                     -- JSON: provider, model, temperature, etc.
     llm_provider TEXT,                     -- Extracted for easy querying (e.g., 'openai')
     llm_model TEXT,                        -- Extracted for easy querying (e.g., 'gpt-4o')
+    details_json TEXT,                     -- JSON-encoded classification details (cuisine_type, difficulty, etc.)
     analyzed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 ```
 
-> **Note:** The `llm_provider` and `llm_model` columns are automatically extracted from `llm_metadata` when saving classifications. This enables easy querying and filtering by model without parsing JSON.
-
-### `analysis_details` Table
-
-Stores flexible key-value pairs for classification details:
-
-```sql
-CREATE TABLE analysis_details (
-    analysis_id INTEGER NOT NULL,          -- FK to content_analysis.id
-    key TEXT NOT NULL,                     -- e.g., 'cuisine_type', 'reasoning'
-    value TEXT NOT NULL,                   -- JSON-encoded value
-    FOREIGN KEY(analysis_id) REFERENCES content_analysis(id),
-    PRIMARY KEY(analysis_id, key)
-);
-```
+> **Note:** The `llm_provider` and `llm_model` columns are automatically extracted from `llm_metadata` when saving classifications. This enables easy querying and filtering by model without parsing JSON. Classification details are stored as JSON in the `details_json` column.
 
 ## Classifier Types
 
@@ -175,7 +155,7 @@ content_analysis:
 
 Note: Recipe classifier doesn't currently generate reasoning (column is NULL).
 
-Details stored in `analysis_details`: `cuisine_type`, `difficulty`, `meal_type`, `ingredients_count`
+Details stored in `details_json`: `cuisine_type`, `difficulty`, `meal_type`, `ingredients_count`
 
 ### Multi-Class Classifier (`multiclass_llm`)
 
@@ -189,7 +169,7 @@ content_analysis:
 | 2  | 43         | telegram       | multiclass_llm    | recipe    | 0.85       | "Contains cooking instructions"  |
 ```
 
-Reasoning is stored directly in the `reasoning` column. Additional details stored in `analysis_details`: `available_classes`
+Reasoning is stored directly in the `reasoning` column. Additional details stored in `details_json`: `available_classes`
 
 ### Multi-Label Classification (Future)
 
@@ -226,39 +206,38 @@ This enables:
 - **Comparison**: Compare results across different models
 - **Auditing**: Track model versions over time
 
-## Details Storage (Key-Value)
+## Details Storage (JSON)
 
-Classification details (other than reasoning) are stored as key-value pairs in `analysis_details`:
+Classification details (other than reasoning) are stored as JSON in the `details_json` column:
 
+```json
+{
+  "cuisine_type": "italian",
+  "difficulty": "easy",
+  "meal_type": "dinner",
+  "ingredients_count": 5
+}
 ```
-analysis_details:
-| analysis_id | key               | value      |
-|-------------|-------------------|------------|
-| 1           | cuisine_type      | "italian"  |
-| 1           | difficulty        | "easy"     |
-| 1           | meal_type         | "dinner"   |
-| 2           | available_classes | "[\"tech_news\", \"recipe\", \"other\"]" |
-```
 
-Note: `reasoning` is stored directly in `content_analysis.reasoning`, not in `analysis_details`.
+Note: `reasoning` is stored directly in `content_analysis.reasoning`, not in `details_json`.
 
-Nested details are flattened with dot notation:
+The `details_json` column stores the complete details dictionary as JSON, preserving nested structures:
 
 ```python
-# Input
+# Input details dictionary
 details = {
     "ingredients": {
         "count": 5,
         "main": "pasta"
-    }
+    },
+    "cuisine_type": "italian"
 }
 
-# Stored as:
-# | analysis_id | key               | value   |
-# |-------------|-------------------|---------|
-# | 1           | ingredients.count | 5       |
-# | 1           | ingredients.main  | "pasta" |
+# Stored in details_json as:
+# {"ingredients": {"count": 5, "main": "pasta"}, "cuisine_type": "italian"}
 ```
+
+When retrieving classification results, the `details_json` is automatically parsed back into a dictionary.
 
 ## Querying Examples
 

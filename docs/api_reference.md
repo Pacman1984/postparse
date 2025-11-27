@@ -281,6 +281,157 @@ Explore the API interactively at:
 - **Swagger UI:** http://localhost:8000/docs
 - **ReDoc:** http://localhost:8000/redoc
 
+### WebSocket Endpoints
+
+PostParse provides WebSocket endpoints for receiving real-time progress updates during extraction jobs.
+
+#### Unified Endpoint (Recommended)
+
+**`ws://localhost:8000/api/v1/jobs/ws/progress/{job_id}`**
+
+Works for all platforms (Telegram, Instagram). This is the recommended endpoint for new integrations.
+
+#### Platform-Specific Endpoints (Backward Compatibility)
+
+- **Telegram:** `ws://localhost:8000/api/v1/telegram/ws/progress/{job_id}`
+- **Instagram:** `ws://localhost:8000/api/v1/instagram/ws/progress/{job_id}`
+
+All endpoints provide identical functionality and message format.
+
+#### Connection Flow
+
+1. Start an extraction job via REST API (returns `job_id`)
+2. Connect to WebSocket endpoint with the `job_id`
+3. Receive real-time progress updates as JSON messages
+4. Connection closes automatically when job completes or fails
+
+#### WebSocket Message Format
+
+Progress updates are sent as JSON messages with the following structure:
+
+```json
+{
+    "job_id": "550e8400-e29b-41d4-a716-446655440000",
+    "status": "running",
+    "progress": 65,
+    "messages_processed": 65,
+    "errors": [],
+    "timestamp": "2025-11-23T10:30:00Z"
+}
+```
+
+**Fields:**
+- `job_id` (string): Unique job identifier (UUID)
+- `status` (string): Current job status - one of: `"pending"`, `"running"`, `"completed"`, `"failed"`
+- `progress` (integer): Completion percentage (0-100)
+- `messages_processed` (integer): Number of messages/posts processed so far
+- `errors` (array): List of error messages encountered (empty if no errors)
+- `timestamp` (string): ISO 8601 timestamp of the update
+
+#### Job Status Lifecycle
+
+Jobs progress through the following states:
+
+1. **`pending`**: Job is queued but not started yet
+   - `progress`: 0
+   - `messages_processed`: 0
+
+2. **`running`**: Job is actively processing
+   - `progress`: 1-99 (increments as work progresses)
+   - `messages_processed`: Number processed so far
+   - Updates sent periodically (typically every few seconds)
+
+3. **`completed`**: Job finished successfully
+   - `progress`: 100
+   - `messages_processed`: Total number processed
+   - Final message sent, then connection closes
+
+4. **`failed`**: Job encountered an error
+   - `progress`: Value at time of failure
+   - `messages_processed`: Number processed before failure
+   - `errors`: Array containing error message(s)
+   - Final message sent, then connection closes
+
+#### Error Handling
+
+If a job doesn't exist, the WebSocket will:
+1. Accept the connection
+2. Send an error message:
+   ```json
+   {
+       "error": "Job {job_id} not found",
+       "job_id": "550e8400-e29b-41d4-a716-446655440000"
+   }
+   ```
+3. Close the connection
+
+#### Example Usage
+
+**JavaScript:**
+```javascript
+// Connect to unified endpoint
+const ws = new WebSocket('ws://localhost:8000/api/v1/jobs/ws/progress/550e8400-e29b-41d4-a716-446655440000');
+
+ws.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    
+    if (data.error) {
+        console.error('Error:', data.error);
+        return;
+    }
+    
+    console.log(`Status: ${data.status}`);
+    console.log(`Progress: ${data.progress}%`);
+    console.log(`Processed: ${data.messages_processed} messages`);
+    
+    if (data.errors.length > 0) {
+        console.warn('Errors:', data.errors);
+    }
+    
+    // Check if job is complete
+    if (data.status === 'completed' || data.status === 'failed') {
+        console.log('Job finished:', data.status);
+        ws.close();
+    }
+};
+
+ws.onerror = (error) => {
+    console.error('WebSocket error:', error);
+};
+
+ws.onclose = () => {
+    console.log('WebSocket connection closed');
+};
+```
+
+**Python:**
+```python
+import asyncio
+import websockets
+import json
+
+async def monitor_job(job_id: str):
+    uri = f"ws://localhost:8000/api/v1/jobs/ws/progress/{job_id}"
+    
+    async with websockets.connect(uri) as websocket:
+        async for message in websocket:
+            data = json.loads(message)
+            
+            if "error" in data:
+                print(f"Error: {data['error']}")
+                break
+            
+            print(f"Status: {data['status']}, Progress: {data['progress']}%")
+            print(f"Processed: {data['messages_processed']} messages")
+            
+            if data['status'] in ['completed', 'failed']:
+                print(f"Job finished: {data['status']}")
+                break
+
+# Usage
+asyncio.run(monitor_job("550e8400-e29b-41d4-a716-446655440000"))
+```
+
 ## Core Modules
 
 ### Data Storage
@@ -301,7 +452,7 @@ SocialMediaDatabase(db_path: str = "social_media.db")
 **Example:**
 
 ```python
-from postparse.core.data.database import SocialMediaDatabase
+from backend.postparse.core.data.database import SocialMediaDatabase
 
 db = SocialMediaDatabase("my_data.db")
 ```
@@ -563,7 +714,7 @@ save_telegram_messages(
 **Example:**
 
 ```python
-from postparse.telegram.telegram_parser import save_telegram_messages
+from backend.postparse.services.parsers.telegram.telegram_parser import save_telegram_messages
 
 count = save_telegram_messages(
     api_id="your_api_id",
@@ -635,8 +786,8 @@ Save Instagram posts to database with batch optimization.
 **Example:**
 
 ```python
-from postparse.instagram.instagram_parser import InstaloaderParser
-from postparse.data.database import SocialMediaDatabase
+from backend.postparse.services.parsers.instagram.instagram_parser import InstaloaderParser
+from backend.postparse.core.data.database import SocialMediaDatabase
 
 db = SocialMediaDatabase()
 parser = InstaloaderParser(username="user", password="pass")
@@ -667,50 +818,7 @@ Same as `InstaloaderParser`: `get_saved_posts()` and `save_posts_to_db()`
 
 ### Classifiers
 
-#### `postparse.analysis.classifiers.recipe_classifier.RecipeClassifier`
-
-Zero-shot classifier for detecting recipe content using Ollama.
-
-**Constructor:**
-
-```python
-RecipeClassifier(
-    model_name: Optional[str] = None,
-    config_path: Optional[str] = None
-)
-```
-
-**Parameters:**
-- `model_name` (str, optional): Name of Ollama model to use. Uses config default if None
-- `config_path` (str, optional): Path to config file
-
-**Requirements:**
-- Ollama server running and accessible
-- `OLLAMA_IP` and `OLLAMA_PORT` set in `config/.env`
-
-**Methods:**
-
-##### `predict(text: str) -> str`
-
-Predict if the given text contains a recipe.
-
-**Parameters:**
-- `text` (str): Text to classify
-
-**Returns:**
-- `"recipe"` if text contains a recipe, `"not recipe"` otherwise
-
-**Example:**
-
-```python
-from postparse.analysis.classifiers.recipe_classifier import RecipeClassifier
-
-classifier = RecipeClassifier()
-result = classifier.predict("Mix flour, eggs, and milk. Bake at 350°F for 30 minutes.")
-print(result)  # "recipe"
-```
-
-#### `postparse.analysis.classifiers.llm.RecipeLLMClassifier`
+#### `backend.postparse.services.analysis.classifiers.llm.RecipeLLMClassifier`
 
 Advanced LLM-based recipe classifier with detailed analysis using LangChain.
 
@@ -718,13 +826,13 @@ Advanced LLM-based recipe classifier with detailed analysis using LangChain.
 
 ```python
 RecipeLLMClassifier(
-    model_name: Optional[str] = None,
+    provider_name: Optional[str] = None,
     config_path: Optional[str] = None
 )
 ```
 
 **Parameters:**
-- `model_name` (str, optional): Name of LLM model to use
+- `provider_name` (str, optional): Name of LLM provider to use (e.g., 'ollama', 'openai', 'lm_studio'). Uses config default if None
 - `config_path` (str, optional): Path to config file
 
 **Methods:**
@@ -745,7 +853,7 @@ Predict if content is a recipe and extract details.
 **Example:**
 
 ```python
-from postparse.analysis.classifiers.llm import RecipeLLMClassifier
+from backend.postparse.services.analysis.classifiers.llm import RecipeLLMClassifier
 
 classifier = RecipeLLMClassifier()
 result = classifier.predict("Spaghetti Carbonara recipe...")
@@ -800,7 +908,7 @@ Get configuration value with support for nested keys and environment overrides.
 **Example:**
 
 ```python
-from postparse.utils.config import ConfigManager
+from backend.postparse.core.utils.config import ConfigManager
 
 config = ConfigManager()
 model = config.get('models.zero_shot_model', default='llama2')
@@ -846,7 +954,7 @@ Get paths configuration section.
 **Example:**
 
 ```python
-from postparse.utils.config import get_model_config, get_database_config
+from backend.postparse.core.utils.config import get_model_config, get_database_config
 
 model_config = get_model_config()
 print(model_config['zero_shot_model'])
@@ -871,7 +979,7 @@ Pydantic model for classification results.
 **Example:**
 
 ```python
-from postparse.analysis.classifiers.base import ClassificationResult
+from backend.postparse.services.analysis.classifiers.base import ClassificationResult
 
 result = ClassificationResult(
     label="recipe",
@@ -897,7 +1005,7 @@ Raised when Instagram API encounters an error. Inherits from `Exception`.
 **Example:**
 
 ```python
-from postparse.instagram.instagram_parser import InstaloaderParser, InstagramRateLimitError
+from backend.postparse.services.parsers.instagram.instagram_parser import InstaloaderParser, InstagramRateLimitError
 
 try:
     parser = InstaloaderParser(username="user", password="pass")
@@ -912,7 +1020,9 @@ except InstagramRateLimitError as e:
 ## Notes on Stability
 
 - **Stable**: Core parsing (Telegram, Instagram), database operations, configuration
-- **Stable**: `RecipeClassifier` for basic recipe detection
-- **Experimental**: `RecipeLLMClassifier` (API may change)
+- **Stable**: `RecipeLLMClassifier` for recipe detection using LLM providers
+- **Stable**: `MultiClassLLMClassifier` for custom category classification
 - **Internal**: Any modules not documented here are internal implementation details and may change without notice
+
+**Note:** `RecipeLLMClassifier` is the primary and only recipe classifier. It supports all LLM providers (Ollama, LM Studio, OpenAI, Anthropic, etc.) configured in `config.toml`. There is no separate basic classifier - all classification uses LLM-based approaches.
 

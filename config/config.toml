@@ -39,7 +39,7 @@ request_timeout = 60
 #   - New: Configure Ollama provider below with full api_base URL
 
 # Default provider to use (must match one of the provider names below)
-default_provider = "lm_studio"
+default_provider = "lama.cpp"
 
 # Enable automatic fallback to other providers on failure
 enable_fallback = true
@@ -47,14 +47,31 @@ enable_fallback = true
 # Provider configurations
 # API keys are loaded from environment variables (see above)
 
+# [[llm.providers]]
+# name = "lm_studio"
+# model = "qwen/qwen3-vl-8b"  # Model name as shown in LM Studio
+# api_base = "http://localhost:1234/v1"  # LM Studio on default port
+# timeout = 60
+# max_retries = 3
+# temperature = 0.7
+# # API key loaded from OPENAI_API_KEY env var (LM Studio uses OpenAI-compatible format)
+
+# [[llm.providers]]
+# name = "qwen_remote"
+# model = "qwen/qwen3-vl-30b"  # Model name as shown in LM Studio
+# api_base = "http://192.168.188.92:1234/v1"  # Remote LM Studio server
+# timeout = 60
+# max_retries = 3
+# temperature = 0.7
+# # API key loaded from OPENAI_API_KEY env var (LM Studio uses OpenAI-compatible format)
+
 [[llm.providers]]
-name = "lm_studio"
-model = "qwen/qwen3-vl-8b"  # Model name as shown in LM Studio
-api_base = "http://localhost:1234/v1"  # LM Studio on default port
+name = "lama.cpp"
+model = "unsloth/Qwen3.5-35B-A3B"
+api_base = "http://192.168.188.119:1235/v1"  # Remote LM Studio server
 timeout = 60
 max_retries = 3
 temperature = 0.7
-# API key loaded from OPENAI_API_KEY env var (LM Studio uses OpenAI-compatible format)
 
 # [[llm.providers]]
 # name = "ollama"
@@ -91,33 +108,98 @@ recipe_negative_label = "this text does not contain any recipe or cooking instru
 min_confidence_threshold = 0.6
 max_confidence_threshold = 1.0
 
-# Multi-class classification class definitions
-# These are default classes available to MultiClassLLMClassifier
-# You can override or extend these at runtime via the classifier constructor or API request
+# Multi-class / multi-label classification class definitions
+# Used by MultiClassLLMClassifier and MultiLabelLLMClassifier
+# Override or extend at runtime via the classifier constructor or API request
 
 [[classification.classes]]
 name = "recipe"
-description = """A text containing cooking instructions, ingredients, recipe details, or food preparation steps. 
-Examples: 'Boil pasta for 10 minutes', 'Mix flour and eggs', 'Preheat oven to 350°F'"""
+description = """Cooking or baking recipes with ingredients and/or preparation steps.
+Examples: 'Boil pasta for 10 minutes', 'Mix flour and eggs', 'Preheat oven to 350F'"""
 
 [[classification.classes]]
-name = "python_package"
-description = """A text about Python packages, libraries, pip installations, or Python development tools. 
-Examples: 'Install FastAPI with pip', 'This library provides async support', 'Check out this new Django package'"""
+name = "cocktail"
+description = """Cocktail or drink recipes with mixing instructions, spirits, or garnishes.
+Examples: 'Shake vodka with ice', 'Muddle mint and lime for a mojito', 'Pour 2oz gin'"""
 
 [[classification.classes]]
-name = "movie_review"
-description = """A text reviewing, discussing, or mentioning movies, films, cinema, or TV shows. 
-Examples: 'Just watched an amazing thriller', 'This movie has great cinematography', 'The acting was superb'"""
+name = "restaurant"
+description = """Restaurant or dining recommendations and reviews.
+Examples: 'This sushi place is amazing', 'Best pizza in town', 'Try the tasting menu at...'"""
 
 [[classification.classes]]
-name = "tech_news"
-description = """A text about technology news, product launches, tech industry updates, or software releases. 
-Examples: 'Apple announced new iPhone', 'OpenAI releases GPT-5', 'Microsoft acquires startup'"""
+name = "bar_cafe"
+description = """Bar, cafe, or pub recommendations and tips (focus on the venue, not recipes).
+Examples: 'Great cocktail bar downtown', 'Cozy cafe with good coffee', 'Best rooftop bar'"""
+
+[[classification.classes]]
+name = "travel_location"
+description = """Travel destinations, beaches, city guides, outdoor spots, and location tips.
+Examples: 'Beautiful beach in Portugal', 'Must-visit spots in Tokyo', 'Hidden gem in Bali'"""
+
+[[classification.classes]]
+name = "book"
+description = """Book recommendations, literature discussions, and reading tips.
+Examples: 'Just finished this amazing novel', 'Must-read for data scientists', 'New book by...'"""
+
+[[classification.classes]]
+name = "movie"
+description = """Movie recommendations, film reviews, and cinema discussions.
+Examples: 'Just watched an amazing thriller', 'Great cinematography', 'Oscar-worthy performance'"""
+
+[[classification.classes]]
+name = "series"
+description = """TV series and show recommendations or discussions.
+Examples: 'Binge-watched this show', 'New season just dropped', 'Best Netflix series'"""
+
+[[classification.classes]]
+name = "video_content"
+description = """Video links, reels, shorts, or clips where the topical domain is not clear enough yet.
+Examples: 'https://youtu.be/...', 'https://instagram.com/reel/...', 'watch this clip'"""
+
+[[classification.classes]]
+name = "data_science"
+description = """Data science methods, ML techniques, statistics, analytics, and research.
+Examples: 'New approach to feature engineering', 'XGBoost vs LightGBM', 'Bayesian optimization'"""
+
+[[classification.classes]]
+name = "llm_ai"
+description = """Generative AI/LLM topics: model releases, benchmarks, prompting, RAG, agents, and inference tooling.
+Examples: 'GPT benchmark results', 'Fine-tuning with LoRA', 'Best open-source LLM stack'"""
+
+[[classification.classes]]
+name = "python_dev"
+description = """Python packages, libraries, dev tools, and programming tips.
+Examples: 'Install FastAPI with pip', 'New async library', 'Check out this Django package'"""
+
+[[classification.classes]]
+name = "quant_trading"
+description = """Quantitative finance and trading: market microstructure, market making, order flow, execution, and derivatives models.
+Examples: 'Poisson arrival model for order flow', 'market making inventory risk', 'alpha signals and execution'"""
+
+[[classification.classes]]
+name = "crypto_web3"
+description = """Crypto/Web3 topics: blockchain protocols, DeFi, tokenomics, on-chain analytics, wallets, and market commentary.
+Examples: 'Solana validator economics', 'DeFi yield strategy', 'on-chain metrics dashboard'"""
+
+[[classification.classes]]
+name = "diy_home"
+description = """Handwerker tips, home improvement, DIY projects, repairs, and crafts.
+Examples: 'How to fix a leaky faucet', 'Build a shelf', 'Best tools for home renovation'"""
+
+[[classification.classes]]
+name = "product"
+description = """Product recommendations, gear reviews, and shopping tips.
+Examples: 'Best noise-canceling headphones', 'This kitchen gadget is great', 'Review of...'"""
+
+[[classification.classes]]
+name = "business_marketing"
+description = """Business, marketing, and growth topics: positioning, ads, funnels, conversion, and go-to-market strategy.
+Examples: 'CAC vs LTV discussion', 'ad creative performance', 'pricing and distribution strategy'"""
 
 [[classification.classes]]
 name = "other"
-description = """Any text that doesn't fit into the above categories. General content, personal updates, or miscellaneous topics."""
+description = """Anything that does not fit the categories above. General content, personal updates, or miscellaneous."""
 
 [prompts]
 # LLM prompts for various classification tasks
@@ -224,14 +306,14 @@ save_delay_max = 0.3
 
 [instagram]
 # Instagram-specific configuration
-default_min_delay = 5.0
-default_max_delay = 30.0
+default_min_delay = 15.0
+default_max_delay = 45.0
 retry_multiplier = 5
-retry_min_wait = 5
-retry_max_wait = 60
-login_delay_min = 1.0
-login_delay_max = 2.0
-request_delay_min = 2.0
-request_delay_max = 4.0
-general_delay_min = 1.0
-general_delay_max = 2.0
+retry_min_wait = 10
+retry_max_wait = 120
+login_delay_min = 3.0
+login_delay_max = 5.0
+request_delay_min = 5.0
+request_delay_max = 15.0
+general_delay_min = 3.0
+general_delay_max = 8.0

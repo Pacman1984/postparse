@@ -185,7 +185,7 @@ class LiteLLMProvider(LLMProvider):
             kwargs["api_base"] = self.config.api_base
             # For custom endpoints (LM Studio, local Ollama, etc.), explicitly set the provider
             # This tells LiteLLM to use OpenAI-compatible format
-            if "lm_studio" in self.config.name.lower() or "1234" in self.config.api_base:
+            if "lm_studio" in self.config.name.lower() or "lama" in self.config.name.lower() or "1234" in self.config.api_base or "1235" in self.config.api_base:
                 kwargs["custom_llm_provider"] = "openai"
             elif "ollama" in self.config.name.lower() or "11434" in self.config.api_base:
                 kwargs["custom_llm_provider"] = "ollama"

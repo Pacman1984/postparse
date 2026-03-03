@@ -143,7 +143,27 @@ class SocialMediaDatabase:
         self.__add_column_if_not_exists('content_analysis', 'llm_provider', 'TEXT')
         self.__add_column_if_not_exists('content_analysis', 'llm_model', 'TEXT')
         self.__add_column_if_not_exists('content_analysis', 'details_json', 'TEXT')
-        
+        self.__add_column_if_not_exists('telegram_messages', 'content_expanded', 'TEXT')
+        self.__add_column_if_not_exists('instagram_posts', 'content_expanded', 'TEXT')
+
+        # Content enrichments table for future enhancement pipeline
+        self._cursor.execute("""
+            CREATE TABLE IF NOT EXISTS content_enrichments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                content_id INTEGER NOT NULL,
+                content_source TEXT NOT NULL,
+                enrichment_type TEXT NOT NULL,
+                enricher_name TEXT NOT NULL,
+                generated_text TEXT,
+                source_url TEXT,
+                metadata_json TEXT,
+                llm_provider TEXT,
+                llm_model TEXT,
+                llm_metadata TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
         self._conn.commit()
     
     def __add_column_if_not_exists(self, table: str, column: str, col_type: str) -> None:
@@ -1338,3 +1358,272 @@ class SocialMediaDatabase:
                  llm_provider, llm_model, details_json, analysis_id)
             )
             db._conn.commit()
+
+    # ------------------------------------------------------------------
+    # Content enrichment methods (skeleton for future enhancement pipeline)
+    # ------------------------------------------------------------------
+
+    def save_enrichment(
+        self,
+        content_id: int,
+        content_source: str,
+        enrichment_type: str,
+        enricher_name: str,
+        generated_text: Optional[str] = None,
+        source_url: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        llm_metadata: Optional[Dict[str, Any]] = None,
+    ) -> int:
+        """Save a content enrichment result.
+
+        Args:
+            content_id: ID of the content item.
+            content_source: Source platform ('instagram' or 'telegram').
+            enrichment_type: Type of enrichment ('summary', 'description',
+                'transcript', 'translation', 'entities').
+            enricher_name: Name of the enricher that produced this result
+                (e.g. 'youtube_analyzer', 'summarizer').
+            generated_text: The main enrichment output text.
+            source_url: URL that was analyzed, if applicable.
+            metadata: Additional structured data as a dictionary.
+            llm_metadata: LLM configuration used for reproducibility.
+
+        Returns:
+            The ID of the inserted enrichment record.
+
+        Example:
+            >>> db = SocialMediaDatabase()
+            >>> eid = db.save_enrichment(
+            ...     content_id=42,
+            ...     content_source='telegram',
+            ...     enrichment_type='summary',
+            ...     enricher_name='youtube_analyzer',
+            ...     generated_text='Tutorial on fine-tuning Qwen3...',
+            ...     source_url='https://youtube.com/watch?v=abc',
+            ... )
+        """
+        metadata_json = json.dumps(metadata) if metadata else None
+        llm_metadata_json = json.dumps(llm_metadata) if llm_metadata else None
+        llm_provider = llm_metadata.get('provider') if llm_metadata else None
+        llm_model = llm_metadata.get('model') if llm_metadata else None
+
+        with self as db:
+            db._cursor.execute(
+                """
+                INSERT INTO content_enrichments (
+                    content_id, content_source, enrichment_type, enricher_name,
+                    generated_text, source_url, metadata_json,
+                    llm_provider, llm_model, llm_metadata
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    content_id, content_source, enrichment_type, enricher_name,
+                    generated_text, source_url, metadata_json,
+                    llm_provider, llm_model, llm_metadata_json,
+                ),
+            )
+            db._conn.commit()
+            return db._cursor.lastrowid
+
+    def get_enrichments(
+        self,
+        content_id: int,
+        content_source: str,
+        enrichment_type: Optional[str] = None,
+        enricher_name: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get enrichment results for a content item.
+
+        Args:
+            content_id: ID of the content item.
+            content_source: Source platform ('instagram' or 'telegram').
+            enrichment_type: Optional filter by enrichment type.
+            enricher_name: Optional filter by enricher name.
+
+        Returns:
+            List of enrichment result dictionaries.
+
+        Example:
+            >>> results = db.get_enrichments(42, 'telegram')
+            >>> for r in results:
+            ...     print(f"{r['enrichment_type']}: {r['generated_text'][:50]}")
+        """
+        with self as db:
+            query = """
+                SELECT id, enrichment_type, enricher_name, generated_text,
+                       source_url, metadata_json, llm_provider, llm_model,
+                       llm_metadata, created_at
+                FROM content_enrichments
+                WHERE content_id = ? AND content_source = ?
+            """
+            params: List[Any] = [content_id, content_source]
+
+            if enrichment_type:
+                query += " AND enrichment_type = ?"
+                params.append(enrichment_type)
+            if enricher_name:
+                query += " AND enricher_name = ?"
+                params.append(enricher_name)
+
+            query += " ORDER BY created_at DESC"
+            db._cursor.execute(query, params)
+
+            results = []
+            for row in db._cursor.fetchall():
+                metadata_val = None
+                if row[5]:
+                    try:
+                        metadata_val = json.loads(row[5])
+                    except json.JSONDecodeError:
+                        metadata_val = row[5]
+                results.append({
+                    "id": row[0],
+                    "enrichment_type": row[1],
+                    "enricher_name": row[2],
+                    "generated_text": row[3],
+                    "source_url": row[4],
+                    "metadata": metadata_val,
+                    "llm_provider": row[6],
+                    "llm_model": row[7],
+                    "llm_metadata": row[8],
+                    "created_at": row[9],
+                })
+            return results
+
+    def has_enrichment(
+        self,
+        content_id: int,
+        content_source: str,
+        enrichment_type: str,
+        enricher_name: str,
+    ) -> bool:
+        """Check if an enrichment already exists for a content item.
+
+        Args:
+            content_id: ID of the content item.
+            content_source: Source platform.
+            enrichment_type: Type of enrichment to check.
+            enricher_name: Name of the enricher to check.
+
+        Returns:
+            True if enrichment exists, False otherwise.
+
+        Example:
+            >>> if not db.has_enrichment(42, 'telegram', 'summary', 'youtube_analyzer'):
+            ...     # Run enrichment
+            ...     pass
+        """
+        with self as db:
+            db._cursor.execute(
+                """
+                SELECT 1 FROM content_enrichments
+                WHERE content_id = ? AND content_source = ?
+                AND enrichment_type = ? AND enricher_name = ?
+                LIMIT 1
+                """,
+                (content_id, content_source, enrichment_type, enricher_name),
+            )
+            return db._cursor.fetchone() is not None
+
+    # ------------------------------------------------------------------
+    # content_expanded (extracted URLs) methods
+    # ------------------------------------------------------------------
+
+    def save_content_expanded(
+        self,
+        item_id: int,
+        source: str,
+        content_expanded: str,
+    ) -> None:
+        """Save extracted URLs to the content_expanded column.
+
+        Args:
+            item_id: Row ID in the source table.
+            source: 'telegram' or 'instagram'.
+            content_expanded: Newline-separated URLs extracted from content.
+
+        Example:
+            >>> db.save_content_expanded(42, 'telegram', 'https://youtu.be/abc')
+        """
+        table = 'telegram_messages' if source == 'telegram' else 'instagram_posts'
+        with self as db:
+            db._cursor.execute(
+                f"UPDATE {table} SET content_expanded = ? WHERE id = ?",
+                (content_expanded, item_id),
+            )
+            db._conn.commit()
+
+    def get_content_expanded(
+        self,
+        item_id: int,
+        source: str,
+    ) -> Optional[str]:
+        """Get the content_expanded value for an item.
+
+        Args:
+            item_id: Row ID in the source table.
+            source: 'telegram' or 'instagram'.
+
+        Returns:
+            The content_expanded string, or None if not set.
+
+        Example:
+            >>> urls = db.get_content_expanded(42, 'telegram')
+        """
+        table = 'telegram_messages' if source == 'telegram' else 'instagram_posts'
+        with self as db:
+            db._cursor.execute(
+                f"SELECT content_expanded FROM {table} WHERE id = ?",
+                (item_id,),
+            )
+            row = db._cursor.fetchone()
+            return row[0] if row else None
+
+    def get_items_without_content_expanded(
+        self,
+        source: str,
+        limit: int = 1000,
+    ) -> List[Dict[str, Any]]:
+        """Get items that have content but no content_expanded yet.
+
+        Args:
+            source: 'telegram' or 'instagram'.
+            limit: Maximum number of items to return.
+
+        Returns:
+            List of item dicts with 'id' and 'content'/'caption' keys.
+
+        Example:
+            >>> items = db.get_items_without_content_expanded('telegram', limit=500)
+        """
+        with self as db:
+            if source == 'telegram':
+                db._cursor.execute(
+                    """
+                    SELECT id, content FROM telegram_messages
+                    WHERE content IS NOT NULL AND content != ''
+                    AND (content_expanded IS NULL OR content_expanded = '')
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                )
+                return [
+                    {'id': row[0], 'content': row[1]}
+                    for row in db._cursor.fetchall()
+                ]
+            else:
+                db._cursor.execute(
+                    """
+                    SELECT id, caption FROM instagram_posts
+                    WHERE caption IS NOT NULL AND caption != ''
+                    AND (content_expanded IS NULL OR content_expanded = '')
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                )
+                return [
+                    {'id': row[0], 'content': row[1]}
+                    for row in db._cursor.fetchall()
+                ]

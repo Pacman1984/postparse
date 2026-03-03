@@ -262,12 +262,12 @@ class TestClassifyText:
 class TestClassifyDb:
     """Test classify db command."""
 
-    @pytest.mark.skip(reason="Mock patches not working due to dynamic imports inside CLI function. Needs investigation.")
     def test_classify_db_all_sources(self) -> None:
         """
         Test database classification of all sources (default).
 
         Mocks database and classifier at boundaries to test batch logic.
+        search_instagram_posts / search_telegram_messages return (items, cursor) tuples.
         """
         runner = CliRunner()
 
@@ -279,12 +279,13 @@ class TestClassifyDb:
                     mock_load.return_value = mock_config
 
                     mock_db = MagicMock()
-                    mock_db.get_instagram_posts.return_value = [
-                        {"id": 1, "caption": "Recipe for pasta"},
-                    ]
-                    mock_db.get_telegram_messages.return_value = [
-                        {"id": 1, "text": "Recipe for bread"},
-                    ]
+                    # search_* returns (items, next_cursor) — None cursor means no more pages
+                    mock_db.search_instagram_posts.return_value = (
+                        [{"id": 1, "caption": "Recipe for pasta"}], None
+                    )
+                    mock_db.search_telegram_messages.return_value = (
+                        [{"id": 2, "content": "Recipe for bread"}], None
+                    )
                     mock_db.has_classification.return_value = False
                     mock_get_db.return_value = mock_db
 
@@ -294,21 +295,15 @@ class TestClassifyDb:
                     mock_result.confidence = 0.95
                     mock_result.details = {}
                     mock_classifier.predict.return_value = mock_result
-                    mock_classifier.get_llm_metadata.return_value = {"provider": "test"}
+                    mock_classifier.get_llm_metadata.return_value = {"provider": "test", "model": "test-model"}
                     mock_classifier_class.return_value = mock_classifier
 
-                    # Default is --source all
-                    result = runner.invoke(
-                        cli,
-                        ["classify", "db", "--limit", "1"],
-                    )
+                    result = runner.invoke(cli, ["classify", "db", "--limit", "1"])
 
                     assert result.exit_code == 0
-                    # Should classify both posts and messages
-                    assert mock_db.get_instagram_posts.called
-                    assert mock_db.get_telegram_messages.called
+                    assert mock_db.search_instagram_posts.called
+                    assert mock_db.search_telegram_messages.called
 
-    @pytest.mark.skip(reason="Mock patches not working due to dynamic imports inside CLI function.")
     def test_classify_db_instagram(self) -> None:
         """
         Test database classification of Instagram posts only.
@@ -325,10 +320,13 @@ class TestClassifyDb:
                     mock_load.return_value = mock_config
 
                     mock_db = MagicMock()
-                    mock_db.get_instagram_posts.return_value = [
-                        {"id": 1, "caption": "Recipe for pasta"},
-                        {"id": 2, "caption": "Beautiful sunset photo"},
-                    ]
+                    mock_db.search_instagram_posts.return_value = (
+                        [
+                            {"id": 1, "caption": "Recipe for pasta"},
+                            {"id": 2, "caption": "Beautiful sunset photo"},
+                        ],
+                        None,
+                    )
                     mock_db.has_classification.return_value = False
                     mock_get_db.return_value = mock_db
 
@@ -342,7 +340,7 @@ class TestClassifyDb:
                     mock_result2.confidence = 0.92
                     mock_result2.details = {}
                     mock_classifier.predict.side_effect = [mock_result1, mock_result2]
-                    mock_classifier.get_llm_metadata.return_value = {"provider": "test"}
+                    mock_classifier.get_llm_metadata.return_value = {"provider": "test", "model": "test-model"}
                     mock_classifier_class.return_value = mock_classifier
 
                     result = runner.invoke(
@@ -351,13 +349,14 @@ class TestClassifyDb:
                     )
 
                     assert result.exit_code == 0
-                    # Should show summary
                     output_lower = result.output.lower()
                     assert "recipe" in output_lower or "classified" in output_lower
 
-    @pytest.mark.skip(reason="Mock patches not working due to dynamic imports inside CLI function.")
     def test_classify_db_telegram(self) -> None:
-        """Test database classification of Telegram messages."""
+        """Test database classification of Telegram messages.
+
+        Telegram items use 'content' key (not 'text').
+        """
         runner = CliRunner()
 
         with patch("backend.postparse.cli.classify.load_config") as mock_load:
@@ -368,10 +367,13 @@ class TestClassifyDb:
                     mock_load.return_value = mock_config
 
                     mock_db = MagicMock()
-                    mock_db.get_telegram_messages.return_value = [
-                        {"id": 1, "text": "Recipe for bread"},
-                        {"id": 2, "text": "Meeting at 3pm"},
-                    ]
+                    mock_db.search_telegram_messages.return_value = (
+                        [
+                            {"id": 1, "content": "Recipe for bread"},
+                            {"id": 2, "content": "Meeting at 3pm"},
+                        ],
+                        None,
+                    )
                     mock_db.has_classification.return_value = False
                     mock_get_db.return_value = mock_db
 
@@ -385,7 +387,7 @@ class TestClassifyDb:
                     mock_result2.confidence = 0.98
                     mock_result2.details = {}
                     mock_classifier.predict.side_effect = [mock_result1, mock_result2]
-                    mock_classifier.get_llm_metadata.return_value = {"provider": "test"}
+                    mock_classifier.get_llm_metadata.return_value = {"provider": "test", "model": "test-model"}
                     mock_classifier_class.return_value = mock_classifier
 
                     result = runner.invoke(
@@ -437,7 +439,6 @@ class TestClassifyDb:
 
                     assert result.exit_code == 0
 
-    @pytest.mark.skip(reason="Mock patches not working due to dynamic imports inside CLI function.")
     def test_classify_db_with_no_items(self) -> None:
         """Test database classification when no items found."""
         runner = CliRunner()
@@ -450,23 +451,19 @@ class TestClassifyDb:
                     mock_load.return_value = mock_config
 
                     mock_db = MagicMock()
-                    mock_db.get_instagram_posts.return_value = []
-                    mock_db.get_telegram_messages.return_value = []
+                    mock_db.search_instagram_posts.return_value = ([], None)
+                    mock_db.search_telegram_messages.return_value = ([], None)
                     mock_get_db.return_value = mock_db
 
                     mock_classifier = MagicMock()
+                    mock_classifier.get_llm_metadata.return_value = {"provider": "test", "model": "test-model"}
                     mock_classifier_class.return_value = mock_classifier
 
-                    result = runner.invoke(
-                        cli,
-                        ["classify", "db"],
-                    )
+                    result = runner.invoke(cli, ["classify", "db"])
 
                     assert result.exit_code == 0
-                    # Should show message about no items
                     assert "no" in result.output.lower() or "found" in result.output.lower()
 
-    @pytest.mark.skip(reason="Mock patches not working due to dynamic imports inside CLI function.")
     def test_classify_db_handles_classification_errors(self) -> None:
         """Test that db handles individual classification errors gracefully."""
         runner = CliRunner()
@@ -479,14 +476,15 @@ class TestClassifyDb:
                     mock_load.return_value = mock_config
 
                     mock_db = MagicMock()
-                    mock_db.get_instagram_posts.return_value = [
-                        {"id": 1, "caption": "Test post"},
-                    ]
+                    mock_db.search_instagram_posts.return_value = (
+                        [{"id": 1, "caption": "Test post"}], None
+                    )
                     mock_db.has_classification.return_value = False
                     mock_get_db.return_value = mock_db
 
                     mock_classifier = MagicMock()
                     mock_classifier.predict.side_effect = Exception("Classification failed")
+                    mock_classifier.get_llm_metadata.return_value = {"provider": "test", "model": "test-model"}
                     mock_classifier_class.return_value = mock_classifier
 
                     result = runner.invoke(
@@ -494,10 +492,8 @@ class TestClassifyDb:
                         ["classify", "db", "--source", "instagram", "--limit", "1"],
                     )
 
-                    # Should complete despite errors
                     assert result.exit_code == 0
 
-    @pytest.mark.skip(reason="Mock patches not working due to dynamic imports inside CLI function.")
     def test_classify_db_multiclass(self) -> None:
         """Test database classification with multiclass classifier."""
         runner = CliRunner()
@@ -510,9 +506,9 @@ class TestClassifyDb:
                     mock_load.return_value = mock_config
 
                     mock_db = MagicMock()
-                    mock_db.get_instagram_posts.return_value = [
-                        {"id": 1, "caption": "Check out this new API"},
-                    ]
+                    mock_db.search_instagram_posts.return_value = (
+                        [{"id": 1, "caption": "Check out this new API"}], None
+                    )
                     mock_db.has_classification.return_value = False
                     mock_get_db.return_value = mock_db
 
@@ -522,13 +518,14 @@ class TestClassifyDb:
                     mock_result.confidence = 0.90
                     mock_result.details = {"reasoning": "Tech content"}
                     mock_classifier.predict.return_value = mock_result
-                    mock_classifier.get_llm_metadata.return_value = {"provider": "test"}
+                    mock_classifier.get_llm_metadata.return_value = {"provider": "test", "model": "test-model"}
                     mock_classifier_class.return_value = mock_classifier
 
                     result = runner.invoke(
                         cli,
                         [
                             "classify", "db",
+                            "--source", "instagram",
                             "--classifier", "multiclass",
                             "--classes", '{"recipe": "Cooking", "tech": "Technology"}',
                             "--limit", "1"
@@ -554,7 +551,6 @@ class TestClassifyDb:
 
                 assert result.exit_code != 0
 
-    @pytest.mark.skip(reason="Mock patches not working due to dynamic imports inside CLI function.")
     def test_classify_db_skips_already_classified_with_same_model(self) -> None:
         """Test that db skips items already classified with same model."""
         runner = CliRunner()
@@ -567,11 +563,10 @@ class TestClassifyDb:
                     mock_load.return_value = mock_config
 
                     mock_db = MagicMock()
-                    mock_db.get_instagram_posts.return_value = [
-                        {"id": 1, "caption": "Recipe for pasta"},
-                    ]
-                    # Already classified with same model
-                    mock_db.has_classification.return_value = True
+                    mock_db.search_instagram_posts.return_value = (
+                        [{"id": 1, "caption": "Recipe for pasta"}], None
+                    )
+                    mock_db.has_classification.return_value = True  # Already classified
                     mock_get_db.return_value = mock_db
 
                     mock_classifier = MagicMock()
@@ -586,12 +581,9 @@ class TestClassifyDb:
                     )
 
                     assert result.exit_code == 0
-                    # Should show skipped in output
                     assert "skipped" in result.output.lower()
-                    # Predict should NOT have been called
                     assert not mock_classifier.predict.called
 
-    @pytest.mark.skip(reason="Mock patches not working due to dynamic imports inside CLI function.")
     def test_classify_db_force_reclassifies(self) -> None:
         """Test that --force flag allows reclassification."""
         runner = CliRunner()
@@ -604,12 +596,11 @@ class TestClassifyDb:
                     mock_load.return_value = mock_config
 
                     mock_db = MagicMock()
-                    mock_db.get_instagram_posts.return_value = [
-                        {"id": 1, "caption": "Recipe for pasta"},
-                    ]
-                    # Already classified
-                    mock_db.has_classification.return_value = True
-                    mock_db.get_classification_id.return_value = None
+                    mock_db.search_instagram_posts.return_value = (
+                        [{"id": 1, "caption": "Recipe for pasta"}], None
+                    )
+                    mock_db.has_classification.return_value = True  # Already classified
+                    mock_db.get_classification_id.return_value = None  # No ID → new entry
                     mock_get_db.return_value = mock_db
 
                     mock_classifier = MagicMock()
@@ -625,17 +616,13 @@ class TestClassifyDb:
 
                     result = runner.invoke(
                         cli,
-                        ["classify", "db", "--source", "instagram", 
-                         "--limit", "1", "--force"],
+                        ["classify", "db", "--source", "instagram", "--limit", "1", "--force"],
                     )
 
                     assert result.exit_code == 0
-                    # Should have classified (predict was called)
                     assert mock_classifier.predict.called
-                    # Should have saved new classification
                     assert mock_db.save_classification_result.called
 
-    @pytest.mark.skip(reason="Mock patches not working due to dynamic imports inside CLI function.")
     def test_classify_db_force_replace_updates_existing(self) -> None:
         """Test that --force --replace updates existing classification."""
         runner = CliRunner()
@@ -648,12 +635,11 @@ class TestClassifyDb:
                     mock_load.return_value = mock_config
 
                     mock_db = MagicMock()
-                    mock_db.get_instagram_posts.return_value = [
-                        {"id": 1, "caption": "Recipe for pasta"},
-                    ]
-                    # Already classified
-                    mock_db.has_classification.return_value = True
-                    mock_db.get_classification_id.return_value = 123  # Existing ID
+                    mock_db.search_instagram_posts.return_value = (
+                        [{"id": 1, "caption": "Recipe for pasta"}], None
+                    )
+                    mock_db.has_classification.return_value = True  # Already classified
+                    mock_db.get_classification_id.return_value = 123  # Existing ID → update
                     mock_get_db.return_value = mock_db
 
                     mock_classifier = MagicMock()
@@ -669,14 +655,11 @@ class TestClassifyDb:
 
                     result = runner.invoke(
                         cli,
-                        ["classify", "db", "--source", "instagram", 
-                         "--limit", "1", "--force", "--replace"],
+                        ["classify", "db", "--source", "instagram", "--limit", "1", "--force", "--replace"],
                     )
 
                     assert result.exit_code == 0
-                    # Should have classified (predict was called)
                     assert mock_classifier.predict.called
-                    # Should have called update_classification instead of save
                     assert mock_db.update_classification.called
                     assert not mock_db.save_classification_result.called
 
@@ -743,3 +726,55 @@ class TestClassifyHelp:
         output_lower = result.output.lower()
         assert "--force" in output_lower
         assert "--replace" in output_lower
+
+    def test_classify_help_shows_multilabel_option(self) -> None:
+        """Test that classify text --help includes multilabel in classifier choices."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["classify", "text", "--help"])
+
+        assert result.exit_code == 0
+        assert "multilabel" in result.output.lower()
+
+    def test_classify_db_help_shows_multilabel_option(self) -> None:
+        """Test that classify db --help includes multilabel in classifier choices."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["classify", "db", "--help"])
+
+        assert result.exit_code == 0
+        assert "multilabel" in result.output.lower()
+
+
+class TestClassifyTextMultilabel:
+    """Test classify text command with multilabel classifier."""
+
+    def test_classify_text_multilabel(self) -> None:
+        """Test classify text with multilabel classifier uses predict_multilabel."""
+        runner = CliRunner()
+
+        with patch("backend.postparse.cli.classify.load_config") as mock_load:
+            with patch(
+                "backend.postparse.services.analysis.classifiers.multi_label.MultiLabelLLMClassifier"
+            ) as mock_cls:
+                mock_config = MagicMock()
+                mock_config.get_section.return_value = {"providers": []}
+                mock_load.return_value = mock_config
+
+                mock_classifier = MagicMock()
+                mock_ml_result = MagicMock()
+                mock_ml_result.labels = [
+                    MagicMock(label="recipe", confidence=0.95),
+                    MagicMock(label="cocktail", confidence=0.88),
+                ]
+                mock_ml_result.reasoning = "Has mixing instructions"
+                mock_ml_result.available_classes = ["recipe", "cocktail", "restaurant"]
+                mock_classifier.predict_multilabel.return_value = mock_ml_result
+                mock_cls.return_value = mock_classifier
+
+                result = runner.invoke(
+                    cli,
+                    ["classify", "text", "--classifier", "multilabel", "Mojito recipe"],
+                )
+
+                assert result.exit_code == 0
+                output_lower = result.output.lower()
+                assert "recipe" in output_lower or "multi" in output_lower

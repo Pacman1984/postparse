@@ -270,7 +270,7 @@ def info():
 
 
 # Register subcommands
-from backend.postparse.cli import extract, classify, search, serve, db, config, check
+from backend.postparse.cli import extract, classify, search, serve, db, config, check, enrich
 
 cli.add_command(extract.extract)
 cli.add_command(classify.classify)
@@ -279,6 +279,7 @@ cli.add_command(serve.serve)
 cli.add_command(db.db)
 cli.add_command(config.config)
 cli.add_command(check.check)
+cli.add_command(enrich.enrich)
 
 # Add stats as a top-level alias for convenience
 cli.add_command(db.stats, name='stats')

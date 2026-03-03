@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from backend.postparse.services.analysis.classifiers.llm import RecipeLLMClassifier
 from backend.postparse.services.analysis.classifiers.multi_class import MultiClassLLMClassifier
+from backend.postparse.services.analysis.classifiers.multi_label import MultiLabelLLMClassifier
 from backend.postparse.api.dependencies import (
     get_recipe_llm_classifier,
     get_optional_auth,
@@ -28,6 +29,11 @@ from backend.postparse.api.schemas.classify import (
     MultiClassifyResponse,
     BatchMultiClassifyRequest,
     BatchMultiClassifyResponse,
+    MultiLabelClassifyRequest,
+    MultiLabelClassifyResponse,
+    LabelScoreResponse,
+    BatchMultiLabelClassifyRequest,
+    BatchMultiLabelClassifyResponse,
 )
 from backend.postparse.core.utils.config import ConfigManager
 
@@ -480,63 +486,150 @@ async def classify_multi_batch(
     )
 
 
+@router.post(
+    "/multilabel",
+    response_model=MultiLabelClassifyResponse,
+    summary="Classify text with multiple labels",
+    description="Assign ALL matching categories (0..N) to a text.",
+)
+async def classify_multilabel(
+    request: MultiLabelClassifyRequest,
+    config: ConfigManager = Depends(get_config),
+    user: Optional[dict] = Depends(get_optional_auth),
+) -> MultiLabelClassifyResponse:
+    """Classify single text with multi-label assignment.
+
+    Args:
+        request: Multi-label classification request.
+        config: ConfigManager instance (injected).
+        user: Optional authenticated user info.
+
+    Returns:
+        MultiLabelClassifyResponse with list of labels.
+    """
+    start_time = time.time()
+
+    try:
+        classifier = MultiLabelLLMClassifier(
+            classes=request.classes,
+            provider_name=request.provider_name,
+            config_path=config.config_path if hasattr(config, "config_path") else None,
+        )
+        result = classifier.predict_multilabel(request.text)
+        processing_time = time.time() - start_time
+
+        return MultiLabelClassifyResponse(
+            labels=[
+                LabelScoreResponse(label=ls.label, confidence=ls.confidence)
+                for ls in result.labels
+            ],
+            reasoning=result.reasoning,
+            available_classes=result.available_classes,
+            processing_time=processing_time,
+            classifier_used="multi_label_llm",
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Multi-label classification failed: {e}",
+        )
+
+
+@router.post(
+    "/multilabel/batch",
+    response_model=BatchMultiLabelClassifyResponse,
+    summary="Classify multiple texts with multiple labels",
+    description="Batch multi-label classification for up to 100 texts.",
+)
+async def classify_multilabel_batch(
+    request: BatchMultiLabelClassifyRequest,
+    config: ConfigManager = Depends(get_config),
+    user: Optional[dict] = Depends(get_optional_auth),
+) -> BatchMultiLabelClassifyResponse:
+    """Classify multiple texts with multi-label assignment.
+
+    Args:
+        request: Batch multi-label request.
+        config: ConfigManager instance (injected).
+        user: Optional authenticated user info.
+
+    Returns:
+        BatchMultiLabelClassifyResponse with results for all texts.
+    """
+    start_time = time.time()
+
+    try:
+        classifier = MultiLabelLLMClassifier(
+            classes=request.classes,
+            provider_name=request.provider_name,
+            config_path=config.config_path if hasattr(config, "config_path") else None,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    results: List[MultiLabelClassifyResponse] = []
+    failed_count = 0
+    available_classes = classifier.get_class_names()
+
+    for text_item in request.texts:
+        try:
+            t0 = time.time()
+            result = classifier.predict_multilabel(text_item)
+            dt = time.time() - t0
+            results.append(MultiLabelClassifyResponse(
+                labels=[
+                    LabelScoreResponse(label=ls.label, confidence=ls.confidence)
+                    for ls in result.labels
+                ],
+                reasoning=result.reasoning,
+                available_classes=available_classes,
+                processing_time=dt,
+                classifier_used="multi_label_llm",
+            ))
+        except Exception:
+            failed_count += 1
+
+    return BatchMultiLabelClassifyResponse(
+        results=results,
+        total_processed=len(request.texts),
+        failed_count=failed_count,
+        total_processing_time=time.time() - start_time,
+    )
+
+
 @router.get(
     "/classifiers",
     response_model=Dict[str, List[Dict[str, Any]]],
     summary="List available classifiers",
-    description="""
-    List all available classifiers and their configurations.
-    
-    Returns information about:
-    - Classifier types (llm for recipes, multi_class_llm for custom categories)
-    - Available LLM providers
-    - Provider configurations
-    """,
+    description="List all available classifiers and their configurations.",
 )
 async def list_classifiers(
     config: ConfigManager = Depends(get_config),
     user: Optional[dict] = Depends(get_optional_auth),
 ) -> Dict[str, List[Dict[str, Any]]]:
-    """
-    List available classifiers and their configurations.
-    
-    Args:
-        config: ConfigManager instance (injected dependency).
-        user: Optional authenticated user info.
-        
-    Returns:
-        Dictionary with classifier types and available providers.
-        
-    Example:
-        GET /api/v1/classify/classifiers
-        
-        Response:
-        {
-            "classifiers": [
-                {"type": "llm", "name": "RecipeLLMClassifier"},
-                {"type": "multi_class_llm", "name": "MultiClassLLMClassifier"}
-            ],
-            "providers": [
-                {"name": "ollama", "status": "available"},
-                {"name": "openai", "status": "available"},
-                {"name": "anthropic", "status": "available"}
-            ]
-        }
-    """
-    # Get available LLM providers from config
+    """List available classifiers and their configurations."""
     default_provider = config.get("llm.default_provider", "ollama")
-    
+
     return {
         "classifiers": [
             {
                 "type": "llm",
                 "name": "RecipeLLMClassifier",
-                "description": "LLM-based recipe classification (recipe/not_recipe)"
+                "description": "Binary recipe classification (recipe/not_recipe)",
             },
             {
                 "type": "multi_class_llm",
                 "name": "MultiClassLLMClassifier",
-                "description": "LLM-based multi-class classification with custom categories"
+                "description": "Single-label multi-class classification",
+            },
+            {
+                "type": "multi_label_llm",
+                "name": "MultiLabelLLMClassifier",
+                "description": "Multi-label classification (0..N labels per text)",
             },
         ],
         "providers": [

@@ -14,11 +14,12 @@ A Python package for extracting and analyzing saved posts from social media plat
 
 ## Documentation
 
-📚 **[Read the full documentation](docs/index.md)** for detailed guides and API reference.
+📚 **[Read the full documentation](docs/index.md)**
 
-- **[Getting Started](docs/getting_started.md)** - Installation and first steps
-- **[Cookbook](docs/cookbook.md)** - Practical examples for common tasks
-- **[API Reference](docs/api_reference.md)** - Complete API documentation
+- **[Quickstart](docs/02-quickstart.md)** — Install and first commands
+- **[Examples](docs/08-examples/recipes.md)** — Copy-pastable recipes
+- **[API Endpoints](docs/06-api/endpoints.md)** — REST API
+- **[Python API](docs/06-api/python-reference.md)** — Database, parsers, classifiers
 
 ## Quick Start
 
@@ -143,7 +144,7 @@ postparse classify db --help
 postparse search posts --help
 ```
 
-For comprehensive CLI documentation, see **[CLI Reference](docs/cli/reference.md)**.
+For CLI details, see **[05-usage/basic](docs/05-usage/basic.md)** and **[06-api/endpoints](docs/06-api/endpoints.md)**.
 
 ## Quick Example
 
@@ -172,7 +173,7 @@ for msg in messages:
         print(f"  Details: {result.details}")
 ```
 
-For more examples, see the **[Cookbook](docs/cookbook.md)**.
+For more examples, see **[08-examples/recipes](docs/08-examples/recipes.md)**.
 
 ### Multi-Class Classification
 
@@ -216,7 +217,7 @@ curl -X POST "http://localhost:8000/api/v1/classify/multi" \
   }'
 ```
 
-For more details, see **[LLM Providers Documentation](docs/llm_providers.md)**.
+For more details, see **[07-configuration](docs/07-configuration.md)**.
 
 ## API Server
 
@@ -283,7 +284,7 @@ result = response.json()
 print(f"Classification: {result['label']} ({result['confidence']:.2f})")
 ```
 
-For more API examples, see the **[API Reference](docs/api_reference.md)**.
+For more API examples, see **[06-api/endpoints](docs/06-api/endpoints.md)**.
 
 ## Extraction API Usage
 
@@ -455,7 +456,7 @@ uv run pytest --cov=postparse tests/
 4. Run tests with `uv run pytest tests/`
 5. Submit a pull request
 
-See **[Getting Started](docs/getting_started.md)** for development setup.
+See **[11-contributing](docs/11-contributing.md)** for development setup.
 
 ## License
 

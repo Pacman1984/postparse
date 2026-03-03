@@ -170,6 +170,15 @@ class InstaloaderParser(BaseInstagramParser):
         request_timeout = config.get('models.request_timeout', default=30)
         max_connection_attempts = config.get('api.max_retries', default=3)
         
+        user_agent = config.get(
+            'instagram.user_agent',
+            default=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/131.0.0.0 Safari/537.36"
+            ),
+        )
+
         self._loader = instaloader.Instaloader(
             quiet=True,
             download_pictures=False,
@@ -180,7 +189,8 @@ class InstaloaderParser(BaseInstagramParser):
             save_metadata=False,
             compress_json=False,
             max_connection_attempts=max_connection_attempts,
-            request_timeout=request_timeout
+            request_timeout=request_timeout,
+            user_agent=user_agent,
         )
         
         self._login()
@@ -395,6 +405,7 @@ class InstaloaderParser(BaseInstagramParser):
         """Save Instagram posts to database with optimized batch processing."""
         saved_count = 0
         updated_count = 0
+        total_posts = 0
         
         try:
             # Pass database to get_saved_posts to enable early skipping

@@ -16,11 +16,13 @@ class ClassifierType(str, Enum):
 
     Values:
         LLM: RecipeLLMClassifier (LLM-based recipe classification).
-        MULTI_CLASS: MultiClassLLMClassifier (LLM-based multi-class classification).
+        MULTI_CLASS: MultiClassLLMClassifier (single-label multi-class).
+        MULTI_LABEL: MultiLabelLLMClassifier (multi-label, 0..N labels per item).
     """
 
     LLM = "llm"
     MULTI_CLASS = "multi_class"
+    MULTI_LABEL = "multi_label"
 
 
 class ClassifyRequest(BaseModel):
@@ -617,3 +619,117 @@ class BatchMultiClassifyResponse(BaseModel):
         description="Total processing time in seconds"
     )
 
+
+# ============================================================================
+# Multi-label classification schemas
+# ============================================================================
+
+
+class LabelScoreResponse(BaseModel):
+    """A single label with confidence from multi-label classification."""
+
+    label: str = Field(..., description="Classification label name")
+    confidence: float = Field(
+        ..., ge=0.0, le=1.0, description="Confidence score (0.0-1.0)"
+    )
+
+
+class MultiLabelClassifyRequest(BaseModel):
+    """Request schema for multi-label classification (assigns 0..N labels)."""
+
+    text: str = Field(
+        ..., min_length=1, max_length=10000, description="Content to classify"
+    )
+    classes: Optional[Dict[str, str]] = Field(
+        default=None,
+        description="Runtime class definitions. If None, uses config.toml.",
+    )
+    provider_name: Optional[str] = Field(
+        default=None, description="LLM provider name"
+    )
+
+    @field_validator("text")
+    @classmethod
+    def text_not_empty(cls, v: str) -> str:
+        """Validate text is not empty or whitespace."""
+        if not v.strip():
+            raise ValueError("Text cannot be empty or whitespace only")
+        return v
+
+    @field_validator("classes")
+    @classmethod
+    def validate_classes(
+        cls, v: Optional[Dict[str, str]]
+    ) -> Optional[Dict[str, str]]:
+        """Validate at least 2 classes if provided."""
+        if v is not None and len(v) < 2:
+            raise ValueError("At least 2 classes are required")
+        return v
+
+
+class MultiLabelClassifyResponse(BaseModel):
+    """Response schema for multi-label classification results."""
+
+    labels: List[LabelScoreResponse] = Field(
+        ..., description="Matching labels with confidence scores"
+    )
+    reasoning: Optional[str] = Field(
+        default=None, description="LLM's reasoning"
+    )
+    available_classes: List[str] = Field(
+        ..., description="All class names available"
+    )
+    processing_time: float = Field(
+        ..., ge=0.0, description="Processing time in seconds"
+    )
+    classifier_used: str = Field(
+        default="multi_label_llm", description="Classifier type used"
+    )
+
+
+class BatchMultiLabelClassifyRequest(BaseModel):
+    """Request schema for batch multi-label classification."""
+
+    texts: List[str] = Field(
+        ..., min_length=1, max_length=100, description="Texts to classify"
+    )
+    classes: Optional[Dict[str, str]] = Field(
+        default=None, description="Runtime class definitions."
+    )
+    provider_name: Optional[str] = Field(
+        default=None, description="LLM provider name"
+    )
+
+    @field_validator("texts")
+    @classmethod
+    def validate_texts(cls, v: List[str]) -> List[str]:
+        """Validate texts are non-empty."""
+        for i, text in enumerate(v):
+            if not text.strip():
+                raise ValueError(f"Text at index {i} is empty")
+            if len(text) > 10000:
+                raise ValueError(f"Text at index {i} exceeds 10000 chars")
+        return v
+
+    @field_validator("classes")
+    @classmethod
+    def validate_classes(
+        cls, v: Optional[Dict[str, str]]
+    ) -> Optional[Dict[str, str]]:
+        """Validate at least 2 classes if provided."""
+        if v is not None and len(v) < 2:
+            raise ValueError("At least 2 classes are required")
+        return v
+
+
+class BatchMultiLabelClassifyResponse(BaseModel):
+    """Response schema for batch multi-label classification results."""
+
+    results: List[MultiLabelClassifyResponse] = Field(
+        ..., description="Multi-label results"
+    )
+    total_processed: int = Field(..., ge=0, description="Total texts processed")
+    failed_count: int = Field(default=0, ge=0, description="Failed count")
+    total_processing_time: float = Field(
+        ..., ge=0.0, description="Total processing time in seconds"
+    )

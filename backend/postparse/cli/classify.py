@@ -16,6 +16,7 @@ Example:
 
 import sys
 import json
+import uuid
 from pathlib import Path
 from typing import Optional, Dict, Any
 
@@ -46,7 +47,8 @@ def classify():
     
     Classifiers:
     - recipe: Binary classification (recipe vs non-recipe)
-    - multiclass: Custom categories (requires --classes)
+    - multiclass: Single-label custom categories (picks 1)
+    - multilabel: Multi-label custom categories (picks 0..N)
     """
     pass
 
@@ -115,7 +117,7 @@ def _validate_provider(provider: str, config) -> bool:
 @click.argument('content', required=False)
 @click.option(
     '--classifier',
-    type=click.Choice(['recipe', 'multiclass']),
+    type=click.Choice(['recipe', 'multiclass', 'multilabel']),
     default='recipe',
     help='Classifier type (default: recipe)',
 )
@@ -186,7 +188,7 @@ def text(ctx, content, classifier, classes_arg, provider, output):
         if provider and not _validate_provider(provider, config):
             raise click.Abort()
         
-        # Parse classes for multiclass
+        # Parse classes for multiclass/multilabel
         classes = _parse_classes_arg(classes_arg) if classes_arg else None
         
         # Initialize classifier
@@ -199,7 +201,7 @@ def text(ctx, content, classifier, classes_arg, provider, output):
                 provider_name=provider,
                 config_path=config_path,
             )
-        else:  # multiclass
+        elif classifier == 'multiclass':
             print_info("Initializing multiclass classifier...")
             from backend.postparse.services.analysis.classifiers.multi_class import (
                 MultiClassLLMClassifier
@@ -209,48 +211,83 @@ def text(ctx, content, classifier, classes_arg, provider, output):
                 provider_name=provider,
                 config_path=config_path,
             )
+        else:  # multilabel
+            print_info("Initializing multilabel classifier...")
+            from backend.postparse.services.analysis.classifiers.multi_label import (
+                MultiLabelLLMClassifier
+            )
+            clf = MultiLabelLLMClassifier(
+                classes=classes,
+                provider_name=provider,
+                config_path=config_path,
+            )
         
         # Classify
         print_info("Classifying text...")
-        result = clf.predict(content)
         
-        # Output result
-        if output == 'json':
-            output_data = {
-                'label': result.label,
-                'confidence': result.confidence,
-                'details': result.details,
-            }
-            if classifier == 'multiclass' and result.details:
-                output_data['reasoning'] = result.details.get('reasoning')
-            console.print_json(json.dumps(output_data))
+        if classifier == 'multilabel':
+            ml_result = clf.predict_multilabel(content)
+            
+            if output == 'json':
+                output_data = {
+                    'labels': [
+                        {'label': ls.label, 'confidence': ls.confidence}
+                        for ls in ml_result.labels
+                    ],
+                    'reasoning': ml_result.reasoning,
+                    'available_classes': ml_result.available_classes,
+                }
+                console.print_json(json.dumps(output_data))
+            else:
+                if ml_result.labels:
+                    content_str = "[bold]Labels:[/bold]\n"
+                    for ls in ml_result.labels:
+                        content_str += f"  {ls.label}: {ls.confidence:.2%}\n"
+                else:
+                    content_str = "[bold]Labels:[/bold] (none matched)\n"
+                if ml_result.reasoning:
+                    content_str += f"\n[bold]Reasoning:[/bold] {ml_result.reasoning}"
+                print_panel(
+                    content_str,
+                    title="Multi-Label Classification Result",
+                    style="magenta",
+                )
         else:
-            # Display in panel
-            label = result.label
-            confidence = result.confidence
+            result = clf.predict(content)
             
-            style = "green" if label.lower() == 'recipe' else "cyan"
-            
-            content_str = f"[bold]Label:[/bold] {label}\n"
-            content_str += f"[bold]Confidence:[/bold] {confidence:.2%}"
-            
-            # Show reasoning for multiclass
-            if classifier == 'multiclass' and result.details:
-                reasoning = result.details.get('reasoning', '')
-                if reasoning:
-                    content_str += f"\n[bold]Reasoning:[/bold] {reasoning}"
-                available = result.details.get('available_classes', [])
-                if available:
-                    content_str += f"\n[bold]Classes:[/bold] {', '.join(available)}"
-            
-            # Show details for recipe
-            if classifier == 'recipe' and result.details:
-                content_str += "\n[bold]Details:[/bold]"
-                for key, value in result.details.items():
-                    if value is not None:
-                        content_str += f"\n  • {key}: {value}"
-            
-            print_panel(content_str, title="Classification Result", style=style)
+            if output == 'json':
+                output_data = {
+                    'label': result.label,
+                    'confidence': result.confidence,
+                    'details': result.details,
+                }
+                if classifier == 'multiclass' and result.details:
+                    output_data['reasoning'] = result.details.get('reasoning')
+                console.print_json(json.dumps(output_data))
+            else:
+                label = result.label
+                confidence = result.confidence
+                
+                style = "green" if label.lower() == 'recipe' else "cyan"
+                
+                content_str = f"[bold]Label:[/bold] {label}\n"
+                content_str += f"[bold]Confidence:[/bold] {confidence:.2%}"
+                
+                if classifier == 'multiclass' and result.details:
+                    reasoning = result.details.get('reasoning', '')
+                    if reasoning:
+                        content_str += f"\n[bold]Reasoning:[/bold] {reasoning}"
+                    available = result.details.get('available_classes', [])
+                    if available:
+                        content_str += f"\n[bold]Classes:[/bold] {', '.join(available)}"
+                
+                if classifier == 'recipe' and result.details:
+                    content_str += "\n[bold]Details:[/bold]"
+                    for key, value in result.details.items():
+                        if value is not None:
+                            content_str += f"\n  - {key}: {value}"
+                
+                print_panel(content_str, title="Classification Result", style=style)
         
     except click.Abort:
         raise
@@ -272,7 +309,7 @@ def text(ctx, content, classifier, classes_arg, provider, output):
 )
 @click.option(
     '--classifier',
-    type=click.Choice(['recipe', 'multiclass']),
+    type=click.Choice(['recipe', 'multiclass', 'multilabel']),
     default='recipe',
     help='Classifier type (default: recipe)',
 )
@@ -284,7 +321,8 @@ def text(ctx, content, classifier, classes_arg, provider, output):
 @click.option(
     '--limit',
     type=int,
-    help='Number of NEW items to classify per source (skips already-classified, continues until limit reached)',
+    default=None,
+    help='Number of NEW items to classify per source (default: 1000 if not specified, skips already-classified)',
 )
 @click.option(
     '--filter-hashtag',
@@ -318,6 +356,7 @@ def db(ctx, source, classifier, classes_arg, limit, filter_hashtag, provider,
     
     Limit behavior:
         - --limit N classifies exactly N NEW items per source
+        - If --limit is not specified, defaults to 1000 items per source (safety limit)
         - Already-classified items are SKIPPED (not counted toward limit)
         - Pagination continues until N items are classified or database exhausted
         - Items are processed NEWEST first (ORDER BY created_at DESC)
@@ -377,8 +416,10 @@ def db(ctx, source, classifier, classes_arg, limit, filter_hashtag, provider,
         if provider and not _validate_provider(provider, config):
             raise click.Abort()
         
-        # Parse classes for multiclass
+        # Parse classes for multiclass/multilabel
         classes = _parse_classes_arg(classes_arg) if classes_arg else None
+        
+        is_multilabel = classifier == 'multilabel'
         
         # Initialize classifier
         if classifier == 'recipe':
@@ -391,7 +432,7 @@ def db(ctx, source, classifier, classes_arg, limit, filter_hashtag, provider,
                 config_path=config_path,
             )
             classifier_name = 'recipe_llm'
-        else:  # multiclass
+        elif classifier == 'multiclass':
             print_info("Initializing multiclass classifier...")
             from backend.postparse.services.analysis.classifiers.multi_class import (
                 MultiClassLLMClassifier
@@ -402,6 +443,17 @@ def db(ctx, source, classifier, classes_arg, limit, filter_hashtag, provider,
                 config_path=config_path,
             )
             classifier_name = 'multiclass_llm'
+        else:  # multilabel
+            print_info("Initializing multilabel classifier...")
+            from backend.postparse.services.analysis.classifiers.multi_label import (
+                MultiLabelLLMClassifier
+            )
+            clf = MultiLabelLLMClassifier(
+                classes=classes,
+                provider_name=provider,
+                config_path=config_path,
+            )
+            classifier_name = 'multilabel_llm'
         
         # Get the model name from classifier for duplicate checking
         llm_metadata = clf.get_llm_metadata()
@@ -441,7 +493,10 @@ def db(ctx, source, classifier, classes_arg, limit, filter_hashtag, provider,
             cursor = None
             exhausted = False  # True when no more items in database
             
-            print_info(f"Classifying up to {target_count} {current_source} items...")
+            if limit is None:
+                print_info(f"Classifying up to {target_count} {current_source} items (default limit, use --limit to change)...")
+            else:
+                print_info(f"Classifying up to {target_count} {current_source} items...")
             
             with create_progress() as progress:
                 task = progress.add_task(
@@ -503,12 +558,21 @@ def db(ctx, source, classifier, classes_arg, limit, filter_hashtag, provider,
                         if source_classified >= target_count:
                             break
                         
-                        # Extract text
+                        # Extract text — prefer enriched tagged format when available
                         if current_source == 'instagram':
-                            item_text = item.get('caption', '')
+                            raw_text = item.get('caption', '')
                         else:  # telegram
-                            item_text = item.get('content', '')
-                        
+                            raw_text = item.get('content', '')
+
+                        content_expanded = item.get('content_expanded', '')
+                        if raw_text and content_expanded:
+                            item_text = (
+                                f"<original content>{raw_text}</original content>"
+                                f"<extended content>{content_expanded}</extended content>"
+                            )
+                        else:
+                            item_text = raw_text
+
                         if not item_text:
                             source_empty += 1
                             current_stats['empty'] += 1
@@ -540,56 +604,97 @@ def db(ctx, source, classifier, classes_arg, limit, filter_hashtag, provider,
                                             classifier_name, llm_model
                                         )
                             
-                            result = clf.predict(item_text)
-                            
-                            label = result.label
-                            confidence = result.confidence
-                            
-                            # Save to database with LLM metadata
-                            if item_id:
-                                # Extract reasoning from details if present
-                                reasoning = None
-                                details = result.details.copy() if result.details else {}
-                                if details and 'reasoning' in details:
-                                    reasoning = details.pop('reasoning')
+                            if is_multilabel:
+                                ml_result = clf.predict_multilabel(item_text)
+                                reasoning = ml_result.reasoning
+                                run_id = str(uuid.uuid4())
                                 
-                                if existing_id and replace:
-                                    # Update existing record
-                                    database.update_classification(
-                                        analysis_id=existing_id,
-                                        label=label,
-                                        confidence=confidence,
-                                        reasoning=reasoning,
-                                        llm_metadata=clf.get_llm_metadata(),
-                                        details=details if details else None
+                                if item_id:
+                                    for ls in ml_result.labels:
+                                        database.save_classification_result(
+                                            content_id=item_id,
+                                            content_source=content_source_name,
+                                            classifier_name=classifier_name,
+                                            label=ls.label,
+                                            confidence=ls.confidence,
+                                            classification_type='multi_label',
+                                            run_id=run_id,
+                                            reasoning=reasoning,
+                                            llm_metadata=clf.get_llm_metadata(),
+                                        )
+                                
+                                labels_str = ", ".join(
+                                    f"{ls.label}({ls.confidence:.0%})"
+                                    for ls in ml_result.labels
+                                ) or "(none)"
+                                avg_conf = (
+                                    sum(ls.confidence for ls in ml_result.labels)
+                                    / len(ml_result.labels)
+                                    if ml_result.labels else 0.0
+                                )
+                                
+                                current_stats['total'] += 1
+                                current_stats['confidence_sum'] += avg_conf
+                                for ls in ml_result.labels:
+                                    current_stats['labels'][ls.label] = (
+                                        current_stats['labels'].get(ls.label, 0) + 1
                                     )
-                                    current_stats['replaced'] += 1
-                                else:
-                                    # Insert new record
-                                    database.save_classification_result(
-                                        content_id=item_id,
-                                        content_source=content_source_name,
-                                        classifier_name=classifier_name,
-                                        label=label,
-                                        confidence=confidence,
-                                        details=details if details else None,
-                                        classification_type='single',
-                                        reasoning=reasoning,
-                                        llm_metadata=clf.get_llm_metadata()
-                                    )
-                            
-                            current_stats['total'] += 1
-                            current_stats['labels'][label] = current_stats['labels'].get(label, 0) + 1
-                            current_stats['confidence_sum'] += confidence
-                            source_classified += 1
-                            
-                            all_results.append({
-                                'id': item_id or '',
-                                'source': current_source,
-                                'content_preview': truncate_text(item_text, 40),
-                                'label': label,
-                                'confidence': f"{confidence:.2%}",
-                            })
+                                source_classified += 1
+                                
+                                all_results.append({
+                                    'id': item_id or '',
+                                    'source': current_source,
+                                    'content_preview': truncate_text(item_text, 40),
+                                    'label': labels_str,
+                                    'confidence': f"{avg_conf:.2%}",
+                                })
+                            else:
+                                result = clf.predict(item_text)
+                                
+                                label = result.label
+                                confidence = result.confidence
+                                
+                                if item_id:
+                                    reasoning = None
+                                    details = result.details.copy() if result.details else {}
+                                    if details and 'reasoning' in details:
+                                        reasoning = details.pop('reasoning')
+                                    
+                                    if existing_id and replace:
+                                        database.update_classification(
+                                            analysis_id=existing_id,
+                                            label=label,
+                                            confidence=confidence,
+                                            reasoning=reasoning,
+                                            llm_metadata=clf.get_llm_metadata(),
+                                            details=details if details else None
+                                        )
+                                        current_stats['replaced'] += 1
+                                    else:
+                                        database.save_classification_result(
+                                            content_id=item_id,
+                                            content_source=content_source_name,
+                                            classifier_name=classifier_name,
+                                            label=label,
+                                            confidence=confidence,
+                                            details=details if details else None,
+                                            classification_type='single',
+                                            reasoning=reasoning,
+                                            llm_metadata=clf.get_llm_metadata()
+                                        )
+                                
+                                current_stats['total'] += 1
+                                current_stats['labels'][label] = current_stats['labels'].get(label, 0) + 1
+                                current_stats['confidence_sum'] += confidence
+                                source_classified += 1
+                                
+                                all_results.append({
+                                    'id': item_id or '',
+                                    'source': current_source,
+                                    'content_preview': truncate_text(item_text, 40),
+                                    'label': label,
+                                    'confidence': f"{confidence:.2%}",
+                                })
                             
                             # Update progress bar (tracks classified count)
                             progress.update(task, completed=source_classified)

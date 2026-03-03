@@ -8,21 +8,21 @@ This module provides configurable middleware for:
 - Rate limiting (placeholder for future implementation)
 """
 
-import os
 import time
 import uuid
 import logging
 import threading
 import json
+import re
 import traceback
-from typing import Callable, List, Optional, Dict, Any
-from fastapi import Request, Response, status
+from typing import Callable, Optional, Dict, Any
+from fastapi import HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
-from jose import JWTError, jwt
 
 from backend.postparse.core.utils.config import ConfigManager
+from backend.postparse.api.dependencies import extract_bearer_token, validate_jwt_token
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +48,6 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self.config = config
         self.enabled = config.get("api.auth.enabled", False)
-        self.secret_key = config.get("api.auth.secret_key") or os.getenv("JWT_SECRET_KEY")
-        self.algorithm = config.get("api.auth.algorithm", "HS256")
 
         # Public endpoints that don't require authentication
         self.public_paths = {
@@ -93,30 +91,39 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-        token = auth_header.replace("Bearer ", "")
-
-        # Validate token
-        try:
-            if not self.secret_key:
-                logger.error("JWT secret key not configured")
-                return JSONResponse(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    content={
-                        "error_code": "INTERNAL_ERROR",
-                        "message": "Authentication not properly configured",
-                    },
-                )
-
-            payload = jwt.decode(token, self.secret_key, algorithms=[self.algorithm])
-            request.state.user = payload  # Store user info in request state
-        except JWTError as e:
+        token = extract_bearer_token(auth_header)
+        if not token:
             return JSONResponse(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 content={
                     "error_code": "UNAUTHORIZED",
-                    "message": f"Invalid token: {str(e)}",
+                    "message": "Missing or invalid Authorization header",
                 },
                 headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # Validate token
+        try:
+            payload = validate_jwt_token(token, self.config)
+            request.state.user = payload  # Store user info in request state
+        except HTTPException as exc:
+            error_code = (
+                "UNAUTHORIZED"
+                if exc.status_code == status.HTTP_401_UNAUTHORIZED
+                else "INTERNAL_ERROR"
+            )
+            headers = (
+                {"WWW-Authenticate": "Bearer"}
+                if exc.status_code == status.HTTP_401_UNAUTHORIZED
+                else None
+            )
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={
+                    "error_code": error_code,
+                    "message": str(exc.detail),
+                },
+                headers=headers,
             )
 
         return await call_next(request)
@@ -170,56 +177,171 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 logger.warning("python-json-logger not installed, using text format")
                 self.log_format = "text"
     
-    def _redact_sensitive_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    def _redact_sensitive_data(self, data: Any) -> Any:
         """
-        Redact sensitive fields from log data.
-        
+        Redact sensitive fields from log data recursively.
+
         Args:
-            data: Dictionary that may contain sensitive data.
-            
+            data: Value that may contain nested sensitive fields.
+
         Returns:
-            Dictionary with sensitive fields redacted.
+            Redacted value with sensitive fields replaced.
+
+        Example:
+            Input: {"user": {"token": "abc123"}, "tags": [{"api_key": "x"}]}
+            Output: {"user": {"token": "***REDACTED***"}, "tags": [{"api_key": "***REDACTED***"}]}
         """
         sensitive_fields = {
             "password", "token", "secret", "api_key", "apikey",
             "authorization", "auth", "credential", "private_key"
         }
-        
-        redacted = {}
-        for key, value in data.items():
-            key_lower = key.lower()
-            if any(field in key_lower for field in sensitive_fields):
-                redacted[key] = "***REDACTED***"
-            elif isinstance(value, dict):
-                redacted[key] = self._redact_sensitive_data(value)
-            else:
-                redacted[key] = value
-        
-        return redacted
+
+        if isinstance(data, dict):
+            redacted: Dict[str, Any] = {}
+            for key, value in data.items():
+                key_lower = str(key).lower()
+                if any(field in key_lower for field in sensitive_fields):
+                    redacted[key] = "***REDACTED***"
+                else:
+                    redacted[key] = self._redact_sensitive_data(value)
+            return redacted
+
+        if isinstance(data, list):
+            return [self._redact_sensitive_data(item) for item in data]
+
+        return data
+
+    def _truncate_for_log(self, value: str, max_length: int = 500) -> str:
+        """
+        Truncate long values before writing to logs.
+
+        Args:
+            value: String value to truncate.
+            max_length: Maximum length of string before truncation.
+
+        Returns:
+            Truncated string with ellipsis when needed.
+        """
+        if len(value) <= max_length:
+            return value
+        return f"{value[:max_length]}..."
+
+    def _is_json_content_type(self, content_type: str) -> bool:
+        """
+        Check whether request content type is JSON-compatible.
+
+        Args:
+            content_type: Raw request content-type header value.
+
+        Returns:
+            True when payload should be treated as JSON.
+        """
+        content_type_lower = content_type.lower()
+        return (
+            "application/json" in content_type_lower
+            or "+json" in content_type_lower
+        )
+
+    def _is_sensitive_non_json_endpoint(self, path: str) -> bool:
+        """
+        Check whether endpoint path should skip non-JSON body logging.
+
+        Args:
+            path: HTTP request path.
+
+        Returns:
+            True for paths likely to carry credentials or secrets.
+        """
+        path_lower = path.lower()
+        sensitive_paths = {
+            "/extract/telegram",
+            "/extract/instagram",
+        }
+        sensitive_keywords = {
+            "/auth",
+            "/login",
+            "/token",
+            "/password",
+            "/secret",
+            "/credential",
+        }
+        return (
+            path_lower in sensitive_paths
+            or any(keyword in path_lower for keyword in sensitive_keywords)
+        )
+
+    def _mask_plain_text_payload(self, payload: str) -> str:
+        """
+        Conservatively mask likely secrets in non-JSON payloads.
+
+        Args:
+            payload: Decoded request payload.
+
+        Returns:
+            Payload with obvious credentials replaced.
+
+        Example:
+            Input: "token=abc123&note=test"
+            Output: "token=***REDACTED***&note=test"
+        """
+        masked = payload
+
+        masked = re.sub(
+            r"(?i)(authorization\s*[:=]\s*bearer\s+)[^\s&]+",
+            r"\1***REDACTED***",
+            masked,
+        )
+        masked = re.sub(
+            r'(?i)("(?:password|token|secret|api[_-]?key|authorization|credential)"\s*:\s*)"[^"]*"',
+            r'\1"***REDACTED***"',
+            masked,
+        )
+        masked = re.sub(
+            r"(?i)\b(password|token|secret|api[_-]?key|authorization|credential)\b(\s*[:=]\s*)([^\s&]+)",
+            lambda match: f"{match.group(1)}{match.group(2)}***REDACTED***",
+            masked,
+        )
+        return masked
     
     async def _extract_request_body(self, request: Request) -> Optional[str]:
         """
-        Extract and truncate request body if logging is enabled.
-        
+        Extract request body, redact sensitive content, and truncate for logs.
+
         Args:
             request: FastAPI Request object.
-            
+
         Returns:
-            Truncated request body as string or None.
+            Redacted request body string or None.
         """
         if not self.log_request_body:
             return None
-        
+
         if request.method in ["POST", "PUT", "PATCH"]:
             try:
                 body = await request.body()
                 if body:
-                    body_str = body.decode("utf-8")
-                    # Truncate to 500 chars
-                    return body_str[:500] + "..." if len(body_str) > 500 else body_str
+                    body_str = body.decode("utf-8", errors="replace")
+                    content_type = request.headers.get("content-type", "")
+
+                    if self._is_json_content_type(content_type):
+                        try:
+                            parsed_body = json.loads(body_str)
+                            redacted_body = self._redact_sensitive_data(parsed_body)
+                            return self._truncate_for_log(
+                                json.dumps(redacted_body, ensure_ascii=True)
+                            )
+                        except json.JSONDecodeError:
+                            # Continue with conservative plaintext handling below.
+                            pass
+
+                    if self._is_sensitive_non_json_endpoint(request.url.path):
+                        return None
+
+                    masked_body = self._mask_plain_text_payload(body_str)
+                    return self._truncate_for_log(masked_body)
             except Exception as e:
                 logger.debug(f"Could not extract request body: {e}")
-        
+
         return None
     
     def _extract_filters_from_params(self, request: Request) -> Dict[str, Any]:

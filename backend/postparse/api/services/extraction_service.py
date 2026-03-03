@@ -8,6 +8,7 @@ WebSocket progress updates, handling the complete extraction lifecycle.
 import asyncio
 import logging
 import time
+from pathlib import Path
 from typing import Optional
 
 from backend.postparse.api.schemas.telegram import ExtractionStatus
@@ -21,6 +22,10 @@ from backend.postparse.services.parsers.instagram.instagram_parser import (
 from backend.postparse.services.parsers.telegram.telegram_parser import TelegramParser
 
 logger = logging.getLogger(__name__)
+
+# Dedicated directory for credential-bearing session files (gitignored via /data/).
+# Never write sessions to repository root.
+SESSION_DIR = Path("data/sessions")
 
 
 class TelegramExtractionService:
@@ -117,13 +122,15 @@ class TelegramExtractionService:
             )
             
             logger.info(f"Starting Telegram extraction for job {job_id}")
-            
-            # Create parser with non-interactive mode
+            SESSION_DIR.mkdir(parents=True, exist_ok=True)
+
+            # Create parser with non-interactive mode (sessions in dedicated dir)
             parser = TelegramParser(
                 api_id=api_id,
                 api_hash=api_hash,
                 phone=phone,
                 session_file=f"telegram_session_{api_id}",
+                cache_dir=str(SESSION_DIR),
                 interactive=False,  # Non-interactive for API usage
             )
             
@@ -358,8 +365,9 @@ class InstagramExtractionService:
             )
             
             logger.info(f"Starting Instagram extraction for job {job_id}")
-            
-            # Create appropriate parser based on use_api flag
+            SESSION_DIR.mkdir(parents=True, exist_ok=True)
+
+            # Create appropriate parser based on use_api flag (sessions in dedicated dir)
             if use_api:
                 # Note: InstagramAPIParser requires user_id which is not provided in the request
                 # This is a known limitation - API method needs to be fully implemented
@@ -371,7 +379,7 @@ class InstagramExtractionService:
                 parser = InstaloaderParser(
                     username=username,
                     password=password,
-                    session_file=f"instagram_session_{username}",
+                    session_file=str(SESSION_DIR / f"instagram_session_{username}"),
                 )
             
             posts_processed = 0

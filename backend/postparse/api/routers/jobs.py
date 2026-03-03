@@ -13,6 +13,7 @@ from backend.postparse.api.dependencies import (
     get_job_manager,
     get_optional_auth,
     get_websocket_manager,
+    get_current_websocket_user,
 )
 from backend.postparse.api.services.job_manager import JobManager
 from backend.postparse.api.services.websocket_manager import WebSocketManager
@@ -102,6 +103,7 @@ async def websocket_progress(
     job_id: str,
     ws_manager: WebSocketManager = Depends(get_websocket_manager),
     job_manager: JobManager = Depends(get_job_manager),
+    user: Optional[dict] = Depends(get_current_websocket_user),
 ):
     """
     Unified WebSocket endpoint for real-time job progress updates.
@@ -139,6 +141,8 @@ async def websocket_progress(
             "timestamp": "2025-11-23T10:30:00Z"
         }
     """
+    _ = user
+
     # Verify job exists
     job = job_manager.get_job(job_id)
     if not job:

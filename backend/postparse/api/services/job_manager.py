@@ -17,6 +17,62 @@ from backend.postparse.api.schemas.telegram import ExtractionStatus
 logger = logging.getLogger(__name__)
 
 
+_SENSITIVE_METADATA_MARKERS = (
+    "password",
+    "token",
+    "secret",
+    "api_hash",
+    "credential",
+    "authorization",
+    "private_key",
+)
+
+
+def _is_sensitive_metadata_key(key: str) -> bool:
+    """
+    Check whether a metadata key name likely contains sensitive information.
+
+    Args:
+        key: Metadata key to inspect.
+
+    Returns:
+        True if the key appears credential-related, otherwise False.
+    """
+    key_lower = key.lower()
+    return any(marker in key_lower for marker in _SENSITIVE_METADATA_MARKERS)
+
+
+def _sanitize_job_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Remove credential-bearing fields from job metadata recursively.
+
+    Args:
+        metadata: Raw metadata dictionary.
+
+    Returns:
+        Sanitized metadata without sensitive keys.
+
+    Example:
+        safe_metadata = _sanitize_job_metadata({"password": "x", "limit": 100})
+        # {"limit": 100}
+    """
+    sanitized: Dict[str, Any] = {}
+    for key, value in metadata.items():
+        if _is_sensitive_metadata_key(key):
+            continue
+        if isinstance(value, dict):
+            sanitized[key] = _sanitize_job_metadata(value)
+            continue
+        if isinstance(value, list):
+            sanitized[key] = [
+                _sanitize_job_metadata(item) if isinstance(item, dict) else item
+                for item in value
+            ]
+            continue
+        sanitized[key] = value
+    return sanitized
+
+
 @dataclass
 class Job:
     """
@@ -75,13 +131,13 @@ class JobManager:
         self._lock = threading.Lock()
         logger.info("JobManager initialized")
     
-    def create_job(self, job_type: str, metadata: dict) -> str:
+    def create_job(self, job_type: str, metadata: Dict[str, Any]) -> str:
         """
         Create a new extraction job with PENDING status.
         
         Args:
             job_type: Type of extraction ('telegram' or 'instagram')
-            metadata: Dictionary containing request parameters
+            metadata: Dictionary containing non-sensitive request metadata.
         
         Returns:
             Generated job_id (UUID string)
@@ -90,16 +146,16 @@ class JobManager:
             >>> manager = JobManager()
             >>> job_id = manager.create_job('telegram', {
             ...     'api_id': '12345',
-            ...     'api_hash': 'abc123',
             ...     'limit': 100
             ... })
         """
+        safe_metadata = _sanitize_job_metadata(metadata)
         job_id = str(uuid.uuid4())
         job = Job(
             job_id=job_id,
             status=ExtractionStatus.PENDING,
             job_type=job_type,
-            metadata=metadata,
+            metadata=safe_metadata,
         )
         
         with self._lock:

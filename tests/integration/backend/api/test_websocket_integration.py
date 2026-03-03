@@ -8,15 +8,15 @@ for extraction jobs.
 import asyncio
 import json
 import time
-from typing import AsyncGenerator
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from fastapi import WebSocket
+from fastapi import WebSocket, status
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from backend.postparse.api.main import app
-from backend.postparse.api.schemas.telegram import ExtractionStatus
 from backend.postparse.api.services.job_manager import JobManager
 from backend.postparse.api.services.websocket_manager import WebSocketManager
 
@@ -427,7 +427,8 @@ class TestUnifiedWebSocket:
                 assert "timestamp" in data
         finally:
             app.dependency_overrides.clear()
-    
+
+
     @pytest.mark.integration
     def test_unified_websocket_instagram_job(
         self, client: TestClient, job_manager: JobManager
@@ -463,7 +464,123 @@ class TestUnifiedWebSocket:
                 assert "timestamp" in data
         finally:
             app.dependency_overrides.clear()
-    
+
+
+class _AuthEnabledConfig:
+    """
+    Minimal config stub that enforces JWT authentication for tests.
+
+    Example:
+        config = _AuthEnabledConfig()
+        assert config.get("api.auth.enabled") is True
+    """
+
+    def __init__(self) -> None:
+        """Initialize static authentication settings."""
+        self._values = {
+            "api.auth.enabled": True,
+            "api.auth.secret_key": "test-secret-key",
+            "api.auth.algorithm": "HS256",
+        }
+
+    def get(self, key: str, default: Any = None, env_var: str = "") -> Any:
+        """
+        Return configured value for auth-related keys.
+
+        Args:
+            key: Dotted config key.
+            default: Fallback value when key is missing.
+            env_var: Optional env var name (unused in stub).
+
+        Returns:
+            Configured value or provided default.
+        """
+        _ = env_var
+        return self._values.get(key, default)
+
+
+class TestWebSocketAuthentication:
+    """Integration tests for authenticated WebSocket progress endpoints."""
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize(
+        ("path_template", "job_type"),
+        [
+            ("/api/v1/telegram/ws/progress/{job_id}", "telegram"),
+            ("/api/v1/instagram/ws/progress/{job_id}", "instagram"),
+            ("/api/v1/jobs/ws/progress/{job_id}", "telegram"),
+        ],
+    )
+    def test_websocket_rejects_missing_token_when_auth_enabled(
+        self,
+        client: TestClient,
+        job_manager: JobManager,
+        path_template: str,
+        job_type: str,
+    ) -> None:
+        """
+        Verify unauthenticated WebSocket connections are rejected.
+
+        When `api.auth.enabled` is true, missing credentials must result in a
+        policy-violation close code before job updates are sent.
+        """
+        from backend.postparse.api import dependencies
+
+        app.dependency_overrides[dependencies.get_job_manager] = lambda: job_manager
+        app.dependency_overrides[dependencies.get_config] = _AuthEnabledConfig
+
+        try:
+            job_id = job_manager.create_job(job_type, {"limit": 10})
+            with pytest.raises(WebSocketDisconnect) as exc_info:
+                with client.websocket_connect(path_template.format(job_id=job_id)):
+                    pass
+            assert exc_info.value.code == status.WS_1008_POLICY_VIOLATION
+        finally:
+            app.dependency_overrides.clear()
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize(
+        "path_template",
+        [
+            "/api/v1/telegram/ws/progress/{job_id}",
+            "/api/v1/instagram/ws/progress/{job_id}",
+            "/api/v1/jobs/ws/progress/{job_id}",
+        ],
+    )
+    def test_websocket_rejects_invalid_token_when_auth_enabled(
+        self,
+        client: TestClient,
+        job_manager: JobManager,
+        path_template: str,
+    ) -> None:
+        """
+        Verify invalid bearer tokens are rejected on WebSocket endpoints.
+
+        Invalid JWT values must trigger a policy-violation close and prevent the
+        socket from being accepted into the progress stream.
+        """
+        from backend.postparse.api import dependencies
+
+        app.dependency_overrides[dependencies.get_job_manager] = lambda: job_manager
+        app.dependency_overrides[dependencies.get_config] = _AuthEnabledConfig
+
+        try:
+            job_id = job_manager.create_job("telegram", {"limit": 10})
+            headers = {"Authorization": "Bearer invalid.jwt.token"}
+            with pytest.raises(WebSocketDisconnect) as exc_info:
+                with client.websocket_connect(
+                    path_template.format(job_id=job_id),
+                    headers=headers,
+                ):
+                    pass
+            assert exc_info.value.code == status.WS_1008_POLICY_VIOLATION
+        finally:
+            app.dependency_overrides.clear()
+
+
+class TestUnifiedWebSocketAdditional:
+    """Additional integration coverage for the unified WebSocket endpoint."""
+
     @pytest.mark.integration
     def test_unified_websocket_invalid_job(self, client: TestClient):
         """

@@ -94,6 +94,9 @@ target/
 # UV-specific files
 .python-version
 
-# Session files
-instagram_session
-telegram_session
+# Session files (credential-bearing; never commit)
+# Policy: All session artifacts live under data/sessions/ (gitignored via /data/).
+# Wildcards cover dynamic names (telegram_session_{api_id}, instagram_session_{username})
+# and SQLite sidecars (e.g. telegram_session_123.session-journal).
+telegram_session*
+instagram_session*

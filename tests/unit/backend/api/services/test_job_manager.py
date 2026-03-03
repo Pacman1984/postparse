@@ -185,11 +185,41 @@ class TestJobManagerCreateJob:
         Verifies metadata dictionary is preserved.
         """
         manager = JobManager()
-        metadata = {"api_id": "12345", "api_hash": "abc123", "limit": 100}
+        metadata = {"source": "test", "limit": 100}
         job_id = manager.create_job("telegram", metadata)
 
         job = manager.get_job(job_id)
         assert job.metadata == metadata
+
+    def test_create_job_removes_sensitive_metadata_fields(self) -> None:
+        """
+        Test create_job removes credential-bearing metadata fields.
+
+        Verifies sensitive keys are dropped recursively before persistence.
+        """
+        manager = JobManager()
+        metadata = {
+            "limit": 100,
+            "password": "plain-secret",
+            "nested": {
+                "api_hash": "sensitive-hash",
+                "safe_value": "ok",
+            },
+            "items": [
+                {"token": "secret-token", "name": "entry"},
+                {"name": "safe-entry"},
+            ],
+        }
+        job_id = manager.create_job("telegram", metadata)
+
+        job = manager.get_job(job_id)
+        assert job is not None
+        assert job.metadata["limit"] == 100
+        assert "password" not in job.metadata
+        assert "api_hash" not in job.metadata["nested"]
+        assert job.metadata["nested"]["safe_value"] == "ok"
+        assert "token" not in job.metadata["items"][0]
+        assert job.metadata["items"][0]["name"] == "entry"
 
     def test_create_job_generates_unique_ids(self) -> None:
         """

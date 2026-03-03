@@ -145,3 +145,11 @@ Override at runtime via `--classes` or `classes=` in Python.
 
 - Do not commit `config/.env` or session files
 - Store API keys in env vars, not in config.toml
+
+### Session file policy
+
+Session files (Telegram, Instagram) contain credentials and must never be committed:
+
+- **Location**: All session artifacts are written to `data/sessions/` (gitignored via `/data/`)
+- **Patterns**: `telegram_session*`, `instagram_session*` (covers dynamic names and SQLite sidecars)
+- **API extraction**: Uses `data/sessions/`; CLI may use config `paths.sessions_dir` or `paths.cache_dir`

@@ -8,8 +8,7 @@ Note: Actual extraction logic with background tasks will be implemented in
 the next phase. This module contains placeholder implementations.
 """
 
-import uuid
-from typing import List, Optional
+from typing import Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status, BackgroundTasks, WebSocket, WebSocketDisconnect
 
 from backend.postparse.core.data.database import SocialMediaDatabase
@@ -19,6 +18,7 @@ from backend.postparse.api.dependencies import (
     get_job_manager,
     get_websocket_manager,
     get_instagram_extraction_service,
+    get_current_websocket_user,
 )
 from backend.postparse.api.services.job_manager import JobManager
 from backend.postparse.api.services.websocket_manager import WebSocketManager
@@ -43,6 +43,27 @@ router = APIRouter(
         503: {"description": "Service unavailable"},
     },
 )
+
+
+def _build_instagram_job_metadata(request: InstagramExtractRequest) -> Dict[str, object]:
+    """
+    Build non-sensitive metadata persisted for Instagram extraction jobs.
+
+    Args:
+        request: Parsed Instagram extraction request payload.
+
+    Returns:
+        Metadata dictionary safe for in-memory job status display.
+
+    Example:
+        metadata = _build_instagram_job_metadata(request)
+    """
+    return {
+        "username": request.username,
+        "limit": request.limit,
+        "force_update": request.force_update,
+        "use_api": request.use_api,
+    }
 
 
 @router.post(
@@ -122,8 +143,9 @@ async def extract_posts(
                 detail="Password is required when use_api=false",
             )
     
-    # Create job in job manager
-    job_id = job_manager.create_job('instagram', request.model_dump())
+    # Persist only non-sensitive metadata needed for progress/status display.
+    job_metadata = _build_instagram_job_metadata(request)
+    job_id = job_manager.create_job("instagram", job_metadata)
     
     # Add extraction task to background tasks
     # BackgroundTasks supports async functions, so we can add the async method directly
@@ -399,6 +421,7 @@ async def websocket_progress(
     job_id: str,
     ws_manager: WebSocketManager = Depends(get_websocket_manager),
     job_manager: JobManager = Depends(get_job_manager),
+    user: Optional[dict] = Depends(get_current_websocket_user),
 ):
     """
     WebSocket endpoint for real-time job progress updates.
@@ -431,6 +454,8 @@ async def websocket_progress(
             "timestamp": "2025-11-23T10:30:00Z"
         }
     """
+    _ = user
+
     # Verify job exists
     job = job_manager.get_job(job_id)
     if not job:

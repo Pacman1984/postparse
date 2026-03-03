@@ -243,12 +243,10 @@ async def get_metrics(
         "uptime_seconds": 0,  # TODO: Track actual uptime
     }
     
-    # Get database statistics
+    # Get database statistics using COUNT(*) queries.
     try:
-        posts = db.get_instagram_posts(limit=1000)
-        messages = db.get_telegram_messages(limit=1000)
-        metrics["database"]["instagram_posts"] = len(posts)
-        metrics["database"]["telegram_messages"] = len(messages)
+        metrics["database"]["instagram_posts"] = db.count_instagram_posts()
+        metrics["database"]["telegram_messages"] = db.count_telegram_messages()
     except Exception:
         pass
     

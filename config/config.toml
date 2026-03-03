@@ -225,7 +225,7 @@ log_level = "info"  # Logging level (debug, info, warning, error)
 environment = "development"  # Environment mode (development, production)
 
 # Logging configuration
-log_request_body = false  # Log request bodies (enable for debugging, disable for production)
+log_request_body = false  # Default OFF. Enabling may expose sensitive input data in logs; use only for short, controlled debugging sessions.
 log_response_body = false  # Log response bodies (enable for debugging, disable for production)
 log_format = "text"  # Log format: "text" or "json" (use "json" for structured logging in production)
 
@@ -279,6 +279,9 @@ max_memory_mb = 100  # Max memory for in-memory fallback cache (MB)
 [paths]
 # Default directory paths
 cache_dir = "data/cache"
+# Session files (Telegram, Instagram) - credential-bearing; never commit.
+# API extraction writes to data/sessions/; .gitignore covers telegram_session*, instagram_session*.
+sessions_dir = "data/sessions"
 downloads_dir = "data/downloads"
 telegram_downloads_dir = "data/downloads/telegram"
 instagram_downloads_dir = "data/downloads/instagram"

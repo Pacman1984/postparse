@@ -13,11 +13,11 @@ Example:
         return db.get_instagram_posts()
 """
 
+import os
 from functools import lru_cache
-from typing import Generator, Optional, Dict, Any
-from pathlib import Path
+from typing import Any, Dict, Generator, Optional
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, WebSocket, WebSocketException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 
@@ -34,6 +34,94 @@ from backend.postparse.api.services.extraction_service import (
 
 # Security scheme for JWT authentication
 security = HTTPBearer(auto_error=False)
+
+
+def _is_auth_enabled(config: ConfigManager) -> bool:
+    """
+    Determine whether API authentication is enabled.
+
+    Args:
+        config: Configuration manager instance.
+
+    Returns:
+        True when JWT authentication is enabled, otherwise False.
+    """
+    return bool(config.get("api.auth.enabled", False))
+
+
+def extract_bearer_token(authorization_header: Optional[str]) -> Optional[str]:
+    """
+    Extract a bearer token from an Authorization header value.
+
+    Args:
+        authorization_header: Raw Authorization header value.
+
+    Returns:
+        Token string when header is a valid Bearer token, otherwise None.
+
+    Example:
+        token = extract_bearer_token("Bearer my.jwt.token")
+    """
+    if not authorization_header:
+        return None
+
+    if not authorization_header.startswith("Bearer "):
+        return None
+
+    token = authorization_header.replace("Bearer ", "", 1).strip()
+    return token or None
+
+
+def validate_jwt_token(token: str, config: ConfigManager) -> Dict[str, Any]:
+    """
+    Validate a JWT token using configured API authentication settings.
+
+    Args:
+        token: JWT token string to validate.
+        config: Configuration manager instance.
+
+    Returns:
+        Decoded JWT payload dictionary.
+
+    Raises:
+        HTTPException: If JWT settings are invalid or token is invalid.
+
+    Example:
+        payload = validate_jwt_token("eyJhbGciOiJIUzI1NiIs...", config)
+    """
+    secret_key = config.get("api.auth.secret_key") or os.getenv("JWT_SECRET_KEY")
+    if not secret_key:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="JWT secret key not configured",
+        )
+
+    algorithm = config.get("api.auth.algorithm", "HS256")
+
+    try:
+        return jwt.decode(token, secret_key, algorithms=[algorithm])
+    except JWTError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Invalid authentication token: {str(exc)}",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+
+
+def _resolve_websocket_token(websocket: WebSocket) -> Optional[str]:
+    """
+    Resolve bearer token for WebSocket authentication.
+
+    Args:
+        websocket: Incoming WebSocket connection.
+
+    Returns:
+        Bearer token from Authorization header or `token` query param.
+    """
+    header_token = extract_bearer_token(websocket.headers.get("Authorization"))
+    if header_token:
+        return header_token
+    return websocket.query_params.get("token")
 
 
 @lru_cache()
@@ -150,12 +238,9 @@ async def get_current_user(
         def protected_route(user: Dict = Depends(get_current_user)):
             return {"user": user}
     """
-    # Check if authentication is enabled
-    auth_enabled = config.get("api.auth.enabled", False)
-    if not auth_enabled:
+    if not _is_auth_enabled(config):
         return None
 
-    # If auth is enabled, token is required
     if not credentials:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -163,32 +248,50 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    token = credentials.credentials
+    return validate_jwt_token(credentials.credentials, config)
 
-    # Get JWT configuration
-    secret_key = config.get("api.auth.secret_key")
-    if not secret_key:
-        # Try environment variable
-        import os
-        secret_key = os.getenv("JWT_SECRET_KEY")
-        if not secret_key:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="JWT secret key not configured",
-            )
 
-    algorithm = config.get("api.auth.algorithm", "HS256")
+async def get_current_websocket_user(
+    websocket: WebSocket,
+    config: ConfigManager = Depends(get_config),
+) -> Optional[Dict[str, Any]]:
+    """
+    Validate WebSocket authentication using the same JWT rules as HTTP.
+
+    Args:
+        websocket: Incoming WebSocket connection.
+        config: ConfigManager instance (injected dependency).
+
+    Returns:
+        Decoded JWT payload if authentication succeeds, or None when auth is
+        disabled.
+
+    Raises:
+        WebSocketException: If authentication is enabled and token is missing
+            or invalid.
+
+    Example:
+        @router.websocket("/ws/progress/{job_id}")
+        async def ws(job_id: str, _: Dict[str, Any] = Depends(get_current_websocket_user)):
+            ...
+    """
+    if not _is_auth_enabled(config):
+        return None
+
+    token = _resolve_websocket_token(websocket)
+    if not token:
+        raise WebSocketException(
+            code=status.WS_1008_POLICY_VIOLATION,
+            reason="Authentication token is required",
+        )
 
     try:
-        # Decode and validate token
-        payload = jwt.decode(token, secret_key, algorithms=[algorithm])
-        return payload
-    except JWTError as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid authentication token: {str(e)}",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        return validate_jwt_token(token, config)
+    except HTTPException as exc:
+        raise WebSocketException(
+            code=status.WS_1008_POLICY_VIOLATION,
+            reason=str(exc.detail),
+        ) from exc
 
 
 def get_optional_auth(

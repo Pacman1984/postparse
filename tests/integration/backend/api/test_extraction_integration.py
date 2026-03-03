@@ -80,6 +80,50 @@ class TestTelegramExtraction:
         assert "job_id" in data
         assert data["status"] == "pending"
         assert isinstance(data["job_id"], str)
+
+    @pytest.mark.integration
+    def test_telegram_extraction_metadata_excludes_credentials(
+        self,
+        client: TestClient,
+    ) -> None:
+        """
+        Verify Telegram job metadata does not persist credential fields.
+
+        Verifies:
+        - `api_id`, `api_hash`, and `phone` are not stored in Job.metadata
+        - Only non-sensitive status metadata is retained
+        """
+        from backend.postparse.api import dependencies
+
+        job_manager = JobManager()
+        app.dependency_overrides[dependencies.get_job_manager] = lambda: job_manager
+
+        try:
+            request_data = {
+                "api_id": 12345678,
+                "api_hash": "0123456789abcdef0123456789abcdef",
+                "phone": "+1234567890",
+                "limit": 12,
+                "force_update": True,
+                "max_requests_per_session": 7,
+            }
+            response = client.post("/api/v1/telegram/extract", json=request_data)
+            assert response.status_code == 202
+
+            job_id = response.json()["job_id"]
+            job = job_manager.get_job(job_id)
+            assert job is not None
+            assert job.metadata == {
+                "limit": 12,
+                "force_update": True,
+                "max_requests_per_session": 7,
+                "has_phone": True,
+            }
+            assert "api_id" not in job.metadata
+            assert "api_hash" not in job.metadata
+            assert "phone" not in job.metadata
+        finally:
+            app.dependency_overrides.clear()
     
     @pytest.mark.integration
     @pytest.mark.slow
@@ -304,6 +348,48 @@ class TestInstagramExtraction:
         assert "job_id" in data
         assert data["status"] == "pending"
         assert isinstance(data["job_id"], str)
+
+    @pytest.mark.integration
+    def test_instagram_extraction_metadata_excludes_credentials(
+        self,
+        client: TestClient,
+    ) -> None:
+        """
+        Verify Instagram job metadata does not persist credential fields.
+
+        Verifies:
+        - `password` and `access_token` are not stored in Job.metadata
+        - Non-sensitive request context remains available for progress display
+        """
+        from backend.postparse.api import dependencies
+
+        job_manager = JobManager()
+        app.dependency_overrides[dependencies.get_job_manager] = lambda: job_manager
+
+        try:
+            request_data = {
+                "username": "metadata_test_user",
+                "password": "super-secret-password",
+                "limit": 9,
+                "force_update": True,
+                "use_api": False,
+            }
+            response = client.post("/api/v1/instagram/extract", json=request_data)
+            assert response.status_code == 202
+
+            job_id = response.json()["job_id"]
+            job = job_manager.get_job(job_id)
+            assert job is not None
+            assert job.metadata == {
+                "username": "metadata_test_user",
+                "limit": 9,
+                "force_update": True,
+                "use_api": False,
+            }
+            assert "password" not in job.metadata
+            assert "access_token" not in job.metadata
+        finally:
+            app.dependency_overrides.clear()
     
     @pytest.mark.integration
     @pytest.mark.slow

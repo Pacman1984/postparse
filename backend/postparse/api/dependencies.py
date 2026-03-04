@@ -375,7 +375,7 @@ def get_websocket_manager() -> WebSocketManager:
 
 
 @lru_cache()
-def get_cache_manager(config: ConfigManager = Depends(get_config)) -> CacheManager:
+def get_cache_manager() -> CacheManager:
     """
     Get singleton CacheManager instance.
 
@@ -396,6 +396,7 @@ def get_cache_manager(config: ConfigManager = Depends(get_config)) -> CacheManag
             cache.set(cache_key, results, ttl=600)
             return results
     """
+    config = get_config()
     return CacheManager(config)
 
 

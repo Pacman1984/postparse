@@ -14,6 +14,7 @@ from backend.postparse.services.analysis.classifiers.multi_class import MultiCla
 from backend.postparse.services.analysis.classifiers.multi_label import MultiLabelLLMClassifier
 from backend.postparse.api.dependencies import (
     get_recipe_llm_classifier,
+    _get_cached_recipe_llm_classifier,
     get_optional_auth,
     get_config,
 )
@@ -117,7 +118,7 @@ async def classify_recipe(
         # Use provider-specific classifier if provider_name is provided
         if request.provider_name:
             try:
-                classifier = RecipeLLMClassifier(provider_name=request.provider_name)
+                classifier = _get_cached_recipe_llm_classifier(request.provider_name)
             except Exception as e:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -211,7 +212,7 @@ async def classify_batch(
     # Use provider-specific classifier if provider_name is provided
     if request.provider_name:
         try:
-            classifier = RecipeLLMClassifier(provider_name=request.provider_name)
+            classifier = _get_cached_recipe_llm_classifier(request.provider_name)
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

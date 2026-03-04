@@ -43,7 +43,7 @@ def is_youtube_url(url: str) -> bool:
     """
     try:
         from urllib.parse import urlparse
-        domain = urlparse(url).netloc.lower().lstrip("www.")
+        domain = urlparse(url).netloc.lower().removeprefix("www.")
         return domain in _YOUTUBE_DOMAINS or domain.endswith(".youtube.com")
     except Exception:
         return False

@@ -10,7 +10,7 @@ This module provides reusable schema classes for:
 All schemas use Pydantic v2 syntax with comprehensive validation and examples.
 """
 
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Any, Dict, Generic, List, Optional, TypeVar
 from pydantic import BaseModel, Field, ConfigDict
 
@@ -64,7 +64,7 @@ class HealthResponse(BaseModel):
         examples=["0.1.0"]
     )
     timestamp: datetime = Field(
-        default_factory=datetime.utcnow,
+        default_factory=lambda: datetime.now(UTC),
         description="Current server timestamp"
     )
     details: Optional[Dict[str, Any]] = Field(

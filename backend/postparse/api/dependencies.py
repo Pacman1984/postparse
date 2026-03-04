@@ -295,16 +295,20 @@ async def get_current_websocket_user(
 
 
 def get_optional_auth(
-    user: Optional[Dict[str, Any]] = Depends(get_current_user),
+    user: Optional[Dict[str, Any]] = None,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    config: ConfigManager = Depends(get_config),
 ) -> Optional[Dict[str, Any]]:
     """
     Optional authentication dependency that doesn't raise errors.
 
-    This is a convenience wrapper around get_current_user for endpoints
-    that support both authenticated and anonymous access.
+    Attempts to validate a Bearer token when authentication is enabled.
+    Returns None when no credentials are provided or when validation fails,
+    allowing endpoints to support both authenticated and anonymous access.
 
     Args:
-        user: User info from get_current_user (injected dependency).
+        credentials: HTTP Bearer token from request header (optional).
+        config: ConfigManager instance (injected dependency).
 
     Returns:
         User info dict if authenticated, None otherwise.
@@ -316,7 +320,23 @@ def get_optional_auth(
                 return {"message": f"Hello, {user['username']}"}
             return {"message": "Hello, guest"}
     """
-    return user
+    # Preserve direct-call compatibility (used in unit tests)
+    if user is not None:
+        return user
+
+    # When called directly (outside FastAPI DI), credentials may be a Depends
+    # sentinel rather than an HTTPAuthorizationCredentials instance.
+    if not isinstance(credentials, HTTPAuthorizationCredentials):
+        return None
+
+    if not _is_auth_enabled(config):
+        return None
+
+    try:
+        return validate_jwt_token(credentials.credentials, config)
+    except HTTPException:
+        # Suppress auth errors for optional auth; treat as anonymous
+        return None
 
 
 @lru_cache()

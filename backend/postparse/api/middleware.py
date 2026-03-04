@@ -51,6 +51,7 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
 
         # Public endpoints that don't require authentication
         self.public_paths = {
+            "/",
             "/health",
             "/health/ready",
             "/health/live",

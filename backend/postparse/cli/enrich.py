@@ -212,12 +212,18 @@ def urls(ctx, source: str, limit: Optional[int], force: bool):
                 continue
 
             processed = 0
+            skipped = 0
             no_urls = 0
 
             with create_progress() as progress:
                 task = progress.add_task(f"[cyan]{current_source}[/cyan]", total=len(items))
 
                 for item in items:
+                    if not force and item['content_expanded']:
+                        skipped += 1
+                        progress.advance(task)
+                        continue
+
                     extracted = _extract_and_cache_urls(database, item['id'], current_source, item['content'])
                     if extracted:
                         processed += 1
@@ -233,6 +239,7 @@ def urls(ctx, source: str, limit: Optional[int], force: bool):
             summary.add_column("Metric", style="cyan")
             summary.add_column("Count", style="green", justify="right")
             summary.add_row("URLs extracted", str(processed))
+            summary.add_row("Already processed (skipped)", str(skipped))
             summary.add_row("No URLs (skipped)", str(no_urls))
             console.print(summary)
             console.print()

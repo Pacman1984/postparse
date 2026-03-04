@@ -50,6 +50,9 @@ class TestClassifyText:
                 assert result.exit_code == 0
                 # Should show classification result
                 assert "recipe" in result.output.lower()
+                mock_classifier.predict.assert_called_once_with(
+                    "Mix flour and water to make dough"
+                )
 
     def test_classify_text_with_stdin_input(self) -> None:
         """Test classify text reading from stdin."""
@@ -80,6 +83,9 @@ class TestClassifyText:
                 )
 
                 assert result.exit_code == 0
+                mock_classifier.predict.assert_called_once_with(
+                    "Bake at 350 degrees for 30 minutes"
+                )
 
     def test_classify_text_recipe_with_details(self) -> None:
         """Test classify text showing recipe details."""
@@ -115,7 +121,9 @@ class TestClassifyText:
                 assert result.exit_code == 0
                 # Should show details
                 output_lower = result.output.lower()
-                assert "italian" in output_lower or "details" in output_lower
+                assert "italian" in output_lower
+                assert "difficulty" in output_lower
+                mock_classifier.predict.assert_called_once_with("Make pasta")
 
     def test_classify_text_json_output(self) -> None:
         """Test classify text with JSON output format."""
@@ -145,8 +153,10 @@ class TestClassifyText:
                 )
 
                 assert result.exit_code == 0
-                # Should output JSON
-                assert "{" in result.output
+                assert '"label": "Not Recipe"' in result.output
+                assert '"confidence": 0.85' in result.output
+                assert '"details": {}' in result.output
+                mock_classifier.predict.assert_called_once_with("Random text")
 
     def test_classify_text_with_specific_provider(self) -> None:
         """Test classify text with specific LLM provider."""
@@ -180,6 +190,11 @@ class TestClassifyText:
                 )
 
                 assert result.exit_code == 0
+                mock_classifier_class.assert_called_once_with(
+                    provider_name="openai",
+                    config_path=None,
+                )
+                mock_classifier.predict.assert_called_once_with("Cook rice")
 
     def test_classify_text_multiclass(self) -> None:
         """Test classify text with multiclass classifier."""
@@ -214,6 +229,14 @@ class TestClassifyText:
 
                 assert result.exit_code == 0
                 assert "tech" in result.output.lower()
+                mock_classifier_class.assert_called_once_with(
+                    classes={"recipe": "Cooking", "tech": "Technology"},
+                    provider_name=None,
+                    config_path=None,
+                )
+                mock_classifier.predict.assert_called_once_with(
+                    "Check out this new FastAPI library!"
+                )
 
     def test_classify_text_multiclass_requires_classes(self) -> None:
         """Test that multiclass classifier requires --classes option."""
@@ -229,6 +252,29 @@ class TestClassifyText:
             )
 
             assert result.exit_code != 0
+            assert "multiclass classifier requires --classes option" in (
+                result.output.lower()
+            )
+            assert not mock_load.called
+
+    def test_classify_text_multilabel_requires_classes(self) -> None:
+        """Test that multilabel classifier requires --classes option."""
+        runner = CliRunner()
+
+        with patch(
+            "backend.postparse.services.analysis.classifiers.multi_label.MultiLabelLLMClassifier"
+        ) as mock_classifier_class:
+            mock_classifier_class.side_effect = ValueError("At least 2 classes required")
+            result = runner.invoke(
+                cli,
+                ["classify", "text", "--classifier", "multilabel", "Some text"],
+            )
+
+            assert result.exit_code != 0
+            assert "multilabel classifier requires --classes option" in (
+                result.output.lower()
+            )
+            assert not mock_classifier_class.called
 
     def test_classify_text_handles_empty_input(self) -> None:
         """Test that classify text handles empty input gracefully."""
@@ -236,9 +282,8 @@ class TestClassifyText:
 
         result = runner.invoke(cli, ["classify", "text"], input="")
 
-        # Should show error about missing text or handle gracefully
-        # Command may succeed with empty stdin or fail - either is acceptable
-        assert isinstance(result.exit_code, int)
+        assert result.exit_code != 0
+        assert "no text provided" in result.output.lower()
 
     def test_classify_text_handles_classifier_error(self) -> None:
         """Test that classify text handles classifier errors."""
@@ -257,6 +302,11 @@ class TestClassifyText:
                 )
 
                 assert result.exit_code != 0
+                assert "classification failed" in result.output.lower()
+                mock_classifier_class.assert_called_once_with(
+                    provider_name=None,
+                    config_path=None,
+                )
 
 
 class TestClassifyDb:
@@ -303,6 +353,8 @@ class TestClassifyDb:
                     assert result.exit_code == 0
                     assert mock_db.search_instagram_posts.called
                     assert mock_db.search_telegram_messages.called
+                    assert mock_classifier.predict.call_count == 2
+                    assert mock_db.save_classification_result.call_count == 2
 
     def test_classify_db_instagram(self) -> None:
         """
@@ -349,8 +401,16 @@ class TestClassifyDb:
                     )
 
                     assert result.exit_code == 0
-                    output_lower = result.output.lower()
-                    assert "recipe" in output_lower or "classified" in output_lower
+                    assert mock_classifier.predict.call_count == 2
+                    predicted_texts = [
+                        call.args[0]
+                        for call in mock_classifier.predict.call_args_list
+                    ]
+                    assert predicted_texts == [
+                        "Recipe for pasta",
+                        "Beautiful sunset photo",
+                    ]
+                    assert mock_db.save_classification_result.call_count == 2
 
     def test_classify_db_telegram(self) -> None:
         """Test database classification of Telegram messages.
@@ -396,6 +456,13 @@ class TestClassifyDb:
                     )
 
                     assert result.exit_code == 0
+                    assert mock_classifier.predict.call_count == 2
+                    predicted_texts = [
+                        call.args[0]
+                        for call in mock_classifier.predict.call_args_list
+                    ]
+                    assert predicted_texts == ["Recipe for bread", "Meeting at 3pm"]
+                    assert mock_db.save_classification_result.call_count == 2
 
     def test_classify_db_with_hashtag_filter(self) -> None:
         """Test database classification with hashtag filtering."""
@@ -438,6 +505,15 @@ class TestClassifyDb:
                     )
 
                     assert result.exit_code == 0
+                    mock_db.search_instagram_posts.assert_called_once_with(
+                        hashtags=["cooking"],
+                        date_range=None,
+                        limit=50,
+                        cursor=None,
+                    )
+                    mock_classifier.predict.assert_called_once_with(
+                        "Recipe with #cooking"
+                    )
 
     def test_classify_db_with_no_items(self) -> None:
         """Test database classification when no items found."""
@@ -493,6 +569,8 @@ class TestClassifyDb:
                     )
 
                     assert result.exit_code == 0
+                    assert "no instagram found to classify" in result.output.lower()
+                    assert not mock_db.save_classification_result.called
 
     def test_classify_db_multiclass(self) -> None:
         """Test database classification with multiclass classifier."""
@@ -533,6 +611,17 @@ class TestClassifyDb:
                     )
 
                     assert result.exit_code == 0
+                    mock_classifier_class.assert_called_once_with(
+                        classes={"recipe": "Cooking", "tech": "Technology"},
+                        provider_name=None,
+                        config_path=None,
+                    )
+                    mock_classifier.predict.assert_called_once_with(
+                        "Check out this new API"
+                    )
+                    save_kwargs = mock_db.save_classification_result.call_args.kwargs
+                    assert save_kwargs["classifier_name"] == "multiclass_llm"
+                    assert save_kwargs["classification_type"] == "single"
 
     def test_classify_db_multiclass_requires_classes(self) -> None:
         """Test that multiclass classifier requires --classes option."""
@@ -550,6 +639,29 @@ class TestClassifyDb:
                 )
 
                 assert result.exit_code != 0
+                assert "multiclass classifier requires --classes option" in (
+                    result.output.lower()
+                )
+                assert not mock_load.called
+
+    def test_classify_db_multilabel_requires_classes(self) -> None:
+        """Test that multilabel classifier requires --classes option."""
+        runner = CliRunner()
+
+        with patch(
+            "backend.postparse.services.analysis.classifiers.multi_label.MultiLabelLLMClassifier"
+        ) as mock_classifier_class:
+            mock_classifier_class.side_effect = ValueError("At least 2 classes required")
+            result = runner.invoke(
+                cli,
+                ["classify", "db", "--classifier", "multilabel"],
+            )
+
+            assert result.exit_code != 0
+            assert "multilabel classifier requires --classes option" in (
+                result.output.lower()
+            )
+            assert not mock_classifier_class.called
 
     def test_classify_db_skips_already_classified_with_same_model(self) -> None:
         """Test that db skips items already classified with same model."""
@@ -772,7 +884,15 @@ class TestClassifyTextMultilabel:
 
                 result = runner.invoke(
                     cli,
-                    ["classify", "text", "--classifier", "multilabel", "Mojito recipe"],
+                    [
+                        "classify",
+                        "text",
+                        "--classifier",
+                        "multilabel",
+                        "--classes",
+                        '{"recipe": "Recipe content", "cocktail": "Cocktail content"}',
+                        "Mojito recipe",
+                    ],
                 )
 
                 assert result.exit_code == 0

@@ -253,10 +253,12 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             True for paths likely to carry credentials or secrets.
         """
         path_lower = path.lower()
-        sensitive_paths = {
+        sensitive_extract_markers = (
+            "/telegram/extract",
+            "/instagram/extract",
             "/extract/telegram",
             "/extract/instagram",
-        }
+        )
         sensitive_keywords = {
             "/auth",
             "/login",
@@ -265,10 +267,9 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             "/secret",
             "/credential",
         }
-        return (
-            path_lower in sensitive_paths
-            or any(keyword in path_lower for keyword in sensitive_keywords)
-        )
+        if any(marker in path_lower for marker in sensitive_extract_markers):
+            return True
+        return any(keyword in path_lower for keyword in sensitive_keywords)
 
     def _mask_plain_text_payload(self, payload: str) -> str:
         """
@@ -292,12 +293,12 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             masked,
         )
         masked = re.sub(
-            r'(?i)("(?:password|token|secret|api[_-]?key|authorization|credential)"\s*:\s*)"[^"]*"',
+            r'(?i)("(?:password|token|secret|api[_-]?key|api[_-]?hash|authorization|credential)"\s*:\s*)"[^"]*"',
             r'\1"***REDACTED***"',
             masked,
         )
         masked = re.sub(
-            r"(?i)\b(password|token|secret|api[_-]?key|authorization|credential)\b(\s*[:=]\s*)([^\s&]+)",
+            r"(?i)\b(password|token|secret|api[_-]?key|api[_-]?hash|authorization|credential)\b(\s*[:=]\s*)([^\s&]+)",
             lambda match: f"{match.group(1)}{match.group(2)}***REDACTED***",
             masked,
         )

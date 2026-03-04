@@ -124,7 +124,7 @@ def _validate_provider(provider: str, config) -> bool:
 @click.option(
     '--classes',
     'classes_arg',
-    help='For multiclass: class definitions as JSON or @filepath',
+    help='For multiclass/multilabel: class definitions as JSON or @filepath',
 )
 @click.option(
     '--provider',
@@ -175,9 +175,11 @@ def text(ctx, content, classifier, classes_arg, provider, output):
                 print_error("No text provided from stdin")
                 raise click.Abort()
         
-        # Validate multiclass requires classes
-        if classifier == 'multiclass' and not classes_arg:
-            print_error("Multiclass classifier requires --classes option")
+        # Validate multiclass/multilabel require classes
+        if classifier in ('multiclass', 'multilabel') and not classes_arg:
+            print_error(
+                f"{classifier.capitalize()} classifier requires --classes option"
+            )
             raise click.Abort()
         
         # Load config
@@ -316,7 +318,7 @@ def text(ctx, content, classifier, classes_arg, provider, output):
 @click.option(
     '--classes',
     'classes_arg',
-    help='For multiclass: class definitions as JSON or @filepath',
+    help='For multiclass/multilabel: class definitions as JSON or @filepath',
 )
 @click.option(
     '--limit',
@@ -400,9 +402,11 @@ def db(ctx, source, classifier, classes_arg, limit, filter_hashtag, provider,
             print_error("--replace requires --force flag")
             raise click.Abort()
         
-        # Validate multiclass requires classes
-        if classifier == 'multiclass' and not classes_arg:
-            print_error("Multiclass classifier requires --classes option")
+        # Validate multiclass/multilabel require classes
+        if classifier in ('multiclass', 'multilabel') and not classes_arg:
+            print_error(
+                f"{classifier.capitalize()} classifier requires --classes option"
+            )
             raise click.Abort()
         
         # Load config

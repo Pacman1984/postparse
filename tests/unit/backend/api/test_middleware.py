@@ -114,6 +114,23 @@ def request_logging_middleware() -> RequestLoggingMiddleware:
 class TestRequestLoggingMiddlewareBodyHandling:
     """Tests for safe request-body extraction and redaction."""
 
+    def test_is_sensitive_non_json_endpoint_matches_prefixed_extract_routes(
+        self,
+        request_logging_middleware: RequestLoggingMiddleware,
+    ) -> None:
+        """
+        Verify sensitive endpoint detection for real API-prefixed extract paths.
+
+        The middleware should flag extraction routes that include versioned API
+        prefixes instead of relying on shortened test-only route literals.
+        """
+        assert request_logging_middleware._is_sensitive_non_json_endpoint(
+            "/api/v1/telegram/extract"
+        )
+        assert request_logging_middleware._is_sensitive_non_json_endpoint(
+            "/api/v1/instagram/extract"
+        )
+
     @pytest.mark.asyncio
     async def test_extract_request_body_redacts_nested_json_fields(
         self,
@@ -161,7 +178,7 @@ class TestRequestLoggingMiddlewareBodyHandling:
         """
         request = _build_request(
             method="POST",
-            path="/extract/telegram",
+            path="/api/v1/telegram/extract",
             body=b"api_hash=abc123&password=secret",
             content_type="application/x-www-form-urlencoded",
         )
@@ -183,7 +200,7 @@ class TestRequestLoggingMiddlewareBodyHandling:
         request = _build_request(
             method="POST",
             path="/classify",
-            body=b"token=abc123&note=hello",
+            body=b"token=abc123&api_hash=hash123&note=hello",
             content_type="application/x-www-form-urlencoded",
         )
 
@@ -192,4 +209,5 @@ class TestRequestLoggingMiddlewareBodyHandling:
         assert logged_body is not None
         assert "***REDACTED***" in logged_body
         assert "abc123" not in logged_body
+        assert "hash123" not in logged_body
         assert "note=hello" in logged_body

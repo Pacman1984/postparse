@@ -6,7 +6,9 @@ Tests cover:
 - CLI enrich urls command
 """
 
-from unittest.mock import MagicMock, patch
+from contextlib import nullcontext
+from pathlib import Path
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 from click.testing import CliRunner
@@ -93,38 +95,40 @@ class TestContentExpandedDb:
     """Test content_expanded DB methods."""
 
     @pytest.fixture
-    def db(self, tmp_path) -> SocialMediaDatabase:
+    def db(self, tmp_path: Path) -> SocialMediaDatabase:
         """Create a temporary database."""
         return SocialMediaDatabase(str(tmp_path / "test.db"))
 
     def _insert_telegram_message(self, db: SocialMediaDatabase, content: str) -> int:
-        """Helper to insert a test telegram message."""
-        with db as d:
-            d._cursor.execute(
-                """
-                INSERT INTO telegram_messages
-                (message_id, content, content_type)
-                VALUES (?, ?, ?)
-                """,
-                (abs(hash(content)) % 10**9, content, 'text'),
+        """Insert a telegram message with a deterministic unique ID."""
+        with db as database_ctx:
+            database_ctx._cursor.execute(
+                "SELECT COALESCE(MAX(message_id), 0) FROM telegram_messages"
             )
-            d._conn.commit()
-            return d._cursor.lastrowid
+            row = database_ctx._cursor.fetchone()
+        next_message_id = int(row[0]) + 1 if row else 1
+        inserted_id = db._insert_telegram_message(
+            message_id=next_message_id,
+            content=content,
+            content_type="text",
+        )
+        assert inserted_id is not None
+        return inserted_id
 
     def _insert_instagram_post(self, db: SocialMediaDatabase, caption: str) -> int:
-        """Helper to insert a test instagram post."""
-        shortcode = f"test_{abs(hash(caption)) % 10**6}"
-        with db as d:
-            d._cursor.execute(
-                """
-                INSERT INTO instagram_posts
-                (shortcode, post_url, caption)
-                VALUES (?, ?, ?)
-                """,
-                (shortcode, f"https://instagram.com/p/{shortcode}", caption),
+        """Insert an Instagram post with a deterministic shortcode."""
+        with db as database_ctx:
+            database_ctx._cursor.execute(
+                "SELECT COALESCE(MAX(id), 0) FROM instagram_posts"
             )
-            d._conn.commit()
-            return d._cursor.lastrowid
+            row = database_ctx._cursor.fetchone()
+        shortcode_suffix = int(row[0]) + 1 if row else 1
+        inserted_id = db._insert_instagram_post(
+            shortcode=f"test_{shortcode_suffix}",
+            caption=caption,
+        )
+        assert inserted_id is not None
+        return inserted_id
 
     def test_save_and_get_content_expanded_telegram(
         self, db: SocialMediaDatabase
@@ -222,11 +226,123 @@ class TestEnrichUrlsCli:
                 mock_load.return_value = mock_config
 
                 mock_db = MagicMock()
-                mock_db.get_items_without_content_expanded.return_value = []
                 mock_get_db.return_value = mock_db
 
-                result = runner.invoke(
-                    cli,
-                    ["enrich", "urls", "--source", "telegram"],
-                )
+                with patch(
+                    "backend.postparse.cli.enrich._fetch_content_items",
+                    return_value=[],
+                ) as mock_fetch:
+                    with patch(
+                        "backend.postparse.cli.enrich._extract_and_cache_urls"
+                    ) as mock_extract:
+                        result = runner.invoke(
+                            cli,
+                            ["enrich", "urls", "--source", "telegram"],
+                        )
                 assert result.exit_code == 0
+                output_lower = result.output.lower()
+                assert "no telegram items to process" in output_lower
+                assert "done. 0 items enriched with urls" in output_lower
+                mock_fetch.assert_called_once_with(mock_db, "telegram", None)
+                mock_extract.assert_not_called()
+
+    def test_enrich_urls_skips_existing_without_force(self) -> None:
+        """Skip rows with existing content_expanded when force is disabled."""
+        runner = CliRunner()
+        items = [
+            {
+                "id": 1,
+                "content": "Existing https://example.com/old",
+                "content_expanded": "already-expanded",
+            },
+            {
+                "id": 2,
+                "content": "New https://example.com/new",
+                "content_expanded": "",
+            },
+        ]
+
+        mock_progress = MagicMock()
+        mock_progress.add_task.return_value = "task"
+        with patch("backend.postparse.cli.enrich.load_config", return_value=MagicMock()):
+            mock_db = MagicMock()
+            with patch(
+                "backend.postparse.cli.enrich.get_database",
+                return_value=mock_db,
+            ):
+                with patch(
+                    "backend.postparse.cli.enrich._fetch_content_items",
+                    return_value=items,
+                ):
+                    with patch(
+                        "backend.postparse.cli.enrich.create_progress",
+                        return_value=nullcontext(mock_progress),
+                    ):
+                        result = runner.invoke(
+                            cli,
+                            ["enrich", "urls", "--source", "telegram"],
+                        )
+
+        assert result.exit_code == 0
+        mock_db.save_content_expanded.assert_called_once_with(
+            item_id=2,
+            source="telegram",
+            content_expanded="https://example.com/new",
+        )
+        assert "already processed" in result.output.lower()
+
+    def test_enrich_urls_processes_existing_with_force(self) -> None:
+        """Process rows with existing content_expanded when force is enabled."""
+        runner = CliRunner()
+        items = [
+            {
+                "id": 1,
+                "content": "Existing https://example.com/old",
+                "content_expanded": "already-expanded",
+            },
+            {
+                "id": 2,
+                "content": "New https://example.com/new",
+                "content_expanded": "",
+            },
+        ]
+
+        mock_progress = MagicMock()
+        mock_progress.add_task.return_value = "task"
+        with patch("backend.postparse.cli.enrich.load_config", return_value=MagicMock()):
+            mock_db = MagicMock()
+            with patch(
+                "backend.postparse.cli.enrich.get_database",
+                return_value=mock_db,
+            ):
+                with patch(
+                    "backend.postparse.cli.enrich._fetch_content_items",
+                    return_value=items,
+                ):
+                    with patch(
+                        "backend.postparse.cli.enrich.create_progress",
+                        return_value=nullcontext(mock_progress),
+                    ):
+                        result = runner.invoke(
+                            cli,
+                            ["enrich", "urls", "--source", "telegram", "--force"],
+                        )
+
+        assert result.exit_code == 0
+        assert mock_db.save_content_expanded.call_count == 2
+        mock_db.save_content_expanded.assert_has_calls(
+            [
+                call(
+                    item_id=1,
+                    source="telegram",
+                    content_expanded="https://example.com/old",
+                ),
+                call(
+                    item_id=2,
+                    source="telegram",
+                    content_expanded="https://example.com/new",
+                ),
+            ],
+            any_order=False,
+        )
+        assert "already processed" in result.output.lower()

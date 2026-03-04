@@ -20,8 +20,8 @@ import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
-from typing import Dict, Any
 from pathlib import Path
+from typing import Any, Dict
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, status
@@ -29,11 +29,18 @@ from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
 # Load environment variables from config/.env
 env_path = Path(__file__).parent.parent.parent.parent / 'config' / '.env'
 if env_path.exists():
     load_dotenv(dotenv_path=env_path)
-    print(f"Loaded environment variables from {env_path}")
+    logger.info("Loaded environment variables from %s", env_path)
 
 from backend.postparse.api.routers import (
     telegram_router,
@@ -52,13 +59,6 @@ from backend.postparse.api.middleware import (
 from backend.postparse.core.utils.config import ConfigManager
 from backend.postparse.llm.exceptions import LLMProviderError
 from backend.postparse.core.data.database import SocialMediaDatabase
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
 
 # Global config instance
 config = ConfigManager()

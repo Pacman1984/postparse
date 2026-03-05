@@ -197,11 +197,25 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             "authorization", "auth", "credential", "private_key"
         }
 
+        normalized_sensitive_fields = {
+            re.sub(r"[^a-z0-9]", "", field) for field in sensitive_fields
+        }
+
         if isinstance(data, dict):
             redacted: Dict[str, Any] = {}
             for key, value in data.items():
-                key_lower = str(key).lower()
-                if any(field in key_lower for field in sensitive_fields):
+                # Convert camelCase/PascalCase keys into tokenizable snake_case.
+                key_snake = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", str(key))
+                key_normalized = key_snake.lower()
+                key_parts = [
+                    part for part in re.split(r"[^a-z0-9]+", key_normalized) if part
+                ]
+                compact_key = re.sub(r"[^a-z0-9]", "", key_normalized)
+                if (
+                    key_normalized in sensitive_fields
+                    or compact_key in normalized_sensitive_fields
+                    or any(part in sensitive_fields for part in key_parts)
+                ):
                     redacted[key] = "***REDACTED***"
                 else:
                     redacted[key] = self._redact_sensitive_data(value)

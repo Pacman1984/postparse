@@ -47,6 +47,7 @@ from langchain_litellm import ChatLiteLLM
 from pydantic import BaseModel, Field
 
 from .base import BaseClassifier, ClassificationResult
+from ._shared import LLMClassifierCommon
 from backend.postparse.core.utils.config import get_config
 from backend.postparse.llm.config import LLMConfig, get_provider_config
 
@@ -74,7 +75,7 @@ class MultiClassResult(BaseModel):
     reasoning: Optional[str] = Field(None, description="Explanation for the classification")
 
 
-class MultiClassLLMClassifier(BaseClassifier):
+class MultiClassLLMClassifier(LLMClassifierCommon, BaseClassifier):
     """LLM-based multi-class classifier with dynamic category definitions.
 
     This classifier extends BaseClassifier to provide flexible multi-class
@@ -158,107 +159,19 @@ class MultiClassLLMClassifier(BaseClassifier):
             )
             ```
         """
-        # Load configuration
+        # Load configuration and initialize shared components
         config = get_config(config_path)
-
-        # Load classes from config
-        config_classes = self._load_classes_from_config(config)
-
-        # Merge config classes with runtime classes (runtime overrides config)
-        self.classes = {**config_classes, **(classes or {})}
-
-        # Validate classes
-        if len(self.classes) < 2:
-            raise ValueError(
-                f"At least 2 classes are required for classification, got {len(self.classes)}. "
-                f"Define classes in config.toml [classification.classes] or pass them to the constructor."
-            )
-
-        # Load LLM configuration from [llm] section
-        llm_config = LLMConfig.from_config_manager(config)
-
-        # Select provider: use specified or default from config
-        selected_provider = provider_name or llm_config.default_provider
-
-        # Validate provider exists and get configuration
-        # Explicitly raises ValueError with informative message for API layer
-        available_providers = [p.name for p in llm_config.providers]
-        if selected_provider not in available_providers:
-            raise ValueError(
-                f"Provider '{selected_provider}' not found in configuration. "
-                f"Available providers: {', '.join(available_providers)}"
-            )
-
-        # Get provider configuration (will not raise since we validated above)
-        provider_cfg = get_provider_config(llm_config, selected_provider)
-        self._provider_config = provider_cfg
-
-        # Build llm_kwargs from provider configuration
-        llm_kwargs = {
-            "model": provider_cfg.model,
-            "temperature": provider_cfg.temperature,
-        }
-
-        # Add optional parameters if present
-        if provider_cfg.timeout:
-            llm_kwargs["timeout"] = provider_cfg.timeout
-        if provider_cfg.max_tokens:
-            llm_kwargs["max_tokens"] = provider_cfg.max_tokens
-        if provider_cfg.api_key:
-            llm_kwargs["api_key"] = provider_cfg.api_key
-
-        # Handle custom endpoints (LM Studio, Ollama)
-        if provider_cfg.api_base:
-            llm_kwargs["api_base"] = provider_cfg.api_base
-
-            # For custom endpoints, set custom_llm_provider based on port/provider
-            if '11434' in provider_cfg.api_base or provider_cfg.name.lower() == 'ollama':
-                llm_kwargs["custom_llm_provider"] = "ollama"
-            else:
-                # LM Studio and other OpenAI-compatible endpoints
-                llm_kwargs["custom_llm_provider"] = "openai"
-        else:
-            # Standard cloud providers - prefix model with provider name if needed
-            if provider_cfg.name.lower() == 'ollama':
-                llm_kwargs["model"] = f"ollama/{provider_cfg.model}"
-            # OpenAI and Anthropic models don't need prefixing
-
-        self.llm = ChatLiteLLM(**llm_kwargs)
+        self._initialize_classes(classes, config)
+        # Provide patchable references for tests
+        self._LLMConfig = LLMConfig
+        self._ChatLiteLLM = ChatLiteLLM
+        self.llm = self._initialize_llm(provider_name, config)
 
         # Use PydanticOutputParser for structured output
         self.output_parser = PydanticOutputParser(pydantic_object=MultiClassResult)
 
         # Build prompt template
         self.prompt = self._build_prompt()
-
-    def _load_classes_from_config(self, config) -> Dict[str, str]:
-        """Load class definitions from config.toml.
-
-        Args:
-            config: ConfigManager instance.
-
-        Returns:
-            Dictionary mapping class names to descriptions.
-
-        Example:
-            Config format in config.toml:
-            ```toml
-            [[classification.classes]]
-            name = "recipe"
-            description = "Cooking instructions..."
-            ```
-        """
-        classes = {}
-        classification_section = config.get_section('classification')
-        class_definitions = classification_section.get('classes', [])
-
-        for class_def in class_definitions:
-            name = class_def.get('name')
-            description = class_def.get('description', '')
-            if name:
-                classes[name] = description
-
-        return classes
 
     def _build_prompt(self) -> PromptTemplate:
         """Build the classification prompt template.
@@ -386,71 +299,5 @@ class MultiClassLLMClassifier(BaseClassifier):
                 'available_classes': list(self.classes.keys())
             }
         )
-
-    def get_classes(self) -> Dict[str, str]:
-        """Get the current class definitions.
-
-        Returns:
-            Dictionary mapping class names to their descriptions.
-
-        Example:
-            ```python
-            classifier = MultiClassLLMClassifier(classes={
-                "recipe": "Cooking instructions",
-                "news": "News articles"
-            })
-            print(classifier.get_classes())
-            # {"recipe": "Cooking instructions", "news": "News articles"}
-            ```
-        """
-        return self.classes.copy()
-
-    def get_class_names(self) -> List[str]:
-        """Get list of available class names.
-
-        Returns:
-            List of class names.
-
-        Example:
-            ```python
-            classifier = MultiClassLLMClassifier(classes={...})
-            print(classifier.get_class_names())
-            # ["recipe", "python_package", "movie_review"]
-            ```
-        """
-        return list(self.classes.keys())
-
-    def get_llm_metadata(self) -> Dict[str, Any]:
-        """Get LLM configuration metadata for storage/tracking.
-
-        Returns:
-            Dictionary with provider configuration (excluding sensitive api_key).
-
-        Example:
-            ```python
-            classifier = MultiClassLLMClassifier(provider_name='openai')
-            metadata = classifier.get_llm_metadata()
-            print(metadata)
-            # {
-            #     'provider': 'openai',
-            #     'model': 'gpt-4o-mini',
-            #     'temperature': 0.7,
-            #     'max_tokens': 1000
-            # }
-            ```
-        """
-        cfg = self._provider_config
-        metadata: Dict[str, Any] = {
-            "provider": cfg.name,
-            "model": cfg.model,
-            "temperature": cfg.temperature,
-        }
-        # Add optional fields if present
-        if cfg.max_tokens:
-            metadata["max_tokens"] = cfg.max_tokens
-        if cfg.timeout:
-            metadata["timeout"] = cfg.timeout
-        if cfg.api_base:
-            metadata["api_base"] = cfg.api_base
-        return metadata
+ 
 

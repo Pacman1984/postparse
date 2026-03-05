@@ -193,7 +193,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             Output: {"user": {"token": "***REDACTED***"}, "tags": [{"api_key": "***REDACTED***"}]}
         """
         sensitive_fields = {
-            "password", "token", "secret", "api_key", "apikey",
+            "password", "token", "secret", "api_key", "apikey", "api_hash",
             "authorization", "auth", "credential", "private_key"
         }
 

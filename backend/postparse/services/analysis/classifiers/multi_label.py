@@ -44,6 +44,7 @@ from .base import (
     LabelScore,
     MultiLabelClassificationResult,
 )
+from ._shared import LLMClassifierCommon
 from backend.postparse.core.utils.config import get_config
 from backend.postparse.llm.config import LLMConfig, get_provider_config
 
@@ -84,7 +85,7 @@ class MultiLabelLLMResult(BaseModel):
     )
 
 
-class MultiLabelLLMClassifier(BaseClassifier):
+class MultiLabelLLMClassifier(LLMClassifierCommon, BaseClassifier):
     """LLM-based multi-label classifier that assigns multiple categories per item.
 
     Unlike ``MultiClassLLMClassifier`` which picks exactly one category,
@@ -149,54 +150,11 @@ class MultiLabelLLMClassifier(BaseClassifier):
             ```
         """
         config = get_config(config_path)
-
-        config_classes = self._load_classes_from_config(config)
-        self.classes: Dict[str, str] = {**config_classes, **(classes or {})}
-
-        if len(self.classes) < 2:
-            raise ValueError(
-                f"At least 2 classes required, got {len(self.classes)}. "
-                "Define in config.toml [classification.classes] or pass them."
-            )
-
-        llm_config = LLMConfig.from_config_manager(config)
-        selected_provider = provider_name or llm_config.default_provider
-
-        available_providers = [p.name for p in llm_config.providers]
-        if selected_provider not in available_providers:
-            raise ValueError(
-                f"Provider '{selected_provider}' not found. "
-                f"Available: {', '.join(available_providers)}"
-            )
-
-        provider_cfg = get_provider_config(llm_config, selected_provider)
-        self._provider_config = provider_cfg
-
-        llm_kwargs: Dict[str, Any] = {
-            "model": provider_cfg.model,
-            "temperature": provider_cfg.temperature,
-        }
-        if provider_cfg.timeout:
-            llm_kwargs["timeout"] = provider_cfg.timeout
-        if provider_cfg.max_tokens:
-            llm_kwargs["max_tokens"] = provider_cfg.max_tokens
-        if provider_cfg.api_key:
-            llm_kwargs["api_key"] = provider_cfg.api_key
-
-        if provider_cfg.api_base:
-            llm_kwargs["api_base"] = provider_cfg.api_base
-            if (
-                "11434" in provider_cfg.api_base
-                or provider_cfg.name.lower() == "ollama"
-            ):
-                llm_kwargs["custom_llm_provider"] = "ollama"
-            else:
-                llm_kwargs["custom_llm_provider"] = "openai"
-        else:
-            if provider_cfg.name.lower() == "ollama":
-                llm_kwargs["model"] = f"ollama/{provider_cfg.model}"
-
-        self.llm = ChatLiteLLM(**llm_kwargs)
+        self._initialize_classes(classes, config)
+        # Provide patchable references for tests
+        self._LLMConfig = LLMConfig
+        self._ChatLiteLLM = ChatLiteLLM
+        self.llm = self._initialize_llm(provider_name, config)
         self.output_parser = PydanticOutputParser(
             pydantic_object=MultiLabelLLMResult
         )
@@ -205,24 +163,6 @@ class MultiLabelLLMClassifier(BaseClassifier):
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
-
-    def _load_classes_from_config(self, config: Any) -> Dict[str, str]:
-        """Load class definitions from config.toml [classification.classes].
-
-        Args:
-            config: ConfigManager instance.
-
-        Returns:
-            Dictionary mapping class names to descriptions.
-        """
-        classes: Dict[str, str] = {}
-        classification_section = config.get_section("classification")
-        for class_def in classification_section.get("classes", []):
-            name = class_def.get("name")
-            description = class_def.get("description", "")
-            if name:
-                classes[name] = description
-        return classes
 
     def _build_prompt(self) -> PromptTemplate:
         """Build the multi-label classification prompt template.
@@ -406,38 +346,4 @@ Assign ALL categories that apply to the given text.
             },
         )
 
-    def get_classes(self) -> Dict[str, str]:
-        """Get the current class definitions.
-
-        Returns:
-            Dictionary mapping class names to descriptions.
-        """
-        return self.classes.copy()
-
-    def get_class_names(self) -> List[str]:
-        """Get list of available class names.
-
-        Returns:
-            List of class name strings.
-        """
-        return list(self.classes.keys())
-
-    def get_llm_metadata(self) -> Dict[str, Any]:
-        """Get LLM configuration metadata for storage/tracking.
-
-        Returns:
-            Dictionary with provider configuration (excluding api_key).
-        """
-        cfg = self._provider_config
-        metadata: Dict[str, Any] = {
-            "provider": cfg.name,
-            "model": cfg.model,
-            "temperature": cfg.temperature,
-        }
-        if cfg.max_tokens:
-            metadata["max_tokens"] = cfg.max_tokens
-        if cfg.timeout:
-            metadata["timeout"] = cfg.timeout
-        if cfg.api_base:
-            metadata["api_base"] = cfg.api_base
-        return metadata
+ 

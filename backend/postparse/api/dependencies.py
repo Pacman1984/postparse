@@ -295,7 +295,7 @@ async def get_current_websocket_user(
 
 
 def get_optional_auth(
-    user: Optional[Dict[str, Any]] = None,
+    user: Optional[Dict[str, Any]] = Depends(lambda: None),
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     config: ConfigManager = Depends(get_config),
 ) -> Optional[Dict[str, Any]]:
@@ -320,8 +320,9 @@ def get_optional_auth(
                 return {"message": f"Hello, {user['username']}"}
             return {"message": "Hello, guest"}
     """
-    # Preserve direct-call compatibility (used in unit tests)
-    if user is not None:
+    # Preserve direct-call compatibility (used in unit tests).
+    # Only accept explicit dict overrides; ignore DI sentinel objects.
+    if isinstance(user, dict):
         return user
 
     # When called directly (outside FastAPI DI), credentials may be a Depends

@@ -73,7 +73,7 @@ router = APIRouter(
     If not specified, uses the default provider from configuration.
     """,
 )
-async def classify_recipe(
+def classify_recipe(
     request: ClassifyRequest,
     llm_classifier: RecipeLLMClassifier = Depends(get_recipe_llm_classifier),
     user: Optional[dict] = Depends(get_optional_auth),
@@ -171,7 +171,7 @@ async def classify_recipe(
     to use a different LLM provider for all texts in the batch.
     """,
 )
-async def classify_batch(
+def classify_batch(
     request: BatchClassifyRequest,
     llm_classifier: RecipeLLMClassifier = Depends(get_recipe_llm_classifier),
     user: Optional[dict] = Depends(get_optional_auth),
@@ -231,7 +231,7 @@ async def classify_batch(
     failed_count = 0
     
     # Process each text
-    for text in request.texts:
+    for i, text in enumerate(request.texts):
         try:
             text_start_time = time.time()
             result = classifier.predict(text)
@@ -243,6 +243,7 @@ async def classify_batch(
                 details=result.details or {},
                 processing_time=text_processing_time,
                 classifier_used=classifier_name,
+                input_index=i,
             ))
         except Exception:
             # Count failures but continue processing
@@ -294,7 +295,7 @@ async def classify_batch(
     classification, list of available classes, and processing time.
     """,
 )
-async def classify_multi(
+def classify_multi(
     request: MultiClassifyRequest,
     config: ConfigManager = Depends(get_config),
     user: Optional[dict] = Depends(get_optional_auth),
@@ -402,7 +403,7 @@ async def classify_multi(
     Individual failures are counted but don't stop the batch from completing.
     """,
 )
-async def classify_multi_batch(
+def classify_multi_batch(
     request: BatchMultiClassifyRequest,
     config: ConfigManager = Depends(get_config),
     user: Optional[dict] = Depends(get_optional_auth),
@@ -466,7 +467,7 @@ async def classify_multi_batch(
     available_classes = classifier.get_class_names()
     
     # Process each text
-    for text in request.texts:
+    for i, text in enumerate(request.texts):
         try:
             text_start_time = time.time()
             result = classifier.predict(text)
@@ -479,6 +480,7 @@ async def classify_multi_batch(
                 available_classes=result.details.get('available_classes', available_classes) if result.details else available_classes,
                 processing_time=text_processing_time,
                 classifier_used="multi_class_llm",
+                input_index=i,
             ))
         except Exception:
             # Count failures but continue processing
@@ -500,7 +502,7 @@ async def classify_multi_batch(
     summary="Classify text with multiple labels",
     description="Assign ALL matching categories (0..N) to a text.",
 )
-async def classify_multilabel(
+def classify_multilabel(
     request: MultiLabelClassifyRequest,
     config: ConfigManager = Depends(get_config),
     user: Optional[dict] = Depends(get_optional_auth),
@@ -555,7 +557,7 @@ async def classify_multilabel(
     summary="Classify multiple texts with multiple labels",
     description="Batch multi-label classification for up to 100 texts.",
 )
-async def classify_multilabel_batch(
+def classify_multilabel_batch(
     request: BatchMultiLabelClassifyRequest,
     config: ConfigManager = Depends(get_config),
     user: Optional[dict] = Depends(get_optional_auth),
@@ -587,7 +589,7 @@ async def classify_multilabel_batch(
     failed_count = 0
     available_classes = classifier.get_class_names()
 
-    for text_item in request.texts:
+    for i, text_item in enumerate(request.texts):
         try:
             t0 = time.time()
             result = classifier.predict_multilabel(text_item)
@@ -601,6 +603,7 @@ async def classify_multilabel_batch(
                 available_classes=available_classes,
                 processing_time=dt,
                 classifier_used="multi_label_llm",
+                input_index=i,
             ))
         except Exception:
             failed_count += 1

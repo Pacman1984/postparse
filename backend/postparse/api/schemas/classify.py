@@ -95,6 +95,7 @@ class ClassifyResponse(BaseModel):
         details: Additional classification details (cuisine, difficulty, etc.).
         processing_time: Time taken to classify (seconds).
         classifier_used: Which classifier was used.
+        input_index: Original index in the batch request (only set in batch responses).
 
     Example:
         {
@@ -107,7 +108,8 @@ class ClassifyResponse(BaseModel):
                 "ingredients_count": 5
             },
             "processing_time": 0.234,
-            "classifier_used": "llm"
+            "classifier_used": "llm",
+            "input_index": 0
         }
     """
 
@@ -123,14 +125,16 @@ class ClassifyResponse(BaseModel):
                     "ingredients_count": 5
                 },
                 "processing_time": 0.234,
-                "classifier_used": "llm"
+                "classifier_used": "llm",
+                "input_index": 0
             },
             {
                 "label": "non_recipe",
                 "confidence": 0.88,
                 "details": {},
                 "processing_time": 0.156,
-                "classifier_used": "llm"
+                "classifier_used": "llm",
+                "input_index": 1
             }
         ]
     })
@@ -159,6 +163,11 @@ class ClassifyResponse(BaseModel):
         ...,
         description="Which classifier was used",
         examples=["llm"]
+    )
+    input_index: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description="Original index in request batch; set only for batch responses"
     )
 
 
@@ -399,6 +408,7 @@ class MultiClassifyResponse(BaseModel):
         available_classes: List of class names that were available.
         processing_time: Time taken to classify (seconds).
         classifier_used: Always "multi_class_llm".
+        input_index: Original index in the batch request (only set in batch responses).
 
     Example:
         {
@@ -407,7 +417,8 @@ class MultiClassifyResponse(BaseModel):
             "reasoning": "The text mentions FastAPI library and APIs",
             "available_classes": ["recipe", "python_package", "movie_review"],
             "processing_time": 0.345,
-            "classifier_used": "multi_class_llm"
+            "classifier_used": "multi_class_llm",
+            "input_index": 2
         }
     """
 
@@ -419,7 +430,8 @@ class MultiClassifyResponse(BaseModel):
                 "reasoning": "The text mentions FastAPI library and building APIs, which is clearly about Python packages.",
                 "available_classes": ["recipe", "python_package", "movie_review"],
                 "processing_time": 0.345,
-                "classifier_used": "multi_class_llm"
+                "classifier_used": "multi_class_llm",
+                "input_index": 0
             },
             {
                 "label": "recipe",
@@ -427,7 +439,8 @@ class MultiClassifyResponse(BaseModel):
                 "reasoning": "The text contains cooking instructions with specific times and ingredients.",
                 "available_classes": ["recipe", "tech_news", "other"],
                 "processing_time": 0.289,
-                "classifier_used": "multi_class_llm"
+                "classifier_used": "multi_class_llm",
+                "input_index": 1
             }
         ]
     })
@@ -460,6 +473,11 @@ class MultiClassifyResponse(BaseModel):
         default="multi_class_llm",
         description="Classifier type used",
         examples=["multi_class_llm"]
+    )
+    input_index: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description="Original index in request batch; set only for batch responses"
     )
 
 
@@ -684,6 +702,11 @@ class MultiLabelClassifyResponse(BaseModel):
     )
     classifier_used: str = Field(
         default="multi_label_llm", description="Classifier type used"
+    )
+    input_index: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description="Original index in request batch; set only for batch responses"
     )
 
 

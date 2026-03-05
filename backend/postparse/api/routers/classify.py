@@ -17,6 +17,9 @@ from backend.postparse.api.dependencies import (
     _get_cached_recipe_llm_classifier,
     get_optional_auth,
     get_config,
+    _get_cached_multi_class_llm_classifier,
+    _get_cached_multi_label_llm_classifier,
+    _normalize_classes_key,
 )
 from backend.postparse.api.schemas import (
     ClassifyRequest,
@@ -336,11 +339,13 @@ async def classify_multi(
     start_time = time.time()
     
     try:
-        # Create classifier with runtime classes and/or provider
-        classifier = MultiClassLLMClassifier(
-            classes=request.classes,
-            provider_name=request.provider_name,
-            config_path=config.config_path if hasattr(config, 'config_path') else None,
+        # Use cached classifier keyed by (classes, provider, config_path)
+        classes_key = _normalize_classes_key(request.classes)
+        config_path = config.config_path if hasattr(config, "config_path") else None
+        classifier = _get_cached_multi_class_llm_classifier(
+            request.provider_name,
+            classes_key,
+            config_path,
         )
         
         # Perform classification
@@ -442,11 +447,13 @@ async def classify_multi_batch(
     start_time = time.time()
     
     try:
-        # Create classifier once for the batch
-        classifier = MultiClassLLMClassifier(
-            classes=request.classes,
-            provider_name=request.provider_name,
-            config_path=config.config_path if hasattr(config, 'config_path') else None,
+        # Reuse cached classifier for the batch
+        classes_key = _normalize_classes_key(request.classes)
+        config_path = config.config_path if hasattr(config, "config_path") else None
+        classifier = _get_cached_multi_class_llm_classifier(
+            request.provider_name,
+            classes_key,
+            config_path,
         )
     except ValueError as e:
         raise HTTPException(
@@ -511,10 +518,12 @@ async def classify_multilabel(
     start_time = time.time()
 
     try:
-        classifier = MultiLabelLLMClassifier(
-            classes=request.classes,
-            provider_name=request.provider_name,
-            config_path=config.config_path if hasattr(config, "config_path") else None,
+        classes_key = _normalize_classes_key(request.classes)
+        config_path = config.config_path if hasattr(config, "config_path") else None
+        classifier = _get_cached_multi_label_llm_classifier(
+            request.provider_name,
+            classes_key,
+            config_path,
         )
         result = classifier.predict_multilabel(request.text)
         processing_time = time.time() - start_time
@@ -564,10 +573,12 @@ async def classify_multilabel_batch(
     start_time = time.time()
 
     try:
-        classifier = MultiLabelLLMClassifier(
-            classes=request.classes,
-            provider_name=request.provider_name,
-            config_path=config.config_path if hasattr(config, "config_path") else None,
+        classes_key = _normalize_classes_key(request.classes)
+        config_path = config.config_path if hasattr(config, "config_path") else None
+        classifier = _get_cached_multi_label_llm_classifier(
+            request.provider_name,
+            classes_key,
+            config_path,
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

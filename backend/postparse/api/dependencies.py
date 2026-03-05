@@ -23,6 +23,12 @@ from jose import JWTError, jwt
 
 from backend.postparse.core.data.database import SocialMediaDatabase
 from backend.postparse.services.analysis.classifiers.llm import RecipeLLMClassifier
+from backend.postparse.services.analysis.classifiers.multi_class import (
+    MultiClassLLMClassifier,
+)
+from backend.postparse.services.analysis.classifiers.multi_label import (
+    MultiLabelLLMClassifier,
+)
 from backend.postparse.core.utils.config import ConfigManager
 from backend.postparse.api.services.job_manager import JobManager
 from backend.postparse.api.services.websocket_manager import WebSocketManager
@@ -210,6 +216,78 @@ def get_recipe_llm_classifier(config: ConfigManager = Depends(get_config)) -> Re
     """
     provider_name = config.get("llm.default_provider", "ollama")
     return _get_cached_recipe_llm_classifier(provider_name)
+
+
+def _normalize_classes_key(classes: Optional[Dict[str, str]]) -> Optional[tuple]:
+    """
+    Normalize a classes dictionary into a stable, hashable cache key.
+
+    Args:
+        classes: Mapping of class name to description, or None to use config defaults.
+
+    Returns:
+        Tuple of sorted (name, description) pairs, or None when classes is None.
+
+    Example:
+        >>> _normalize_classes_key({"b": "B", "a": "A"})
+        (('a', 'A'), ('b', 'B'))
+    """
+    if classes is None:
+        return None
+    # Sort by class name to ensure order-independent cache keys
+    return tuple(sorted(classes.items(), key=lambda item: item[0]))
+
+
+@lru_cache(maxsize=8)
+def _get_cached_multi_class_llm_classifier(
+    provider_name: Optional[str],
+    classes_key: Optional[tuple],
+    config_path: Optional[str],
+) -> MultiClassLLMClassifier:
+    """
+    Get cached MultiClassLLMClassifier instance keyed by provider, classes, and config path.
+
+    Caching avoids re-initializing ChatLiteLLM and rebuilding prompts on every request.
+
+    Args:
+        provider_name: LLM provider name (e.g., 'openai', 'ollama'); None for default.
+        classes_key: Stable, hashable key produced by _normalize_classes_key, or None.
+        config_path: Configuration file path influencing provider/classes resolution.
+
+    Returns:
+        MultiClassLLMClassifier: Cached classifier instance.
+    """
+    classes: Optional[Dict[str, str]] = dict(classes_key) if classes_key is not None else None
+    return MultiClassLLMClassifier(
+        classes=classes,
+        provider_name=provider_name,
+        config_path=config_path,
+    )
+
+
+@lru_cache(maxsize=8)
+def _get_cached_multi_label_llm_classifier(
+    provider_name: Optional[str],
+    classes_key: Optional[tuple],
+    config_path: Optional[str],
+) -> MultiLabelLLMClassifier:
+    """
+    Get cached MultiLabelLLMClassifier instance keyed by provider, classes, and config path.
+
+    Args:
+        provider_name: LLM provider name (e.g., 'openai', 'ollama'); None for default.
+        classes_key: Stable, hashable key produced by _normalize_classes_key, or None.
+        config_path: Configuration file path influencing provider/classes resolution.
+
+    Returns:
+        MultiLabelLLMClassifier: Cached classifier instance.
+    """
+    classes: Optional[Dict[str, str]] = dict(classes_key) if classes_key is not None else None
+    return MultiLabelLLMClassifier(
+        classes=classes,
+        provider_name=provider_name,
+        config_path=config_path,
+    )
 
 
 async def get_current_user(

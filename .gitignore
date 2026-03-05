@@ -100,3 +100,7 @@ target/
 # and SQLite sidecars (e.g. telegram_session_123.session-journal).
 telegram_session*
 instagram_session*
+
+# Sensitive configuration (may contain secrets) - keep out of VCS
+config/config.toml
+config/.env

@@ -1,76 +1,52 @@
 # PostParse Documentation
 
-## Overview
+## Start Here
 
-PostParse is a Python package for extracting, storing, and analyzing saved posts from social media platforms. It provides a unified interface for working with content from Telegram and Instagram, with built-in support for content classification using machine learning and LLM models.
+| Document | Purpose |
+|----------|---------|
+| [01-overview](01-overview.md) | What PostParse is, who it's for, key features |
+| [02-quickstart](02-quickstart.md) | Prerequisites, install, minimal example |
+| [04-installation](04-installation.md) | Dependencies, env vars, common issues |
 
-## Why PostParse?
+## Concepts
 
-**Use PostParse when you want to:**
-- Extract and organize your saved messages from Telegram
-- Download and catalog your saved Instagram posts
-- Analyze social media content (e.g., identify recipes, tutorials, etc.)
-- Build a searchable database of your saved content
-- Process social media data for ML/data science projects
+| Document | Purpose |
+|----------|---------|
+| [03-concepts/architecture](03-concepts/architecture.md) | System architecture |
+| [03-concepts/data-flow](03-concepts/data-flow.md) | Pipeline data flow |
+| [03-concepts/database](03-concepts/database.md) | Database schema, classification storage |
+| [03-concepts/glossary](03-concepts/glossary.md) | Core terms |
 
-**Choose an alternative if:**
-- You only need basic API access (use platform SDKs directly)
-- You need real-time streaming (PostParse focuses on saved/archived content)
-- You require support for other platforms (currently supports Telegram & Instagram only)
+## Usage
 
-## Quick Example
+| Document | Purpose |
+|----------|---------|
+| [05-usage/basic](05-usage/basic.md) | Basic CLI commands |
+| [05-usage/cli-reference](05-usage/cli-reference.md) | Full CLI reference |
+| [05-usage/advanced](05-usage/advanced.md) | Batch extraction, custom providers |
+| [05-usage/patterns](05-usage/patterns.md) | Do/don't patterns |
 
-Here's a minimal example showing how to extract Telegram messages and classify content:
+## API
 
-```python
-from postparse.telegram.telegram_parser import TelegramParser
-from postparse.data.database import SocialMediaDatabase
-from postparse.analysis.classifiers.recipe_classifier import RecipeClassifier
+| Document | Purpose |
+|----------|---------|
+| [06-api/endpoints](06-api/endpoints.md) | REST endpoints, WebSocket |
+| [06-api/python-reference](06-api/python-reference.md) | Python API (Database, parsers, classifiers) |
+| [06-api/schemas](06-api/schemas.md) | Request/response schemas |
+| [06-api/errors](06-api/errors.md) | Error codes |
 
-# Initialize database
-db = SocialMediaDatabase("my_data.db")
+## Configuration & Examples
 
-# Extract Telegram messages
-async with TelegramParser(
-    api_id="your_api_id",
-    api_hash="your_api_hash",
-    phone="+1234567890"
-) as parser:
-    await parser.save_messages_to_db(db, limit=100)
+| Document | Purpose |
+|----------|---------|
+| [07-configuration](07-configuration.md) | Config format, LLM providers, troubleshooting |
+| [08-examples/recipes](08-examples/recipes.md) | Copy-pastable examples |
 
-# Classify content
-classifier = RecipeClassifier()
-messages = db.get_telegram_messages(limit=10)
+## Reference
 
-for msg in messages:
-    if msg['content']:
-        result = classifier.predict(msg['content'])
-        print(f"Message {msg['message_id']}: {result}")
-```
-
-## Documentation Structure
-
-- **[Getting Started](getting_started.md)** - Installation, setup, and your first steps
-- **[Cookbook](cookbook.md)** - Practical recipes for common tasks
-- **[API Reference](api_reference.md)** - Complete reference for all public APIs
-
-## Key Features
-
-- **Multi-Platform Support**: Extract data from Telegram and Instagram
-- **Structured Storage**: SQLite database with well-designed schema
-- **Content Analysis**: Built-in classifiers for recipe detection and more
-- **Media Handling**: Automatic download and organization of media files
-- **Configuration**: Flexible TOML-based configuration system
-- **Rate Limiting**: Smart rate limiting to respect platform guidelines
-
-## Project Status
-
-PostParse is under active development. The core parsing and storage functionality is stable, while the analysis module is being expanded with additional classifiers.
-
-## Getting Help
-
-- Check the [Getting Started](getting_started.md) guide for setup instructions
-- Browse the [Cookbook](cookbook.md) for task-oriented examples
-- Consult the [API Reference](api_reference.md) for detailed function documentation
-- Report issues on the project's GitHub repository
-
+| Document | Purpose |
+|----------|---------|
+| [09-troubleshooting](09-troubleshooting.md) | Common errors, fixes |
+| [10-testing](10-testing.md) | Run tests, write tests |
+| [11-contributing](11-contributing.md) | Dev setup, PR process |
+| [14-license](14-license.md) | License, acknowledgements |

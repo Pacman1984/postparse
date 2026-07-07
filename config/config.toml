@@ -1,11 +1,103 @@
 [models]
-# Zero-shot classification models
+# DEPRECATED: No longer used by RecipeLLMClassifier. All settings moved to [llm].
+# Migrate to [llm] section below. Remove after migration.
+# Legacy model configuration - these settings are no longer used
 zero_shot_model = "qwen3:14b"
-default_llm_model = "qwen3:14b"
-
-# Model hosts and endpoints
-ollama_default_timeout = 30
+default_llm_model = "qwen/qwen3-vl-8b"
+llm_provider = "openai"
+llm_api_base = "http://localhost:1234/v1"
+default_timeout = 30
 request_timeout = 60
+
+[llm]
+# LLM Provider Configuration
+# ===========================
+# This section replaces the legacy OLLAMA_IP and OLLAMA_PORT environment variables.
+# All LLM provider settings (including Ollama) are now configured here in config.toml.
+#
+# API Key Setup
+# -------------
+# Set via environment variables:
+#   export OPENAI_API_KEY='sk-...'              # For OpenAI
+#   export OPENAI_API_KEY='dummy'               # For LM Studio (any value works)
+#   export ANTHROPIC_API_KEY='sk-ant-...'       # For Anthropic
+# Ollama: No API key needed
+#
+# Switching Providers in Code
+# ----------------------------
+# Usage:
+#   RecipeLLMClassifier()                        # Uses default_provider below
+#   RecipeLLMClassifier(provider_name='openai')  # Uses OpenAI
+#   RecipeLLMClassifier(provider_name='ollama')  # Uses Ollama
+#
+# Fallback Behavior
+# -----------------
+# If enable_fallback=true, the classifier tries providers in order on transient errors
+#
+# Migration from .env:
+#   - Old: OLLAMA_IP and OLLAMA_PORT in config/.env
+#   - New: Configure Ollama provider below with full api_base URL
+
+# Default provider to use (must match one of the provider names below)
+default_provider = "lama.cpp"
+
+# Enable automatic fallback to other providers on failure
+enable_fallback = true
+
+# Provider configurations
+# API keys are loaded from environment variables (see above)
+
+# [[llm.providers]]
+# name = "lm_studio"
+# model = "qwen/qwen3-vl-8b"  # Model name as shown in LM Studio
+# api_base = "http://localhost:1234/v1"  # LM Studio on default port
+# timeout = 60
+# max_retries = 3
+# temperature = 0.7
+# # API key loaded from OPENAI_API_KEY env var (LM Studio uses OpenAI-compatible format)
+
+# [[llm.providers]]
+# name = "qwen_remote"
+# model = "qwen/qwen3-vl-30b"  # Model name as shown in LM Studio
+# api_base = "http://192.168.188.92:1234/v1"  # Remote LM Studio server
+# timeout = 60
+# max_retries = 3
+# temperature = 0.7
+# # API key loaded from OPENAI_API_KEY env var (LM Studio uses OpenAI-compatible format)
+
+[[llm.providers]]
+name = "lama.cpp"
+model = "unsloth/Qwen3.5-35B-A3B"
+api_base = "http://localhost:1235/v1"  # Local llama.cpp/OpenAI-compatible endpoint
+timeout = 60
+max_retries = 3
+temperature = 0.7
+
+# [[llm.providers]]
+# name = "ollama"
+# model = "qwen3:14b"
+# api_base = "http://localhost:11434"  # Local endpoint; ensure Ollama is running with model loaded
+# timeout = 30
+# max_retries = 3
+# temperature = 0.7
+
+# [[llm.providers]]
+# name = "openai"
+# model = "gpt-4o-mini"  # Cost-effective model; upgrade to gpt-4o for better accuracy
+# timeout = 30
+# max_retries = 3
+# temperature = 0.7
+# max_tokens = 1000
+# # API key loaded from OPENAI_API_KEY env var
+
+# [[llm.providers]]
+# name = "anthropic"
+# model = "claude-3-5-sonnet-20241022"  # High-quality model for production
+# timeout = 30
+# max_retries = 3
+# temperature = 0.7
+# max_tokens = 1000
+# API key loaded from ANTHROPIC_API_KEY env var
 
 [classification]
 # Recipe classification labels
@@ -16,6 +108,99 @@ recipe_negative_label = "this text does not contain any recipe or cooking instru
 min_confidence_threshold = 0.6
 max_confidence_threshold = 1.0
 
+# Multi-class / multi-label classification class definitions
+# Used by MultiClassLLMClassifier and MultiLabelLLMClassifier
+# Override or extend at runtime via the classifier constructor or API request
+
+[[classification.classes]]
+name = "recipe"
+description = """Cooking or baking recipes with ingredients and/or preparation steps.
+Examples: 'Boil pasta for 10 minutes', 'Mix flour and eggs', 'Preheat oven to 350F'"""
+
+[[classification.classes]]
+name = "cocktail"
+description = """Cocktail or drink recipes with mixing instructions, spirits, or garnishes.
+Examples: 'Shake vodka with ice', 'Muddle mint and lime for a mojito', 'Pour 2oz gin'"""
+
+[[classification.classes]]
+name = "restaurant"
+description = """Restaurant or dining recommendations and reviews.
+Examples: 'This sushi place is amazing', 'Best pizza in town', 'Try the tasting menu at...'"""
+
+[[classification.classes]]
+name = "bar_cafe"
+description = """Bar, cafe, or pub recommendations and tips (focus on the venue, not recipes).
+Examples: 'Great cocktail bar downtown', 'Cozy cafe with good coffee', 'Best rooftop bar'"""
+
+[[classification.classes]]
+name = "travel_location"
+description = """Travel destinations, beaches, city guides, outdoor spots, and location tips.
+Examples: 'Beautiful beach in Portugal', 'Must-visit spots in Tokyo', 'Hidden gem in Bali'"""
+
+[[classification.classes]]
+name = "book"
+description = """Book recommendations, literature discussions, and reading tips.
+Examples: 'Just finished this amazing novel', 'Must-read for data scientists', 'New book by...'"""
+
+[[classification.classes]]
+name = "movie"
+description = """Movie recommendations, film reviews, and cinema discussions.
+Examples: 'Just watched an amazing thriller', 'Great cinematography', 'Oscar-worthy performance'"""
+
+[[classification.classes]]
+name = "series"
+description = """TV series and show recommendations or discussions.
+Examples: 'Binge-watched this show', 'New season just dropped', 'Best Netflix series'"""
+
+[[classification.classes]]
+name = "video_content"
+description = """Video links, reels, shorts, or clips where the topical domain is not clear enough yet.
+Examples: 'https://youtu.be/...', 'https://instagram.com/reel/...', 'watch this clip'"""
+
+[[classification.classes]]
+name = "data_science"
+description = """Data science methods, ML techniques, statistics, analytics, and research.
+Examples: 'New approach to feature engineering', 'XGBoost vs LightGBM', 'Bayesian optimization'"""
+
+[[classification.classes]]
+name = "llm_ai"
+description = """Generative AI/LLM topics: model releases, benchmarks, prompting, RAG, agents, and inference tooling.
+Examples: 'GPT benchmark results', 'Fine-tuning with LoRA', 'Best open-source LLM stack'"""
+
+[[classification.classes]]
+name = "python_dev"
+description = """Python packages, libraries, dev tools, and programming tips.
+Examples: 'Install FastAPI with pip', 'New async library', 'Check out this Django package'"""
+
+[[classification.classes]]
+name = "quant_trading"
+description = """Quantitative finance and trading: market microstructure, market making, order flow, execution, and derivatives models.
+Examples: 'Poisson arrival model for order flow', 'market making inventory risk', 'alpha signals and execution'"""
+
+[[classification.classes]]
+name = "crypto_web3"
+description = """Crypto/Web3 topics: blockchain protocols, DeFi, tokenomics, on-chain analytics, wallets, and market commentary.
+Examples: 'Solana validator economics', 'DeFi yield strategy', 'on-chain metrics dashboard'"""
+
+[[classification.classes]]
+name = "diy_home"
+description = """Handwerker tips, home improvement, DIY projects, repairs, and crafts.
+Examples: 'How to fix a leaky faucet', 'Build a shelf', 'Best tools for home renovation'"""
+
+[[classification.classes]]
+name = "product"
+description = """Product recommendations, gear reviews, and shopping tips.
+Examples: 'Best noise-canceling headphones', 'This kitchen gadget is great', 'Review of...'"""
+
+[[classification.classes]]
+name = "business_marketing"
+description = """Business, marketing, and growth topics: positioning, ads, funnels, conversion, and go-to-market strategy.
+Examples: 'CAC vs LTV discussion', 'ad creative performance', 'pricing and distribution strategy'"""
+
+[[classification.classes]]
+name = "other"
+description = """Anything that does not fit the categories above. General content, personal updates, or miscellaneous."""
+
 [prompts]
 # LLM prompts for various classification tasks
 recipe_analysis_prompt = """Analyze if the following content is a recipe and extract key details.
@@ -24,24 +209,79 @@ Content: {content}
 
 {format_instructions}
 
-Provide a detailed analysis focusing on recipe characteristics.
 If it's not a recipe, set is_recipe to false and leave other fields as null."""
 
 [database]
 # Database configuration
 default_db_path = "data/social_media.db"
-analysis_db_path = "data/analysis.db"
 
 [api]
-# API rate limiting and request management
+# FastAPI server configuration
+host = "0.0.0.0"
+port = 8000
+reload = true  # Enable auto-reload in development
+workers = 1    # Number of worker processes (increase for production)
+log_level = "info"  # Logging level (debug, info, warning, error)
+environment = "development"  # Environment mode (development, production)
+
+# Logging configuration
+log_request_body = false  # Default OFF. Enabling may expose sensitive input data in logs; use only for short, controlled debugging sessions.
+log_response_body = false  # Log response bodies (enable for debugging, disable for production)
+log_format = "text"  # Log format: "text" or "json" (use "json" for structured logging in production)
+
+# API rate limiting and request management (legacy - for parsers)
 max_requests_per_session = 100
 request_delay_min = 1.0
 request_delay_max = 3.0
 max_retries = 3
 
+[api.auth]
+# JWT authentication configuration
+enabled = false  # Disable auth for development, enable for production
+algorithm = "HS256"
+token_expiry = 3600  # Token expiration in seconds (1 hour)
+# secret_key should be set via JWT_SECRET_KEY environment variable
+
+[api.cors]
+# CORS configuration for frontend
+allowed_origins = ["http://localhost:3000", "http://localhost:3001"]  # NextJS dev servers
+allow_credentials = true
+allowed_methods = ["*"]
+allowed_headers = ["*"]
+
+[api.rate_limiting]
+# Rate limiting configuration
+# Enable in production to prevent abuse. Disabled by default for development/testing.
+enabled = false
+requests_per_minute = 60
+burst_size = 10
+
+[api.jobs]
+# Job management configuration
+max_job_age_hours = 24  # Clean up jobs older than 24 hours
+cleanup_interval_minutes = 60  # Run cleanup every hour
+
+[api.websocket]
+# WebSocket configuration
+heartbeat_interval = 30  # Send heartbeat every 30 seconds to keep connection alive
+max_connections_per_job = 10  # Maximum WebSocket connections per job
+
+[api.cache]
+# Redis caching configuration (optional)
+# Enable for production with high traffic to improve response times
+# When Redis is unavailable, the system automatically falls back to in-memory caching
+enabled = false  # Enable for production, disable for development
+redis_url = "redis://localhost:6379/0"  # Redis connection URL (can be overridden by REDIS_URL env var)
+default_ttl = 300  # Default cache TTL in seconds (5 minutes)
+search_ttl = 600  # Cache TTL for search results (10 minutes)
+max_memory_mb = 100  # Max memory for in-memory fallback cache (MB)
+
 [paths]
 # Default directory paths
 cache_dir = "data/cache"
+# Session files (Telegram, Instagram) - credential-bearing; never commit.
+# API extraction writes to data/sessions/; .gitignore covers telegram_session*, instagram_session*.
+sessions_dir = "data/sessions"
 downloads_dir = "data/downloads"
 telegram_downloads_dir = "data/downloads/telegram"
 instagram_downloads_dir = "data/downloads/instagram"
@@ -69,14 +309,14 @@ save_delay_max = 0.3
 
 [instagram]
 # Instagram-specific configuration
-default_min_delay = 5.0
-default_max_delay = 30.0
+default_min_delay = 15.0
+default_max_delay = 45.0
 retry_multiplier = 5
-retry_min_wait = 5
-retry_max_wait = 60
-login_delay_min = 1.0
-login_delay_max = 2.0
-request_delay_min = 2.0
-request_delay_max = 4.0
-general_delay_min = 1.0
-general_delay_max = 2.0
+retry_min_wait = 10
+retry_max_wait = 120
+login_delay_min = 3.0
+login_delay_max = 5.0
+request_delay_min = 5.0
+request_delay_max = 15.0
+general_delay_min = 3.0
+general_delay_max = 8.0

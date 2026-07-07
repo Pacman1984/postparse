@@ -1,0 +1,948 @@
+"""
+Classify commands for PostParse CLI.
+
+This module provides commands for classifying content using LLM models.
+
+Commands:
+- text: Ad-hoc classification of free-form text (does NOT save to database)
+- db: Classify database content and SAVE results with full tracking
+
+Example:
+    $ postparse classify text "Mix flour and water..." --classifier recipe
+    $ postparse classify text "Check out FastAPI!" --classifier multiclass --classes '{"recipe": "Cooking", "tech": "Technology"}'
+    $ postparse classify db --source posts --classifier recipe --limit 100
+    $ postparse classify db --classifier multiclass --classes '{"recipe": "Cooking", "tech": "Technology"}'
+"""
+
+import sys
+import json
+import uuid
+import time
+from pathlib import Path
+from typing import Optional, Dict, Any
+
+import rich_click as click
+from rich.table import Table
+from rich.panel import Panel
+
+from backend.postparse.cli.utils import (
+    get_console,
+    load_config,
+    get_database,
+    print_success,
+    print_error,
+    print_info,
+    print_panel,
+    create_progress,
+    create_classify_progress,
+    format_duration,
+    truncate_text,
+)
+
+
+@click.group()
+def classify():
+    """🤖 Classify content using LLM classifiers.
+    
+    Commands:
+    - text: Classify free-form text (ad-hoc, doesn't save)
+    - db: Classify database content and save results
+    
+    Classifiers:
+    - recipe: Binary classification (recipe vs non-recipe)
+    - multiclass: Single-label custom categories (picks 1)
+    - multilabel: Multi-label custom categories (picks 0..N)
+    """
+    pass
+
+
+def _parse_classes_arg(classes_arg: Optional[str]) -> Optional[Dict[str, str]]:
+    """
+    Parse the --classes argument.
+
+    Supports JSON string or file path prefixed with @.
+
+    Args:
+        classes_arg: JSON string or @filepath
+
+    Returns:
+        Dictionary of classes or None
+
+    Raises:
+        click.ClickException: If parsing fails
+    """
+    if not classes_arg:
+        return None
+
+    # If starts with @, read from file
+    if classes_arg.startswith('@'):
+        file_path = Path(classes_arg[1:])
+        if not file_path.exists():
+            raise click.ClickException(f"Classes file not found: {file_path}")
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                classes = json.load(f)
+        except json.JSONDecodeError as e:
+            raise click.ClickException(f"Invalid JSON in classes file: {e}")
+    else:
+        # Parse as JSON string
+        try:
+            classes = json.loads(classes_arg)
+        except json.JSONDecodeError as e:
+            raise click.ClickException(f"Invalid JSON in --classes: {e}")
+
+    if not isinstance(classes, dict):
+        raise click.ClickException("Classes must be a JSON object (dict)")
+
+    if len(classes) < 2:
+        raise click.ClickException("At least 2 classes are required")
+
+    return classes
+
+
+def _load_classes_from_config(config) -> Dict[str, str]:
+    """Load class definitions from config.toml [classification.classes].
+
+    Args:
+        config: ConfigManager instance.
+
+    Returns:
+        Dict mapping class names to descriptions.
+    """
+    classes: Dict[str, str] = {}
+    classification_section = config.get_section("classification")
+    for class_def in classification_section.get("classes", []):
+        name = class_def.get("name")
+        description = class_def.get("description", "")
+        if name:
+            classes[name] = description
+    return classes
+
+
+def _resolve_classes(
+    classifier: str,
+    classes_arg: Optional[str],
+    config,
+) -> Optional[Dict[str, str]]:
+    """Resolve class definitions for multiclass/multilabel commands.
+
+    Uses ``--classes`` when provided; otherwise falls back to
+    ``[classification.classes]`` in config.toml.
+
+    Args:
+        classifier: Selected classifier type.
+        classes_arg: Raw ``--classes`` CLI value.
+        config: ConfigManager instance.
+
+    Returns:
+        Runtime class dict for the classifier, or None to load from config.
+
+    Raises:
+        click.Abort: If fewer than 2 classes are available.
+        click.ClickException: If ``--classes`` parsing fails.
+    """
+    if classifier not in ("multiclass", "multilabel"):
+        return None
+
+    if classes_arg:
+        return _parse_classes_arg(classes_arg)
+
+    config_classes = _load_classes_from_config(config)
+    if len(config_classes) >= 2:
+        return None
+
+    print_error(
+        f"{classifier.capitalize()} classifier requires at least 2 classes. "
+        "Pass --classes or define [[classification.classes]] in config.toml"
+    )
+    raise click.Abort()
+
+
+def _validate_provider(provider: str, config) -> bool:
+    """Validate that a provider exists in config."""
+    llm_providers = config.get_section('llm').get('providers', [])
+    
+    if not llm_providers:
+        print_error("No LLM providers configured in config file")
+        return False
+    
+    for p in llm_providers:
+        if p.get('name', '').lower() == provider.lower():
+            return True
+    
+    print_error(f"Provider '{provider}' not found in config")
+    return False
+
+
+@classify.command()
+@click.argument('content', required=False)
+@click.option(
+    '--classifier',
+    type=click.Choice(['recipe', 'multiclass', 'multilabel']),
+    default='recipe',
+    help='Classifier type (default: recipe)',
+)
+@click.option(
+    '--classes',
+    'classes_arg',
+    help=(
+        'For multiclass/multilabel: class definitions as JSON or @filepath. '
+        'Optional when [[classification.classes]] is defined in config.toml'
+    ),
+)
+@click.option(
+    '--provider',
+    help='LLM provider to use (default: from config)',
+)
+@click.option(
+    '--output',
+    type=click.Choice(['text', 'json']),
+    default='text',
+    help='Output format (default: text)',
+)
+@click.pass_context
+def text(ctx, content, classifier, classes_arg, provider, output):
+    """
+    Classify free-form text (ad-hoc, doesn't save to database).
+    
+    Use --classifier to choose between recipe detection or custom categories.
+    
+    Examples:
+        # Recipe classification
+        postparse classify text "Mix flour and water to make dough"
+        
+        # Multi-class classification
+        postparse classify text "Check out FastAPI!" \\
+          --classifier multiclass \\
+          --classes '{"recipe": "Cooking", "tech": "Technology"}'
+        
+        # Pipe from stdin
+        echo "Recipe text" | postparse classify text -
+        
+        # JSON output
+        postparse classify text "Some text" --output json
+    
+    Note:
+        Results are NOT saved to database. Use 'classify db' for persistent
+        classification of database content.
+    """
+    console = get_console()
+    
+    try:
+        # Handle stdin input
+        if content == '-' or content is None:
+            if sys.stdin.isatty() and content is None:
+                print_error("No text provided. Use: postparse classify text TEXT or pipe to stdin")
+                raise click.Abort()
+            content = sys.stdin.read().strip()
+            if not content:
+                print_error("No text provided from stdin")
+                raise click.Abort()
+        
+        # Load config
+        config_path = ctx.obj.get('config')
+        config = load_config(config_path)
+
+        # Resolve classes for multiclass/multilabel
+        classes = _resolve_classes(classifier, classes_arg, config)
+        
+        # Validate provider if specified
+        if provider and not _validate_provider(provider, config):
+            raise click.Abort()
+        
+        # Initialize classifier
+        if classifier == 'recipe':
+            print_info("Initializing recipe classifier...")
+            from backend.postparse.services.analysis.classifiers.llm import (
+                RecipeLLMClassifier
+            )
+            clf = RecipeLLMClassifier(
+                provider_name=provider,
+                config_path=config_path,
+            )
+        elif classifier == 'multiclass':
+            print_info("Initializing multiclass classifier...")
+            from backend.postparse.services.analysis.classifiers.multi_class import (
+                MultiClassLLMClassifier
+            )
+            clf = MultiClassLLMClassifier(
+                classes=classes,
+                provider_name=provider,
+                config_path=config_path,
+            )
+        else:  # multilabel
+            print_info("Initializing multilabel classifier...")
+            from backend.postparse.services.analysis.classifiers.multi_label import (
+                MultiLabelLLMClassifier
+            )
+            clf = MultiLabelLLMClassifier(
+                classes=classes,
+                provider_name=provider,
+                config_path=config_path,
+            )
+        
+        # Classify
+        print_info("Classifying text...")
+        
+        if classifier == 'multilabel':
+            ml_result = clf.predict_multilabel(content)
+            
+            if output == 'json':
+                output_data = {
+                    'labels': [
+                        {'label': ls.label, 'confidence': ls.confidence}
+                        for ls in ml_result.labels
+                    ],
+                    'reasoning': ml_result.reasoning,
+                    'available_classes': ml_result.available_classes,
+                }
+                console.print_json(json.dumps(output_data))
+            else:
+                if ml_result.labels:
+                    content_str = "[bold]Labels:[/bold]\n"
+                    for ls in ml_result.labels:
+                        content_str += f"  {ls.label}: {ls.confidence:.2%}\n"
+                else:
+                    content_str = "[bold]Labels:[/bold] (none matched)\n"
+                if ml_result.reasoning:
+                    content_str += f"\n[bold]Reasoning:[/bold] {ml_result.reasoning}"
+                print_panel(
+                    content_str,
+                    title="Multi-Label Classification Result",
+                    style="magenta",
+                )
+        else:
+            result = clf.predict(content)
+            
+            if output == 'json':
+                output_data = {
+                    'label': result.label,
+                    'confidence': result.confidence,
+                    'details': result.details,
+                }
+                if classifier == 'multiclass' and result.details:
+                    output_data['reasoning'] = result.details.get('reasoning')
+                console.print_json(json.dumps(output_data))
+            else:
+                label = result.label
+                confidence = result.confidence
+                
+                style = "green" if label.lower() == 'recipe' else "cyan"
+                
+                content_str = f"[bold]Label:[/bold] {label}\n"
+                content_str += f"[bold]Confidence:[/bold] {confidence:.2%}"
+                
+                if classifier == 'multiclass' and result.details:
+                    reasoning = result.details.get('reasoning', '')
+                    if reasoning:
+                        content_str += f"\n[bold]Reasoning:[/bold] {reasoning}"
+                    available = result.details.get('available_classes', [])
+                    if available:
+                        content_str += f"\n[bold]Classes:[/bold] {', '.join(available)}"
+                
+                if classifier == 'recipe' and result.details:
+                    content_str += "\n[bold]Details:[/bold]"
+                    for key, value in result.details.items():
+                        if value is not None:
+                            content_str += f"\n  - {key}: {value}"
+                
+                print_panel(content_str, title="Classification Result", style=style)
+        
+    except click.Abort:
+        raise
+    except click.ClickException:
+        raise
+    except Exception as e:
+        print_error(f"Classification failed: {e}")
+        if ctx.obj.get('verbose'):
+            console.print_exception()
+        raise click.Abort()
+
+
+@classify.command()
+@click.option(
+    '--source',
+    type=click.Choice(['all', 'instagram', 'telegram']),
+    default='all',
+    help='Database source to classify (default: all)',
+)
+@click.option(
+    '--classifier',
+    type=click.Choice(['recipe', 'multiclass', 'multilabel']),
+    default='recipe',
+    help='Classifier type (default: recipe)',
+)
+@click.option(
+    '--classes',
+    'classes_arg',
+    help=(
+        'For multiclass/multilabel: class definitions as JSON or @filepath. '
+        'Optional when [[classification.classes]] is defined in config.toml'
+    ),
+)
+@click.option(
+    '--limit',
+    type=int,
+    default=None,
+    help='Number of NEW items to classify per source (default: 1000 if not specified, skips already-classified)',
+)
+@click.option(
+    '--filter-hashtag',
+    multiple=True,
+    help='Filter by hashtag before classifying (can specify multiple)',
+)
+@click.option(
+    '--provider',
+    help='LLM provider to use (default: from config)',
+)
+@click.option(
+    '--force',
+    is_flag=True,
+    default=False,
+    help='Force reclassification even if already classified (adds new entry)',
+)
+@click.option(
+    '--replace',
+    is_flag=True,
+    default=False,
+    help='Used with --force: replace existing entry instead of adding new one',
+)
+@click.pass_context
+def db(ctx, source, classifier, classes_arg, limit, filter_hashtag, provider,
+       force, replace):
+    """
+    Classify database content and save results.
+    
+    Classifies Instagram posts and/or Telegram messages from the database
+    and saves results with full tracking (LLM metadata, reasoning, confidence).
+    
+    Limit behavior:
+        - --limit N classifies exactly N NEW items per source
+        - If --limit is not specified, defaults to 1000 items per source (safety limit)
+        - Already-classified items are SKIPPED (not counted toward limit)
+        - Pagination continues until N items are classified or database exhausted
+        - Items are processed NEWEST first (ORDER BY created_at DESC)
+        - Example: --limit 10 twice in a row = items 1-10, then items 11-20
+    
+    Examples:
+        # Classify 100 new items from each source
+        postparse classify db --limit 100
+        
+        # Classify 100 new Instagram posts only
+        postparse classify db --source instagram --limit 100
+        
+        # Classify only Telegram messages
+        postparse classify db --source telegram --provider openai
+        
+        # Multi-class classification
+        postparse classify db --classifier multiclass \\
+          --classes '{"recipe": "Cooking", "tech": "Technology", "other": "Other"}'
+        
+        # Filter by hashtag first
+        postparse classify db --filter-hashtag recipe --limit 50
+        
+        # Force reclassification (adds new entry with new timestamp)
+        postparse classify db --force --limit 50
+        
+        # Force reclassification and replace existing entry
+        postparse classify db --force --replace --limit 50
+    
+    Note:
+        - Results are saved to content_analysis table
+        - Items already classified by same classifier+model are skipped (unless --force)
+        - --force adds a new classification entry (keeps history)
+        - --force --replace overwrites the existing entry
+        - LLM metadata (provider, model, temperature) is tracked
+    """
+    console = get_console()
+    
+    try:
+        # Validate --replace requires --force
+        if replace and not force:
+            print_error("--replace requires --force flag")
+            raise click.Abort()
+        
+        # Load config
+        config_path = ctx.obj.get('config')
+        config = load_config(config_path)
+
+        # Resolve classes for multiclass/multilabel
+        classes = _resolve_classes(classifier, classes_arg, config)
+        
+        # Get database
+        database = get_database(config)
+        
+        # Validate provider if specified
+        if provider and not _validate_provider(provider, config):
+            raise click.Abort()
+        
+        is_multilabel = classifier == 'multilabel'
+        
+        # Initialize classifier
+        if classifier == 'recipe':
+            print_info("Initializing recipe classifier...")
+            from backend.postparse.services.analysis.classifiers.llm import (
+                RecipeLLMClassifier
+            )
+            clf = RecipeLLMClassifier(
+                provider_name=provider,
+                config_path=config_path,
+            )
+            classifier_name = 'recipe_llm'
+        elif classifier == 'multiclass':
+            print_info("Initializing multiclass classifier...")
+            from backend.postparse.services.analysis.classifiers.multi_class import (
+                MultiClassLLMClassifier
+            )
+            clf = MultiClassLLMClassifier(
+                classes=classes,
+                provider_name=provider,
+                config_path=config_path,
+            )
+            classifier_name = 'multiclass_llm'
+        else:  # multilabel
+            print_info("Initializing multilabel classifier...")
+            from backend.postparse.services.analysis.classifiers.multi_label import (
+                MultiLabelLLMClassifier
+            )
+            clf = MultiLabelLLMClassifier(
+                classes=classes,
+                provider_name=provider,
+                config_path=config_path,
+            )
+            classifier_name = 'multilabel_llm'
+        
+        # Get the model name from classifier for duplicate checking
+        llm_metadata = clf.get_llm_metadata()
+        llm_model = llm_metadata.get('model')
+        
+        # Determine which sources to classify
+        sources_to_classify = ['instagram', 'telegram'] if source == 'all' else [source]
+        
+        # Classify items
+        all_results = []
+        # Per-source stats: {source: {total, skipped, replaced, empty, confidence_sum, labels}}
+        source_stats: Dict[str, Dict[str, Any]] = {}
+        run_start = time.perf_counter()
+        
+        for current_source in sources_to_classify:
+            # Query database
+            print_info(f"Querying {current_source} from database...")
+            
+            content_source_name = current_source
+            target_count = limit or 1000  # How many to classify
+            batch_size = 50  # Fetch items in batches
+            
+            # Initialize per-source stats
+            source_stats[current_source] = {
+                'total': 0,
+                'skipped': 0,
+                'replaced': 0,
+                'empty': 0,
+                'confidence_sum': 0.0,
+                'labels': {},
+            }
+            current_stats = source_stats[current_source]
+            
+            # Track per-source stats for progress display
+            source_classified = 0
+            source_skipped = 0
+            source_empty = 0
+            classification_times: list[float] = []
+            source_start = time.perf_counter()
+            cursor = None
+            exhausted = False  # True when no more items in database
+            
+            if limit is None:
+                print_info(
+                    f"Classifying up to {target_count} new {current_source} items "
+                    "(default limit, use --limit to change)..."
+                )
+            else:
+                print_info(
+                    f"Classifying up to {target_count} new {current_source} items..."
+                )
+            print_info(
+                "Already-classified messages are skipped; the progress bar "
+                "tracks new classifications only."
+            )
+            
+            with create_classify_progress() as progress:
+                task = progress.add_task(
+                    f"{current_source}: starting",
+                    total=target_count,
+                    elapsed="0.0s",
+                    avg="-",
+                    eta="-",
+                )
+                
+                def update_progress_desc() -> None:
+                    """Update progress description and timing fields."""
+                    scanned = source_classified + source_skipped + source_empty
+                    elapsed = time.perf_counter() - source_start
+                    desc = (
+                        f"{current_source} | "
+                        f"new {source_classified}/{target_count} | "
+                        f"skipped {source_skipped} | "
+                        f"empty {source_empty} | "
+                        f"scanned {scanned}"
+                    )
+                    if classification_times:
+                        avg_seconds = sum(classification_times) / len(
+                            classification_times
+                        )
+                        remaining = target_count - source_classified
+                        eta_seconds = avg_seconds * remaining
+                        avg_display = format_duration(avg_seconds)
+                        eta_display = (
+                            format_duration(eta_seconds)
+                            if remaining > 0
+                            else "0.0s"
+                        )
+                    else:
+                        avg_display = "-"
+                        eta_display = "-"
+                    progress.update(
+                        task,
+                        description=desc,
+                        elapsed=format_duration(elapsed),
+                        avg=avg_display,
+                        eta=eta_display,
+                    )
+                
+                while source_classified < target_count and not exhausted:
+                    # Fetch next batch of items
+                    if current_source == 'instagram':
+                        if filter_hashtag:
+                            items, cursor = database.search_instagram_posts(
+                                hashtags=list(filter_hashtag),
+                                date_range=None,
+                                limit=batch_size,
+                                cursor=cursor
+                            )
+                        else:
+                            items, cursor = database.search_instagram_posts(
+                                limit=batch_size,
+                                cursor=cursor
+                            )
+                    else:  # telegram
+                        if filter_hashtag:
+                            items, cursor = database.search_telegram_messages(
+                                hashtags=list(filter_hashtag),
+                                content_type=None,
+                                date_range=None,
+                                limit=batch_size,
+                                cursor=cursor
+                            )
+                        else:
+                            items, cursor = database.search_telegram_messages(
+                                limit=batch_size,
+                                cursor=cursor
+                            )
+                    
+                    if not items:
+                        exhausted = True
+                        break
+                    
+                    # No more pages after this
+                    if cursor is None:
+                        exhausted = True
+                    
+                    for item in items:
+                        # Stop if we've reached the target
+                        if source_classified >= target_count:
+                            break
+                        
+                        # Extract text — prefer enriched tagged format when available
+                        if current_source == 'instagram':
+                            raw_text = item.get('caption', '')
+                        else:  # telegram
+                            raw_text = item.get('content', '')
+
+                        content_expanded = item.get('content_expanded', '')
+                        if raw_text and content_expanded:
+                            item_text = (
+                                f"<original content>{raw_text}</original content>"
+                                f"<extended content>{content_expanded}</extended content>"
+                            )
+                        else:
+                            item_text = raw_text
+
+                        if not item_text:
+                            source_empty += 1
+                            current_stats['empty'] += 1
+                            update_progress_desc()
+                            continue
+                        
+                        # Classify
+                        try:
+                            item_id = item.get('id')
+                            
+                            # Check if already classified by this classifier+model
+                            existing_id = None
+                            if item_id:
+                                has_existing = database.has_classification(
+                                    item_id, content_source_name, classifier_name, llm_model
+                                )
+                                
+                                if has_existing:
+                                    if not force:
+                                        # Skip - don't count toward limit
+                                        current_stats['skipped'] += 1
+                                        source_skipped += 1
+                                        update_progress_desc()
+                                        continue
+                                    elif replace:
+                                        # Get existing ID for replacement
+                                        existing_id = database.get_classification_id(
+                                            item_id, content_source_name,
+                                            classifier_name, llm_model
+                                        )
+                            
+                            classify_started = time.perf_counter()
+                            if is_multilabel:
+                                ml_result = clf.predict_multilabel(item_text)
+                                classification_times.append(
+                                    time.perf_counter() - classify_started
+                                )
+                                reasoning = ml_result.reasoning
+                                run_id = str(uuid.uuid4())
+                                
+                                if item_id:
+                                    for ls in ml_result.labels:
+                                        database.save_classification_result(
+                                            content_id=item_id,
+                                            content_source=content_source_name,
+                                            classifier_name=classifier_name,
+                                            label=ls.label,
+                                            confidence=ls.confidence,
+                                            classification_type='multi_label',
+                                            run_id=run_id,
+                                            reasoning=reasoning,
+                                            llm_metadata=clf.get_llm_metadata(),
+                                        )
+                                
+                                labels_str = ", ".join(
+                                    f"{ls.label}({ls.confidence:.0%})"
+                                    for ls in ml_result.labels
+                                ) or "(none)"
+                                avg_conf = (
+                                    sum(ls.confidence for ls in ml_result.labels)
+                                    / len(ml_result.labels)
+                                    if ml_result.labels else 0.0
+                                )
+                                
+                                current_stats['total'] += 1
+                                current_stats['confidence_sum'] += avg_conf
+                                for ls in ml_result.labels:
+                                    current_stats['labels'][ls.label] = (
+                                        current_stats['labels'].get(ls.label, 0) + 1
+                                    )
+                                source_classified += 1
+                                
+                                all_results.append({
+                                    'id': item_id or '',
+                                    'source': current_source,
+                                    'content_preview': truncate_text(item_text, 40),
+                                    'label': labels_str,
+                                    'confidence': f"{avg_conf:.2%}",
+                                })
+                            else:
+                                result = clf.predict(item_text)
+                                classification_times.append(
+                                    time.perf_counter() - classify_started
+                                )
+                                
+                                label = result.label
+                                confidence = result.confidence
+                                
+                                if item_id:
+                                    reasoning = None
+                                    details = result.details.copy() if result.details else {}
+                                    if details and 'reasoning' in details:
+                                        reasoning = details.pop('reasoning')
+                                    
+                                    if existing_id and replace:
+                                        database.update_classification(
+                                            analysis_id=existing_id,
+                                            label=label,
+                                            confidence=confidence,
+                                            reasoning=reasoning,
+                                            llm_metadata=clf.get_llm_metadata(),
+                                            details=details if details else None
+                                        )
+                                        current_stats['replaced'] += 1
+                                    else:
+                                        database.save_classification_result(
+                                            content_id=item_id,
+                                            content_source=content_source_name,
+                                            classifier_name=classifier_name,
+                                            label=label,
+                                            confidence=confidence,
+                                            details=details if details else None,
+                                            classification_type='single',
+                                            reasoning=reasoning,
+                                            llm_metadata=clf.get_llm_metadata()
+                                        )
+                                
+                                current_stats['total'] += 1
+                                current_stats['labels'][label] = current_stats['labels'].get(label, 0) + 1
+                                current_stats['confidence_sum'] += confidence
+                                source_classified += 1
+                                
+                                all_results.append({
+                                    'id': item_id or '',
+                                    'source': current_source,
+                                    'content_preview': truncate_text(item_text, 40),
+                                    'label': label,
+                                    'confidence': f"{confidence:.2%}",
+                                })
+                            
+                            # Update progress bar (tracks classified count)
+                            progress.update(task, completed=source_classified)
+                            update_progress_desc()
+                            
+                        except Exception as e:
+                            if ctx.obj.get('verbose'):
+                                print_error(f"Error classifying item {item.get('id')}: {e}")
+                
+                # Final update - keep target total so partial runs read clearly
+                progress.update(task, completed=source_classified)
+                update_progress_desc()
+
+            source_elapsed = time.perf_counter() - source_start
+            current_stats['elapsed_seconds'] = source_elapsed
+            current_stats['classification_times'] = classification_times
+            
+            if source_classified == 0 and source_skipped == 0:
+                print_info(f"No {current_source} found to classify")
+        
+        # Display results
+        console.print()
+        total_elapsed = time.perf_counter() - run_start
+        print_success(
+            f"Classification completed in {format_duration(total_elapsed)}!"
+        )
+        
+        # Results table
+        if all_results:
+            title = f"Classification Results ({source})"
+            table = Table(title=title, show_header=True)
+            table.add_column("ID", style="cyan")
+            if source == 'all':
+                table.add_column("Source", style="dim")
+            table.add_column("Content Preview")
+            table.add_column("Label", style="green")
+            table.add_column("Confidence", justify="right")
+            
+            for result in all_results[:20]:  # Show first 20
+                if source == 'all':
+                    table.add_row(
+                        str(result['id']),
+                        result['source'],
+                        result['content_preview'],
+                        result['label'],
+                        result['confidence'],
+                    )
+                else:
+                    table.add_row(
+                        str(result['id']),
+                        result['content_preview'],
+                        result['label'],
+                        result['confidence'],
+                    )
+            
+            console.print(table)
+            
+            if len(all_results) > 20:
+                print_info(f"Showing first 20 of {len(all_results)} results")
+        
+        # Summary stats per source
+        console.print()
+        
+        for src_name, src_stats in source_stats.items():
+            src_total = src_stats['total']
+            src_skipped = src_stats['skipped']
+            src_replaced = src_stats['replaced']
+            src_empty = src_stats['empty']
+            src_confidence = src_stats['confidence_sum']
+            src_labels = src_stats['labels']
+            src_elapsed = src_stats.get('elapsed_seconds', 0.0)
+            src_times = src_stats.get('classification_times', [])
+            
+            avg_confidence = src_confidence / src_total if src_total > 0 else 0.0
+            
+            # Source icon
+            icon = "📸" if src_name == "instagram" else "📨"
+            summary = Table(title=f"{icon} {src_name.capitalize()} Summary", show_header=True)
+            summary.add_column("Metric", style="cyan")
+            summary.add_column("Value", style="green", justify="right")
+            
+            summary.add_row("Classified", str(src_total))
+            summary.add_row("Skipped (already done)", str(src_skipped))
+            if src_empty > 0:
+                summary.add_row("Empty (no text)", str(src_empty))
+            if src_replaced > 0:
+                summary.add_row("Replaced", str(src_replaced))
+                summary.add_row("New entries", str(src_total - src_replaced))
+            if src_total > 0:
+                summary.add_row("Avg confidence", f"{avg_confidence:.2%}")
+            summary.add_row("Total time", format_duration(src_elapsed))
+            if src_times:
+                summary.add_row(
+                    "Avg per classification",
+                    format_duration(sum(src_times) / len(src_times)),
+                )
+            
+            # Show label distribution for this source
+            if src_labels:
+                summary.add_row("", "")  # Empty row separator
+                summary.add_row("[bold]Labels[/bold]", "")
+                for label, count in sorted(src_labels.items()):
+                    summary.add_row(f"  {label}", str(count))
+            
+            console.print(summary)
+            console.print()
+        
+        # Grand total if multiple sources
+        if len(source_stats) > 1:
+            grand_total = sum(s['total'] for s in source_stats.values())
+            grand_skipped = sum(s['skipped'] for s in source_stats.values())
+            grand_confidence = sum(s['confidence_sum'] for s in source_stats.values())
+            grand_elapsed = sum(
+                s.get('elapsed_seconds', 0.0) for s in source_stats.values()
+            )
+            all_classification_times = [
+                t
+                for s in source_stats.values()
+                for t in s.get('classification_times', [])
+            ]
+            avg_total_confidence = grand_confidence / grand_total if grand_total > 0 else 0.0
+            
+            total_table = Table(title="📊 Grand Total", show_header=True)
+            total_table.add_column("Metric", style="cyan")
+            total_table.add_column("Value", style="green", justify="right")
+            total_table.add_row("Total classified", str(grand_total))
+            total_table.add_row("Total skipped", str(grand_skipped))
+            if grand_total > 0:
+                total_table.add_row("Avg confidence", f"{avg_total_confidence:.2%}")
+            total_table.add_row("Total time", format_duration(grand_elapsed))
+            if all_classification_times:
+                total_table.add_row(
+                    "Avg per classification",
+                    format_duration(
+                        sum(all_classification_times)
+                        / len(all_classification_times)
+                    ),
+                )
+            console.print(total_table)
+        
+    except click.Abort:
+        raise
+    except click.ClickException:
+        raise
+    except Exception as e:
+        print_error(f"Database classification failed: {e}")
+        if ctx.obj.get('verbose'):
+            console.print_exception()
+        raise click.Abort()

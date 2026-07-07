@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from .base import BaseClassifier, ClassificationResult
 from backend.postparse.core.utils.config import get_config
 from backend.postparse.llm.config import LLMConfig, get_provider_config
+from backend.postparse.llm.model_discovery import resolve_provider_model
 
 class RecipeDetails(BaseModel):
     """Detailed recipe classification output."""
@@ -101,7 +102,9 @@ class RecipeLLMClassifier(BaseClassifier):
         selected_provider = provider_name or llm_config.default_provider
         
         # Get provider configuration and store for metadata access
-        provider_cfg = get_provider_config(llm_config, selected_provider)
+        provider_cfg = resolve_provider_model(
+            get_provider_config(llm_config, selected_provider)
+        )
         self._provider_config = provider_cfg
         
         # Build llm_kwargs from provider configuration

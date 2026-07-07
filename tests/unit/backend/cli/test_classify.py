@@ -239,11 +239,12 @@ class TestClassifyText:
                 )
 
     def test_classify_text_multiclass_requires_classes(self) -> None:
-        """Test that multiclass classifier requires --classes option."""
+        """Test multiclass fails when no classes in CLI or config."""
         runner = CliRunner()
 
         with patch("backend.postparse.cli.classify.load_config") as mock_load:
             mock_config = MagicMock()
+            mock_config.get_section.return_value = {"classes": []}
             mock_load.return_value = mock_config
 
             result = runner.invoke(
@@ -252,29 +253,63 @@ class TestClassifyText:
             )
 
             assert result.exit_code != 0
-            assert "multiclass classifier requires --classes option" in (
-                result.output.lower()
-            )
-            assert not mock_load.called
+            assert "requires at least 2 classes" in result.output.lower()
+            mock_load.assert_called_once()
 
-    def test_classify_text_multilabel_requires_classes(self) -> None:
-        """Test that multilabel classifier requires --classes option."""
+    def test_classify_text_multiclass_uses_config_classes(self) -> None:
+        """Test multiclass uses [[classification.classes]] when --classes omitted."""
         runner = CliRunner()
 
-        with patch(
-            "backend.postparse.services.analysis.classifiers.multi_label.MultiLabelLLMClassifier"
-        ) as mock_classifier_class:
-            mock_classifier_class.side_effect = ValueError("At least 2 classes required")
+        with patch("backend.postparse.cli.classify.load_config") as mock_load:
+            with patch(
+                "backend.postparse.services.analysis.classifiers.multi_class.MultiClassLLMClassifier"
+            ) as mock_classifier_class:
+                mock_config = MagicMock()
+                mock_config.get_section.return_value = {
+                    "classes": [
+                        {"name": "recipe", "description": "Cooking"},
+                        {"name": "tech", "description": "Technology"},
+                    ]
+                }
+                mock_load.return_value = mock_config
+
+                mock_classifier = MagicMock()
+                mock_result = MagicMock()
+                mock_result.label = "tech"
+                mock_result.confidence = 0.90
+                mock_result.details = {}
+                mock_classifier.predict.return_value = mock_result
+                mock_classifier_class.return_value = mock_classifier
+
+                result = runner.invoke(
+                    cli,
+                    ["classify", "text", "--classifier", "multiclass", "Some text"],
+                )
+
+                assert result.exit_code == 0
+                mock_classifier_class.assert_called_once_with(
+                    classes=None,
+                    provider_name=None,
+                    config_path=None,
+                )
+
+    def test_classify_text_multilabel_requires_classes(self) -> None:
+        """Test multilabel fails when no classes in CLI or config."""
+        runner = CliRunner()
+
+        with patch("backend.postparse.cli.classify.load_config") as mock_load:
+            mock_config = MagicMock()
+            mock_config.get_section.return_value = {"classes": []}
+            mock_load.return_value = mock_config
+
             result = runner.invoke(
                 cli,
                 ["classify", "text", "--classifier", "multilabel", "Some text"],
             )
 
             assert result.exit_code != 0
-            assert "multilabel classifier requires --classes option" in (
-                result.output.lower()
-            )
-            assert not mock_classifier_class.called
+            assert "requires at least 2 classes" in result.output.lower()
+            mock_load.assert_called_once()
 
     def test_classify_text_handles_empty_input(self) -> None:
         """Test that classify text handles empty input gracefully."""
@@ -624,12 +659,13 @@ class TestClassifyDb:
                     assert save_kwargs["classification_type"] == "single"
 
     def test_classify_db_multiclass_requires_classes(self) -> None:
-        """Test that multiclass classifier requires --classes option."""
+        """Test multiclass db fails when no classes in CLI or config."""
         runner = CliRunner()
 
         with patch("backend.postparse.cli.classify.load_config") as mock_load:
             with patch("backend.postparse.cli.classify.get_database") as mock_get_db:
                 mock_config = MagicMock()
+                mock_config.get_section.return_value = {"classes": []}
                 mock_load.return_value = mock_config
                 mock_get_db.return_value = MagicMock()
 
@@ -639,29 +675,85 @@ class TestClassifyDb:
                 )
 
                 assert result.exit_code != 0
-                assert "multiclass classifier requires --classes option" in (
-                    result.output.lower()
-                )
-                assert not mock_load.called
+                assert "requires at least 2 classes" in result.output.lower()
+                mock_load.assert_called_once()
 
     def test_classify_db_multilabel_requires_classes(self) -> None:
-        """Test that multilabel classifier requires --classes option."""
+        """Test multilabel db fails when no classes in CLI or config."""
         runner = CliRunner()
 
-        with patch(
-            "backend.postparse.services.analysis.classifiers.multi_label.MultiLabelLLMClassifier"
-        ) as mock_classifier_class:
-            mock_classifier_class.side_effect = ValueError("At least 2 classes required")
-            result = runner.invoke(
-                cli,
-                ["classify", "db", "--classifier", "multilabel"],
-            )
+        with patch("backend.postparse.cli.classify.load_config") as mock_load:
+            with patch("backend.postparse.cli.classify.get_database") as mock_get_db:
+                mock_config = MagicMock()
+                mock_config.get_section.return_value = {"classes": []}
+                mock_load.return_value = mock_config
+                mock_get_db.return_value = MagicMock()
 
-            assert result.exit_code != 0
-            assert "multilabel classifier requires --classes option" in (
-                result.output.lower()
-            )
-            assert not mock_classifier_class.called
+                result = runner.invoke(
+                    cli,
+                    ["classify", "db", "--classifier", "multilabel"],
+                )
+
+                assert result.exit_code != 0
+                assert "requires at least 2 classes" in result.output.lower()
+                mock_load.assert_called_once()
+
+    def test_classify_db_multilabel_uses_config_classes(self) -> None:
+        """Test multilabel db uses [[classification.classes]] when --classes omitted."""
+        runner = CliRunner()
+
+        with patch("backend.postparse.cli.classify.load_config") as mock_load:
+            with patch("backend.postparse.cli.classify.get_database") as mock_get_db:
+                with patch(
+                    "backend.postparse.services.analysis.classifiers.multi_label.MultiLabelLLMClassifier"
+                ) as mock_classifier_class:
+                    mock_config = MagicMock()
+                    mock_config.get_section.return_value = {
+                        "classes": [
+                            {"name": "recipe", "description": "Cooking"},
+                            {"name": "tech", "description": "Technology"},
+                        ]
+                    }
+                    mock_load.return_value = mock_config
+
+                    mock_db = MagicMock()
+                    mock_db.search_telegram_messages.return_value = (
+                        [{"id": 1, "content": "Pasta recipe"}], None
+                    )
+                    mock_db.has_classification.return_value = False
+                    mock_get_db.return_value = mock_db
+
+                    mock_classifier = MagicMock()
+                    mock_ml_result = MagicMock()
+                    mock_ml_result.labels = []
+                    mock_ml_result.reasoning = "No match"
+                    mock_classifier.predict_multilabel.return_value = mock_ml_result
+                    mock_classifier.get_llm_metadata.return_value = {
+                        "provider": "test",
+                        "model": "test-model",
+                    }
+                    mock_classifier_class.return_value = mock_classifier
+
+                    result = runner.invoke(
+                        cli,
+                        [
+                            "classify",
+                            "db",
+                            "--source",
+                            "telegram",
+                            "--classifier",
+                            "multilabel",
+                            "--limit",
+                            "1",
+                        ],
+                    )
+
+                    assert result.exit_code == 0
+                    mock_classifier_class.assert_called_once_with(
+                        classes=None,
+                        provider_name=None,
+                        config_path=None,
+                    )
 
     def test_classify_db_skips_already_classified_with_same_model(self) -> None:
         """Test that db skips items already classified with same model."""

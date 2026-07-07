@@ -12,6 +12,7 @@ Example:
 
 import asyncio
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Coroutine, Dict, List, Optional, TypeVar
@@ -341,9 +342,38 @@ def format_message(message: Dict[str, Any]) -> Dict[str, str]:
     }
 
 
-def create_progress() -> Progress:
+def format_duration(seconds: float) -> str:
+    """Format a duration in seconds for CLI display.
+
+    Args:
+        seconds: Duration in seconds.
+
+    Returns:
+        Human-readable duration string.
+
+    Examples:
+        >>> format_duration(12.4)
+        '12.4s'
+        >>> format_duration(95)
+        '1m 35s'
+    """
+    if seconds < 0:
+        seconds = 0.0
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes, secs = divmod(int(seconds), 60)
+    if minutes < 60:
+        return f"{minutes}m {secs}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes}m"
+
+
+def create_progress(*, show_eta: bool = True) -> Progress:
     """
     Create Rich Progress instance with custom columns.
+    
+    Args:
+        show_eta: Whether to show estimated time remaining.
     
     Returns:
         Progress: Configured progress instance
@@ -354,12 +384,35 @@ def create_progress() -> Progress:
         ...     for i in range(100):
         ...         progress.update(task, advance=1)
     """
-    return Progress(
+    columns = [
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
         BarColumn(),
         TaskProgressColumn(),
-        TimeRemainingColumn(),
+    ]
+    if show_eta:
+        columns.append(TimeRemainingColumn())
+    return Progress(*columns, console=get_console())
+
+
+def create_classify_progress() -> Progress:
+    """Create a progress bar suited for classify-db scanning.
+
+    The bar tracks newly classified items toward ``--limit``. Skipped and
+    empty items are shown in the description because they do not advance
+    the bar.
+
+    Returns:
+        Progress: Configured progress instance for classification runs.
+    """
+    return Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(bar_width=20),
+        TextColumn("{task.completed}/{task.total} new"),
+        TextColumn("elapsed {task.fields[elapsed]}"),
+        TextColumn("avg {task.fields[avg]}"),
+        TextColumn("ETA {task.fields[eta]}"),
         console=get_console(),
     )
 

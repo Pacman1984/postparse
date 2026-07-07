@@ -16,6 +16,16 @@ from click.testing import CliRunner
 from backend.postparse.cli.main import cli
 
 
+@pytest.fixture(autouse=True)
+def passthrough_resolve_provider_model():
+    """Keep mocked provider configs unchanged during check CLI tests."""
+    with patch(
+        "backend.postparse.llm.model_discovery.resolve_provider_model",
+        side_effect=lambda cfg: cfg,
+    ):
+        yield
+
+
 class TestCheckTelegram:
     """Test check telegram command."""
 

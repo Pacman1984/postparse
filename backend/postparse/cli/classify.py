@@ -17,6 +17,7 @@ Example:
 import sys
 import json
 import uuid
+import time
 from pathlib import Path
 from typing import Optional, Dict, Any
 
@@ -33,6 +34,8 @@ from backend.postparse.cli.utils import (
     print_info,
     print_panel,
     create_progress,
+    create_classify_progress,
+    format_duration,
     truncate_text,
 )
 
@@ -97,6 +100,64 @@ def _parse_classes_arg(classes_arg: Optional[str]) -> Optional[Dict[str, str]]:
     return classes
 
 
+def _load_classes_from_config(config) -> Dict[str, str]:
+    """Load class definitions from config.toml [classification.classes].
+
+    Args:
+        config: ConfigManager instance.
+
+    Returns:
+        Dict mapping class names to descriptions.
+    """
+    classes: Dict[str, str] = {}
+    classification_section = config.get_section("classification")
+    for class_def in classification_section.get("classes", []):
+        name = class_def.get("name")
+        description = class_def.get("description", "")
+        if name:
+            classes[name] = description
+    return classes
+
+
+def _resolve_classes(
+    classifier: str,
+    classes_arg: Optional[str],
+    config,
+) -> Optional[Dict[str, str]]:
+    """Resolve class definitions for multiclass/multilabel commands.
+
+    Uses ``--classes`` when provided; otherwise falls back to
+    ``[classification.classes]`` in config.toml.
+
+    Args:
+        classifier: Selected classifier type.
+        classes_arg: Raw ``--classes`` CLI value.
+        config: ConfigManager instance.
+
+    Returns:
+        Runtime class dict for the classifier, or None to load from config.
+
+    Raises:
+        click.Abort: If fewer than 2 classes are available.
+        click.ClickException: If ``--classes`` parsing fails.
+    """
+    if classifier not in ("multiclass", "multilabel"):
+        return None
+
+    if classes_arg:
+        return _parse_classes_arg(classes_arg)
+
+    config_classes = _load_classes_from_config(config)
+    if len(config_classes) >= 2:
+        return None
+
+    print_error(
+        f"{classifier.capitalize()} classifier requires at least 2 classes. "
+        "Pass --classes or define [[classification.classes]] in config.toml"
+    )
+    raise click.Abort()
+
+
 def _validate_provider(provider: str, config) -> bool:
     """Validate that a provider exists in config."""
     llm_providers = config.get_section('llm').get('providers', [])
@@ -124,7 +185,10 @@ def _validate_provider(provider: str, config) -> bool:
 @click.option(
     '--classes',
     'classes_arg',
-    help='For multiclass/multilabel: class definitions as JSON or @filepath',
+    help=(
+        'For multiclass/multilabel: class definitions as JSON or @filepath. '
+        'Optional when [[classification.classes]] is defined in config.toml'
+    ),
 )
 @click.option(
     '--provider',
@@ -175,23 +239,16 @@ def text(ctx, content, classifier, classes_arg, provider, output):
                 print_error("No text provided from stdin")
                 raise click.Abort()
         
-        # Validate multiclass/multilabel require classes
-        if classifier in ('multiclass', 'multilabel') and not classes_arg:
-            print_error(
-                f"{classifier.capitalize()} classifier requires --classes option"
-            )
-            raise click.Abort()
-        
         # Load config
         config_path = ctx.obj.get('config')
         config = load_config(config_path)
+
+        # Resolve classes for multiclass/multilabel
+        classes = _resolve_classes(classifier, classes_arg, config)
         
         # Validate provider if specified
         if provider and not _validate_provider(provider, config):
             raise click.Abort()
-        
-        # Parse classes for multiclass/multilabel
-        classes = _parse_classes_arg(classes_arg) if classes_arg else None
         
         # Initialize classifier
         if classifier == 'recipe':
@@ -318,7 +375,10 @@ def text(ctx, content, classifier, classes_arg, provider, output):
 @click.option(
     '--classes',
     'classes_arg',
-    help='For multiclass/multilabel: class definitions as JSON or @filepath',
+    help=(
+        'For multiclass/multilabel: class definitions as JSON or @filepath. '
+        'Optional when [[classification.classes]] is defined in config.toml'
+    ),
 )
 @click.option(
     '--limit',
@@ -402,16 +462,12 @@ def db(ctx, source, classifier, classes_arg, limit, filter_hashtag, provider,
             print_error("--replace requires --force flag")
             raise click.Abort()
         
-        # Validate multiclass/multilabel require classes
-        if classifier in ('multiclass', 'multilabel') and not classes_arg:
-            print_error(
-                f"{classifier.capitalize()} classifier requires --classes option"
-            )
-            raise click.Abort()
-        
         # Load config
         config_path = ctx.obj.get('config')
         config = load_config(config_path)
+
+        # Resolve classes for multiclass/multilabel
+        classes = _resolve_classes(classifier, classes_arg, config)
         
         # Get database
         database = get_database(config)
@@ -419,9 +475,6 @@ def db(ctx, source, classifier, classes_arg, limit, filter_hashtag, provider,
         # Validate provider if specified
         if provider and not _validate_provider(provider, config):
             raise click.Abort()
-        
-        # Parse classes for multiclass/multilabel
-        classes = _parse_classes_arg(classes_arg) if classes_arg else None
         
         is_multilabel = classifier == 'multilabel'
         
@@ -470,6 +523,7 @@ def db(ctx, source, classifier, classes_arg, limit, filter_hashtag, provider,
         all_results = []
         # Per-source stats: {source: {total, skipped, replaced, empty, confidence_sum, labels}}
         source_stats: Dict[str, Dict[str, Any]] = {}
+        run_start = time.perf_counter()
         
         for current_source in sources_to_classify:
             # Query database
@@ -494,30 +548,67 @@ def db(ctx, source, classifier, classes_arg, limit, filter_hashtag, provider,
             source_classified = 0
             source_skipped = 0
             source_empty = 0
+            classification_times: list[float] = []
+            source_start = time.perf_counter()
             cursor = None
             exhausted = False  # True when no more items in database
             
             if limit is None:
-                print_info(f"Classifying up to {target_count} {current_source} items (default limit, use --limit to change)...")
+                print_info(
+                    f"Classifying up to {target_count} new {current_source} items "
+                    "(default limit, use --limit to change)..."
+                )
             else:
-                print_info(f"Classifying up to {target_count} {current_source} items...")
+                print_info(
+                    f"Classifying up to {target_count} new {current_source} items..."
+                )
+            print_info(
+                "Already-classified messages are skipped; the progress bar "
+                "tracks new classifications only."
+            )
             
-            with create_progress() as progress:
+            with create_classify_progress() as progress:
                 task = progress.add_task(
-                    f"[cyan]{current_source}[/cyan]",
-                    total=target_count
+                    f"{current_source}: starting",
+                    total=target_count,
+                    elapsed="0.0s",
+                    avg="-",
+                    eta="-",
                 )
                 
-                def update_progress_desc():
-                    """Update progress bar description with current stats."""
-                    desc = f"[cyan]{current_source}[/cyan]"
-                    if source_classified > 0:
-                        desc += f" [green]✓{source_classified}[/green]"
-                    if source_skipped > 0:
-                        desc += f" [dim]⊘{source_skipped} already done[/dim]"
-                    if source_empty > 0:
-                        desc += f" [dim]○{source_empty} empty[/dim]"
-                    progress.update(task, description=desc)
+                def update_progress_desc() -> None:
+                    """Update progress description and timing fields."""
+                    scanned = source_classified + source_skipped + source_empty
+                    elapsed = time.perf_counter() - source_start
+                    desc = (
+                        f"{current_source} | "
+                        f"new {source_classified}/{target_count} | "
+                        f"skipped {source_skipped} | "
+                        f"empty {source_empty} | "
+                        f"scanned {scanned}"
+                    )
+                    if classification_times:
+                        avg_seconds = sum(classification_times) / len(
+                            classification_times
+                        )
+                        remaining = target_count - source_classified
+                        eta_seconds = avg_seconds * remaining
+                        avg_display = format_duration(avg_seconds)
+                        eta_display = (
+                            format_duration(eta_seconds)
+                            if remaining > 0
+                            else "0.0s"
+                        )
+                    else:
+                        avg_display = "-"
+                        eta_display = "-"
+                    progress.update(
+                        task,
+                        description=desc,
+                        elapsed=format_duration(elapsed),
+                        avg=avg_display,
+                        eta=eta_display,
+                    )
                 
                 while source_classified < target_count and not exhausted:
                     # Fetch next batch of items
@@ -608,8 +699,12 @@ def db(ctx, source, classifier, classes_arg, limit, filter_hashtag, provider,
                                             classifier_name, llm_model
                                         )
                             
+                            classify_started = time.perf_counter()
                             if is_multilabel:
                                 ml_result = clf.predict_multilabel(item_text)
+                                classification_times.append(
+                                    time.perf_counter() - classify_started
+                                )
                                 reasoning = ml_result.reasoning
                                 run_id = str(uuid.uuid4())
                                 
@@ -654,6 +749,9 @@ def db(ctx, source, classifier, classes_arg, limit, filter_hashtag, provider,
                                 })
                             else:
                                 result = clf.predict(item_text)
+                                classification_times.append(
+                                    time.perf_counter() - classify_started
+                                )
                                 
                                 label = result.label
                                 confidence = result.confidence
@@ -708,16 +806,23 @@ def db(ctx, source, classifier, classes_arg, limit, filter_hashtag, provider,
                             if ctx.obj.get('verbose'):
                                 print_error(f"Error classifying item {item.get('id')}: {e}")
                 
-                # Final update - set to actual classified count
-                progress.update(task, completed=source_classified, total=source_classified)
+                # Final update - keep target total so partial runs read clearly
+                progress.update(task, completed=source_classified)
                 update_progress_desc()
+
+            source_elapsed = time.perf_counter() - source_start
+            current_stats['elapsed_seconds'] = source_elapsed
+            current_stats['classification_times'] = classification_times
             
             if source_classified == 0 and source_skipped == 0:
                 print_info(f"No {current_source} found to classify")
         
         # Display results
         console.print()
-        print_success("Classification completed!")
+        total_elapsed = time.perf_counter() - run_start
+        print_success(
+            f"Classification completed in {format_duration(total_elapsed)}!"
+        )
         
         # Results table
         if all_results:
@@ -762,6 +867,8 @@ def db(ctx, source, classifier, classes_arg, limit, filter_hashtag, provider,
             src_empty = src_stats['empty']
             src_confidence = src_stats['confidence_sum']
             src_labels = src_stats['labels']
+            src_elapsed = src_stats.get('elapsed_seconds', 0.0)
+            src_times = src_stats.get('classification_times', [])
             
             avg_confidence = src_confidence / src_total if src_total > 0 else 0.0
             
@@ -780,6 +887,12 @@ def db(ctx, source, classifier, classes_arg, limit, filter_hashtag, provider,
                 summary.add_row("New entries", str(src_total - src_replaced))
             if src_total > 0:
                 summary.add_row("Avg confidence", f"{avg_confidence:.2%}")
+            summary.add_row("Total time", format_duration(src_elapsed))
+            if src_times:
+                summary.add_row(
+                    "Avg per classification",
+                    format_duration(sum(src_times) / len(src_times)),
+                )
             
             # Show label distribution for this source
             if src_labels:
@@ -796,6 +909,14 @@ def db(ctx, source, classifier, classes_arg, limit, filter_hashtag, provider,
             grand_total = sum(s['total'] for s in source_stats.values())
             grand_skipped = sum(s['skipped'] for s in source_stats.values())
             grand_confidence = sum(s['confidence_sum'] for s in source_stats.values())
+            grand_elapsed = sum(
+                s.get('elapsed_seconds', 0.0) for s in source_stats.values()
+            )
+            all_classification_times = [
+                t
+                for s in source_stats.values()
+                for t in s.get('classification_times', [])
+            ]
             avg_total_confidence = grand_confidence / grand_total if grand_total > 0 else 0.0
             
             total_table = Table(title="📊 Grand Total", show_header=True)
@@ -805,6 +926,15 @@ def db(ctx, source, classifier, classes_arg, limit, filter_hashtag, provider,
             total_table.add_row("Total skipped", str(grand_skipped))
             if grand_total > 0:
                 total_table.add_row("Avg confidence", f"{avg_total_confidence:.2%}")
+            total_table.add_row("Total time", format_duration(grand_elapsed))
+            if all_classification_times:
+                total_table.add_row(
+                    "Avg per classification",
+                    format_duration(
+                        sum(all_classification_times)
+                        / len(all_classification_times)
+                    ),
+                )
             console.print(total_table)
         
     except click.Abort:

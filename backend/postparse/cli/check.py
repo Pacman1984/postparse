@@ -489,6 +489,7 @@ def _check_llm_providers(
     
     try:
         from backend.postparse.llm.config import LLMConfig
+        from backend.postparse.llm.model_discovery import resolve_provider_model
         from backend.postparse.llm.provider import LiteLLMProvider
         from backend.postparse.core.utils.config import ConfigManager
     except ImportError as e:
@@ -511,11 +512,13 @@ def _check_llm_providers(
 
     # Check each configured provider
     for provider_cfg in llm_config.providers:
+        resolved_cfg = resolve_provider_model(provider_cfg)
         status_info: Dict = {
-            "name": provider_cfg.name,
-            "model": provider_cfg.model,
-            "api_base": provider_cfg.api_base,
-            "is_default": provider_cfg.name == default_provider_name,
+            "name": resolved_cfg.name,
+            "model": resolved_cfg.model,
+            "configured_model": provider_cfg.model,
+            "api_base": resolved_cfg.api_base,
+            "is_default": resolved_cfg.name == default_provider_name,
             "status": "unknown",
             "status_detail": "",
             "has_api_key": False,
@@ -556,7 +559,7 @@ def _check_llm_providers(
             print_info(f"Checking {provider_cfg.name}...")
 
         try:
-            provider = LiteLLMProvider(provider_cfg)
+            provider = LiteLLMProvider(resolved_cfg)
             is_available = provider.is_available()
 
             if is_available:

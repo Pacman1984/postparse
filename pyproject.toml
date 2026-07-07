@@ -90,8 +90,8 @@ Homepage = "https://github.com/sebpachl/postparse"
 [tool.hatch.build.targets.wheel]
 packages = ["backend"]
 
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
     "pytest>=7.4.0",
     "pytest-asyncio>=0.21.0",
     "pytest-cov>=4.1.0",
@@ -101,6 +101,8 @@ dev-dependencies = [
     "mypy>=1.5.0",
     "pylint>=2.17.5",
 ]
+
+[tool.uv]
 package = true
 
 [tool.pytest.ini_options]

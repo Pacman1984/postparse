@@ -16,6 +16,7 @@ from litellm import (
 
 from backend.postparse.core.utils.config import ConfigManager
 from backend.postparse.llm.config import LLMConfig, ProviderConfig, get_provider_config
+from backend.postparse.llm.model_discovery import resolve_provider_model
 from backend.postparse.llm.exceptions import (
     LLMAuthenticationError,
     LLMConnectionError,
@@ -518,10 +519,16 @@ def get_llm_provider(
     if provider_name is None:
         provider_name = llm_config.default_provider
 
-    # Get provider configuration
-    provider_config = get_provider_config(llm_config, provider_name)
+    # Get provider configuration and resolve local served model when possible
+    provider_config = resolve_provider_model(
+        get_provider_config(llm_config, provider_name)
+    )
 
     # Create and return provider instance
-    logger.info(f"Creating LLM provider: {provider_name} with model {provider_config.model}")
+    logger.info(
+        "Creating LLM provider: %s with model %s",
+        provider_name,
+        provider_config.model,
+    )
     return LiteLLMProvider(provider_config)
 

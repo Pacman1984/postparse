@@ -7,6 +7,7 @@ used by both multi-class and multi-label LLM classifiers to avoid duplication.
 from typing import Any, Dict, List, Optional
 
 from backend.postparse.llm.config import get_provider_config
+from backend.postparse.llm.model_discovery import resolve_provider_model
 
 
 class LLMClassifierCommon:
@@ -88,7 +89,9 @@ class LLMClassifierCommon:
                 f"Available: {', '.join(available_providers)}"
             )
 
-        provider_cfg = get_provider_config(llm_config, selected_provider)
+        provider_cfg = resolve_provider_model(
+            get_provider_config(llm_config, selected_provider)
+        )
         # Expose for metadata accessors
         self._provider_config = provider_cfg
 

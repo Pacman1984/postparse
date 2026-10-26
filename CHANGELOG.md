@@ -4,6 +4,28 @@ All notable changes to PostParse are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may break).
 
+## [Unreleased]
+
+### Fixed
+
+- **Instagram session check**: the saved session is no longer verified with
+  instaloader's `test_login()` (legacy GraphQL `query_hash` d6f4427…, which
+  Instagram answers with 401 "Please wait a few minutes", and which reported
+  every error as "not logged in"). The check now reads the `sessionid` /
+  `ds_user_id` cookies and asks `api/v1/users/<id>/info/` once (single
+  connection attempt). A throttled or failed check raises the new
+  `InstagramSessionCheckFailed` (a subclass of `InstagramRateLimited`, exit
+  code 3) and **never falls back to a password login**; the session file is
+  left untouched. The password login is only used when the session is
+  positively logged out.
+- **Instagram saved feed**: collected through the private API
+  (`api/v1/feed/saved/posts/`, paginated with `max_id`) instead of
+  `Profile.own_profile().get_saved_posts()`, which use legacy GraphQL
+  `query_hash` queries. Owners, comment counts and carousel video children
+  (with durations) are read from the private API media structs.
+- `AbortDownloadException` (checkpoint, login redirect) during a run is mapped
+  to `InstagramAuthRequired`.
+
 ## [0.2.0] - 2026-10-26
 
 A rewrite of the storage, LLM, collection and API layers. The CLI command names

@@ -228,18 +228,76 @@ class NetworkUsed(AssertionError):
     """Raised by the fake context when code tries to make a request."""
 
 
+#: Legacy GraphQL query_hash of ``test_login()`` / ``Profile.own_profile()``.
+LEGACY_LOGIN_HASH = "d6f4427fbe92d846298cf93df0b937d3"
+#: ``ds_user_id`` of the fake session.
+IG_USER_ID = "4242"
+IG_USER_INFO = f"api/v1/users/{IG_USER_ID}/info/"
+IG_SAVED_FEED = "api/v1/feed/saved/posts/"
+
+#: Cookies of a logged-in fake session (no real values).
+SESSION_COOKIES = {"sessionid": "fake-sid", "ds_user_id": IG_USER_ID, "csrftoken": "fake-csrf"}
+
+
+def ig_error(status: str, path: str = IG_USER_INFO) -> Exception:
+    """The ConnectionException instaloader raises after its last attempt.
+
+    ``status`` is the part after the URL path, e.g. ``401 Unauthorized - ...``.
+    """
+    from instaloader.exceptions import ConnectionException
+
+    return ConnectionException(
+        f"JSON Query to {path}: {status} when accessing https://i.instagram.com/{path}"
+    )
+
+
+THROTTLED_401 = (
+    '401 Unauthorized - "fail" status, message "Please wait a few minutes before you try again."'
+)
+LOGGED_OUT_403 = '403 Forbidden - "fail" status, message "login_required"'
+
+
 class FakeIgContext:
-    """instaloader context that refuses every request."""
+    """instaloader context that records requests and answers only scripted ones.
+
+    ``iphone_responses`` maps a private API path to a response dict, an
+    exception to raise, or a callable ``params -> dict | exception``. Any other
+    request raises :class:`NetworkUsed`.
+    """
 
     def __init__(self, username: str | None = None) -> None:
         self.username = username
         self.is_logged_in = username is not None
         self.iphone_support = False
+        self.user_id: int | None = None
+        self.max_connection_attempts = 3
+        self.iphone_responses: dict[str, Any] = {}
+        #: ``(kind, path or query id, params, max_connection_attempts)`` per request.
+        self.requests: list[tuple[str, str, dict[str, Any], int]] = []
+
+    def get_iphone_json(self, path: str, params: dict[str, Any]) -> dict[str, Any]:
+        self.requests.append(("iphone", path, dict(params), self.max_connection_attempts))
+        answer = self.iphone_responses.get(path)
+        if answer is None:
+            raise NetworkUsed(f"unexpected Instagram request: {path}")
+        if callable(answer):
+            answer = answer(params)
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
+
+    def graphql_query(self, query_hash: str, variables: Any, referer: Any = None) -> Any:
+        self.requests.append(("graphql", query_hash, dict(variables), self.max_connection_attempts))
+        raise NetworkUsed(f"unexpected GraphQL query {query_hash}")
+
+    def doc_id_graphql_query(self, doc_id: str, variables: Any, referer: Any = None) -> Any:
+        self.requests.append(("doc_id", doc_id, dict(variables), self.max_connection_attempts))
+        raise NetworkUsed(f"unexpected GraphQL doc_id query {doc_id}")
 
     def _refuse(self, *args: Any, **kwargs: Any) -> Any:
         raise NetworkUsed("unexpected Instagram request")
 
-    graphql_query = doc_id_graphql_query = get_json = get_iphone_json = head = _refuse
+    get_json = head = _refuse
 
     def error(self, *args: Any, **kwargs: Any) -> None:
         return None
@@ -249,34 +307,56 @@ class FakeIgContext:
 
 
 class FakeLoader:
-    """Stand-in for ``instaloader.Instaloader`` (login/session methods only)."""
+    """Stand-in for ``instaloader.Instaloader`` (login/session methods only).
+
+    Args:
+        session_user: Username the session check (user-info endpoint) returns;
+            ``None`` answers like a logged-out session (403 ``login_required``).
+        check_error: Raised by the session check instead (e.g. a throttle).
+        session_cookies: Cookies the loaded session file contains.
+        login_error / two_factor_error: Raised by the password / 2FA login.
+    """
 
     def __init__(
         self,
         *,
         session_user: str | None = None,
+        check_error: BaseException | None = None,
+        session_cookies: dict[str, str] | None = None,
         login_error: BaseException | None = None,
         two_factor_error: BaseException | None = None,
-        test_login_error: BaseException | None = None,
     ) -> None:
         self.context = FakeIgContext()
         self.session_user = session_user
         self.login_error = login_error
         self.two_factor_error = two_factor_error
-        self.test_login_error = test_login_error
+        self.session_cookies = dict(SESSION_COOKIES if session_cookies is None else session_cookies)
+        self.cookies: dict[str, str] = {}
         self.loaded: list[tuple[str, str]] = []
         self.logins: list[str] = []
         self.two_factor_codes: list[str] = []
         self.saved: list[str] = []
+        if check_error is not None:
+            self.context.iphone_responses[IG_USER_INFO] = check_error
+        elif session_user is None:
+            self.context.iphone_responses[IG_USER_INFO] = lambda _params: ig_error(LOGGED_OUT_403)
+        else:
+            self.context.iphone_responses[IG_USER_INFO] = {
+                "user": {"pk": int(IG_USER_ID), "username": session_user},
+                "status": "ok",
+            }
 
     def load_session_from_file(self, username: str, filename: str) -> None:
         self.loaded.append((username, filename))
         self.context.username = username
+        self.context.is_logged_in = True
+        self.cookies = dict(self.session_cookies)
+
+    def save_session(self) -> dict[str, str]:
+        return dict(self.cookies)
 
     def test_login(self) -> str | None:
-        if self.test_login_error is not None:
-            raise self.test_login_error
-        return self.session_user
+        raise AssertionError("test_login() uses a legacy query_hash and must not be called")
 
     def login(self, user: str, passwd: str) -> None:
         self.logins.append(user)
@@ -284,16 +364,117 @@ class FakeLoader:
             raise self.login_error
         self.context.username = user
         self.context.is_logged_in = True
+        self.cookies = dict(SESSION_COOKIES)
 
     def two_factor_login(self, code: str) -> None:
         self.two_factor_codes.append(code)
         if self.two_factor_error is not None:
             raise self.two_factor_error
         self.context.is_logged_in = True
+        self.cookies = dict(SESSION_COOKIES)
 
     def save_session_to_file(self, filename: str) -> None:
         self.saved.append(filename)
         Path(filename).write_text("fake-session", encoding="utf-8")
+
+    def legacy_hash_requests(self) -> list[tuple[str, str, dict[str, Any], int]]:
+        """Requests that used the legacy ``test_login`` query_hash."""
+        return [r for r in self.context.requests if LEGACY_LOGIN_HASH in repr(r)]
+
+
+def ig_iphone_media(
+    code: str,
+    media_type: int = 1,
+    *,
+    caption: str | None = "Pasta #Rezept @Chef",
+    taken_at: int = 1_700_000_000,
+    video_url: str | None = None,
+    children: list[dict[str, Any]] | None = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    """A private API media struct as in ``api/v1/feed/saved/posts/`` items.
+
+    The keys follow what instaloader's ``Post.from_iphone_struct`` reads.
+    """
+    pk = int.from_bytes(code.encode(), "big") % 10**18
+    media: dict[str, Any] = {
+        "pk": pk,
+        "id": f"{pk}_123",
+        "code": code,
+        "media_type": media_type,
+        "product_type": {1: "feed", 2: "clips", 8: "carousel_container"}.get(media_type, "feed"),
+        "taken_at": taken_at,
+        "caption": {"pk": 1, "text": caption} if caption is not None else None,
+        "has_liked": False,
+        "like_count": 10,
+        "comment_count": 2,
+        "user": {
+            "pk": 123,
+            "username": "chef",
+            "full_name": "Chef",
+            "is_private": False,
+            "profile_pic_url": "https://scontent.cdninstagram.com/pic.jpg?oe=EXPIRES",
+        },
+        "image_versions2": {
+            "candidates": [
+                {
+                    "width": 1080,
+                    "height": 1350,
+                    "url": f"https://scontent.cdninstagram.com/{code}.jpg?oe=EXPIRES",
+                }
+            ]
+        },
+    }
+    if video_url is not None:
+        media["video_versions"] = [{"type": 101, "width": 720, "height": 1280, "url": video_url}]
+        media["video_duration"] = 31.5
+        media["view_count"] = 1000
+    if children is not None:
+        media["carousel_media"] = children
+        media.pop("image_versions2")
+    media.update(extra)
+    return media
+
+
+def ig_iphone_child(media_type: int = 1, video_url: str | None = None) -> dict[str, Any]:
+    """A ``carousel_media`` entry of a private API sidecar struct."""
+    child: dict[str, Any] = {
+        "id": f"child_{media_type}_{video_url}",
+        "media_type": media_type,
+        "image_versions2": {"candidates": [{"url": "https://scontent.cdninstagram.com/c.jpg"}]},
+    }
+    if video_url is not None:
+        child["video_versions"] = [{"type": 101, "url": video_url}]
+        child["video_duration"] = 12.25
+    return child
+
+
+def saved_page(medias: list[dict[str, Any]], next_max_id: str | None = None) -> dict[str, Any]:
+    """One page of ``api/v1/feed/saved/posts/``."""
+    page: dict[str, Any] = {
+        "items": [{"media": m} for m in medias],
+        "num_results": len(medias),
+        "more_available": next_max_id is not None,
+        "auto_load_more_enabled": True,
+        "status": "ok",
+    }
+    if next_max_id is not None:
+        page["next_max_id"] = next_max_id
+    return page
+
+
+def saved_feed_pages(*pages: dict[str, Any]):
+    """Answer the saved feed by ``max_id``: the first page, then the ``next_max_id`` chain."""
+    by_cursor: dict[str | None, dict[str, Any]] = {}
+    cursor: str | None = None
+    for page in pages:
+        by_cursor[cursor] = page
+        cursor = page.get("next_max_id")
+
+    def answer(params: dict[str, Any]) -> dict[str, Any]:
+        return by_cursor[params.get("max_id")]
+
+    return answer
 
 
 def ig_node(

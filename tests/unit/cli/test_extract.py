@@ -13,11 +13,13 @@ from postparse.config import Settings
 from postparse.core.db import Database
 from postparse.services.extraction import ExtractionService
 from tests.unit.collectors.fakes import (
+    THROTTLED_401,
     FakeLoader,
     FakeTelegramClient,
     Feed,
     SleepRecorder,
     client_factory,
+    ig_error,
     ig_node,
     ig_post,
     loader_factory,
@@ -138,6 +140,23 @@ def test_instagram_rate_limited_exit_3(env) -> None:
     assert result.exit_code == 3, result.output
     assert "rate limit" in result.output.lower()
     assert "kept" in result.output
+
+
+def test_instagram_throttled_session_check_exit_3(env, tmp_path: Path) -> None:
+    session = Settings(data_dir=tmp_path / "data").sessions_dir / "instagram_me"
+    session.parent.mkdir(parents=True)
+    session.write_text("original-session")
+    env["loader"] = FakeLoader(check_error=ig_error(THROTTLED_401))
+
+    result = invoke(["instagram"], SECRETS)
+
+    assert result.exit_code == 3, result.output
+    text = " ".join(result.output.split())
+    assert "No password login was attempted" in text
+    assert "nothing was lost" in text
+    assert env["loader"].logins == []
+    assert session.read_text() == "original-session"
+    assert_no_secrets(result.output)
 
 
 def test_instagram_checkpoint_exit_2(env) -> None:

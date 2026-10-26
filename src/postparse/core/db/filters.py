@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
 
 from postparse.core.db.models import ItemFilter
-from postparse.core.db.repos.tags import parse_tag_query
 from postparse.core.timeutil import to_db_ts
 
 __all__ = ["FilterSQL", "build_filter", "fts_query"]
@@ -106,6 +105,10 @@ def build_filter(item_filter: ItemFilter | None) -> FilterSQL:
         sql.where.append(f"i.author IN ({', '.join('?' for _ in f.authors)})")
         sql.params.extend(f.authors)
     if f.tags:
+        # Imported here: importing the repos package at module level would be
+        # circular (repos.classification imports this module).
+        from postparse.core.db.repos.tags import parse_tag_query
+
         conditions: list[str] = []
         for raw in f.tags:
             kind, name = parse_tag_query(raw)

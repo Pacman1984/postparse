@@ -440,3 +440,104 @@ def reindex(ctx: click.Context, db_path: str | None) -> None:
         count = search.rebuild_all()
         search.optimize()
     print_success(f'Reindexed {count:,} item(s) in {path}')
+
+
+def _report_table(report) -> Table:
+    """Build the counts-only summary table of a v1 migration report."""
+    table = Table(title='v1 -> v2 migration', show_header=True)
+    table.add_column('Section', style='cyan')
+    table.add_column('Metric', style='white')
+    table.add_column('Value', style='green', justify='right')
+    sections = (
+        ('items', report.items),
+        ('dropped', report.dropped),
+        ('timestamps', report.timestamps),
+        ('tags', report.tags),
+        ('media', report.media),
+        ('links', report.links),
+        ('expanded', report.expanded),
+    )
+    for name, values in sections:
+        for key, value in values.items():
+            if isinstance(value, dict):
+                value = ', '.join(f'{k}={v}' for k, v in value.items())
+            table.add_row(name, key, f'{value:,}' if isinstance(value, int)
+                          and not isinstance(value, bool) else str(value))
+    cls = report.classification
+    for tax in cls.get('taxonomies', []):
+        table.add_row('taxonomy', tax['name'], f"{tax['mode']}, {tax['labels']} labels"
+                      + (', legacy' if tax['is_legacy'] else ''))
+    for run in cls.get('runs', []):
+        table.add_row('run', f"#{run['run_id']} {run['taxonomy']} {run['model']}",
+                      f"{run['results']:,} results / {run['labels']:,} labels")
+    for key in ('results', 'labels', 'superseded_rows', 'duplicate_label_rows_removed',
+                'rows_unmapped', 'rows_unknown_classifier', 'rows_test_dropped'):
+        if key in cls:
+            table.add_row('classification', key, f'{cls[key]:,}')
+    for key, value in report.checks.items():
+        table.add_row('checks', key, str(value))
+    passed = sum(1 for check in report.verification if check['ok'])
+    table.add_row('verification', 'passed', f'{passed}/{len(report.verification)}')
+    table.add_row('timing', 'total_s', str(report.timings_s.get('total', '')))
+    table.add_row('target', 'size_bytes', f'{report.target_size_bytes:,}')
+    return table
+
+
+@db.command(name='migrate-v1')
+@click.option('--source', 'source_path', required=True,
+              type=click.Path(exists=True, dir_okay=False), help='Schema v1 database (read-only)')
+@click.option('--target', 'target_path', required=True, type=click.Path(dir_okay=False),
+              help='Schema v2 database to create')
+@click.option('--downloads-dir', type=click.Path(file_okay=False),
+              help='Media folder the v1 paths refer to (default: Settings.downloads_dir)')
+@click.option('--report', 'report_path', type=click.Path(dir_okay=False),
+              help='Write the JSON report to this file')
+@click.option('--instagram-tz', default='Europe/Berlin', show_default=True,
+              help='Time zone of the naive v1 Instagram timestamps')
+@click.option('--overwrite', is_flag=True, help='Replace an existing target database')
+@click.pass_context
+def migrate_v1_command(
+    ctx: click.Context,
+    source_path: str,
+    target_path: str,
+    downloads_dir: str | None,
+    report_path: str | None,
+    instagram_tz: str,
+    overwrite: bool,
+) -> None:
+    """🚚 Migrate a schema v1 database into a new schema v2 database."""
+    from postparse.core.db.legacy_v1 import LegacyMigrationError, migrate_v1
+
+    if downloads_dir:
+        downloads = Path(downloads_dir).resolve()
+    else:
+        from postparse.config import get_settings
+
+        settings = get_settings(ctx.obj.get('config') if ctx.obj else None)
+        assert settings.downloads_dir is not None
+        downloads = settings.downloads_dir
+
+    console = get_console()
+    report = None
+    try:
+        report = migrate_v1(
+            Path(source_path), Path(target_path), downloads_dir=downloads,
+            instagram_tz=instagram_tz, overwrite=overwrite,
+        )
+    except FileExistsError as exc:
+        print_error(str(exc))
+        ctx.exit(1)
+        return
+    except LegacyMigrationError as exc:
+        report = exc.report
+        print_error(str(exc))
+    if report is not None:
+        console.print(_report_table(report))
+        if report_path:
+            Path(report_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(report_path).write_text(report.to_json(), encoding='utf-8')
+            print_info(f'Report written to {report_path}')
+    if report is None or not report.ok:
+        ctx.exit(1)
+        return
+    print_success(f'Migrated into {report.target}')

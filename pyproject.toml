@@ -89,6 +89,9 @@ all = [
     "mkdocs",
     "mkdocs-material",
 ]
+migrate = [
+    "ftfy>=6.2",
+]
 
 [project.urls]
 Homepage = "https://github.com/sebpachl/postparse"

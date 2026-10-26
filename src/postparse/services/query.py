@@ -365,6 +365,113 @@ class QueryService:
         with self._read() as conn:
             return TagsRepo(conn).counts(kind=kind, source=source, limit=limit)
 
+    def source_details(
+        self, item_ids: list[int]
+    ) -> dict[int, tuple[InstagramDetail | None, TelegramDetail | None, list[Media]]]:
+        """Return per-source detail rows and media of several items (one snapshot).
+
+        Returns:
+            ``{item_id: (instagram_detail, telegram_detail, media)}``.
+        """
+        if not item_ids:
+            return {}
+        with self._read() as conn:
+            items = ItemsRepo(conn)
+            media = MediaRepo(conn).for_items(item_ids)
+            return {
+                item_id: (
+                    items.instagram_detail(item_id),
+                    items.telegram_detail(item_id),
+                    media.get(item_id, []),
+                )
+                for item_id in item_ids
+            }
+
+    def tag_counts_by_source(
+        self, kind: TagKind | None = "hashtag", limit: int = 100
+    ) -> list[dict[str, object]]:
+        """Return the most used tags with total and per-source item counts.
+
+        Returns:
+            ``[{"kind", "tag", "count", "instagram", "telegram"}, ...]`` ordered
+            by ``count`` (descending), then name.
+        """
+        where = "WHERE t.kind = ?" if kind is not None else ""
+        params: list[object] = [kind] if kind is not None else []
+        params.append(limit)
+        with self._read() as conn:
+            rows = conn.execute(
+                "SELECT t.kind, t.name, count(*) AS n, "
+                "sum(i.source = 'instagram') AS ig, sum(i.source = 'telegram') AS tg "
+                "FROM item_tags AS it JOIN tags AS t ON t.id = it.tag_id "
+                f"JOIN items AS i ON i.id = it.item_id {where} "
+                "GROUP BY t.id ORDER BY n DESC, t.name LIMIT ?",
+                params,
+            ).fetchall()
+        return [
+            {"kind": r[0], "tag": r[1], "count": r[2], "instagram": r[3] or 0,
+             "telegram": r[4] or 0}
+            for r in rows
+        ]
+
+    def item_id_for(self, source: str, external_id: str) -> int | None:
+        """Return the id of the item with ``(source, external_id)``, if any."""
+        with self._read() as conn:
+            row = conn.execute(
+                "SELECT id FROM items WHERE source = ? AND external_id = ?",
+                (source, external_id),
+            ).fetchone()
+        return int(row[0]) if row else None
+
+    def telegram_item_id(self, message_id: int, chat_id: int | None = None) -> int | None:
+        """Return the newest item for a Telegram ``message_id`` (optionally in one chat)."""
+        sql = "SELECT item_id FROM telegram_messages WHERE message_id = ?"
+        params: list[object] = [message_id]
+        if chat_id is not None:
+            sql += " AND chat_id = ?"
+            params.append(chat_id)
+        with self._read() as conn:
+            row = conn.execute(sql + " ORDER BY item_id DESC LIMIT 1", params).fetchone()
+        return int(row[0]) if row else None
+
+    def cursor_after(
+        self, item_filter: ItemFilter | None, offset: int
+    ) -> tuple[str | None, bool]:
+        """Translate a (deprecated) row offset into a keyset cursor.
+
+        Args:
+            item_filter: Selection criteria of the listing.
+            offset: Number of leading items to skip.
+
+        Returns:
+            ``(cursor, exhausted)``: the cursor positioned after ``offset``
+            items (``None`` for ``offset == 0``) and whether fewer than
+            ``offset`` items exist (the requested page is then empty).
+        """
+        if offset <= 0:
+            return None, False
+        position: tuple[str, int] | None = None
+        remaining = offset
+        with self._read() as conn:
+            while remaining > 0:
+                batch = min(remaining, MAX_PAGE_SIZE)
+                flt = build_filter(item_filter)
+                where, params = flt.where_with_fts_subquery()
+                if position is not None:
+                    where.append("(i.sort_at, i.id) < (?, ?)")
+                    params.extend(position)
+                sql = "SELECT i.sort_at, i.id FROM items AS i"
+                if where:
+                    sql += " WHERE " + " AND ".join(where)
+                sql += " ORDER BY i.sort_at DESC, i.id DESC LIMIT ?"
+                rows = conn.execute(sql, [*params, batch]).fetchall()
+                if len(rows) < batch:
+                    return None, True
+                position = (rows[-1][0], rows[-1][1])
+                remaining -= batch
+        assert position is not None
+        return encode_cursor(*position), False
+
     def iter_items(
         self, item_filter: ItemFilter | None = None, batch_size: int = MAX_PAGE_SIZE
     ) -> Iterator[ItemView]:

@@ -1,36 +1,52 @@
+"""Telegram endpoints: extraction jobs and saved messages (schema v2 items).
+
+* ``POST /extract`` starts a ``telegram_extract`` job
+  (:meth:`ExtractionService.telegram_async`, never interactive). Request
+  credentials override ``TELEGRAM_API_ID`` / ``TELEGRAM_API_HASH`` /
+  ``TELEGRAM_PHONE``; the session file lives in ``Settings.sessions_dir`` like
+  for the CLI, so a login done with ``postparse extract telegram`` is reused.
+* ``GET /messages`` lists messages with filters and keyset pagination;
+  ``channel_username`` filters on the item author (the forwarded-from name).
+* ``GET /jobs/{job_id}`` and ``WS /ws/progress/{job_id}`` are aliases of the
+  unified job endpoints.
 """
-FastAPI router for Telegram extraction endpoints.
 
-This module provides HTTP endpoints for triggering Telegram message extraction,
-checking job status, and retrieving extracted messages.
+from __future__ import annotations
 
-Note: Actual extraction logic with background tasks will be implemented in
-the next phase. This module contains placeholder implementations.
-"""
+from typing import Any
 
-from typing import Dict, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status, BackgroundTasks, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, status
 
-from postparse.core.data.database import SocialMediaDatabase
 from postparse.api.dependencies import (
-    get_db,
-    get_optional_auth,
-    get_job_manager,
-    get_websocket_manager,
-    get_telegram_extraction_service,
     get_current_websocket_user,
+    get_extraction_service,
+    get_job_manager,
+    get_job_runner,
+    get_optional_auth,
+    get_query_service,
+    get_websocket_manager,
 )
-from postparse.api.services.job_manager import JobManager
-from postparse.api.services.websocket_manager import WebSocketManager
-from postparse.api.services.extraction_service import TelegramExtractionService
+from postparse.api.jobs.kinds import telegram_extract_job, with_credentials
+from postparse.api.jobs.runner import JobRunner
+from postparse.api.routers._common import (
+    item_filter_or_400,
+    job_or_404,
+    resolve_cursor,
+    serve_job_websocket,
+)
+from postparse.api.routers._views import telegram_message
 from postparse.api.schemas import (
+    ExtractionStatus,
+    JobStatusResponse,
+    PaginatedResponse,
     TelegramExtractRequest,
     TelegramExtractResponse,
     TelegramMessageSchema,
-    JobStatusResponse,
-    ExtractionStatus,
-    PaginatedResponse,
 )
+from postparse.api.services.job_manager import JobManager
+from postparse.api.services.websocket_manager import WebSocketManager
+from postparse.services.extraction import ExtractionService
+from postparse.services.query import QueryService
 
 router = APIRouter(
     prefix="/api/v1/telegram",
@@ -39,110 +55,55 @@ router = APIRouter(
         400: {"description": "Invalid request"},
         401: {"description": "Unauthorized"},
         404: {"description": "Resource not found"},
-        500: {"description": "Internal server error"},
-        503: {"description": "Service unavailable"},
     },
 )
-
-
-def _build_telegram_job_metadata(request: TelegramExtractRequest) -> Dict[str, object]:
-    """
-    Build non-sensitive metadata persisted for Telegram extraction jobs.
-
-    Args:
-        request: Parsed Telegram extraction request payload.
-
-    Returns:
-        Metadata dictionary safe for in-memory job status display.
-
-    Example:
-        metadata = _build_telegram_job_metadata(request)
-    """
-    return {
-        "limit": request.limit,
-        "force_update": request.force_update,
-        "max_requests_per_session": request.max_requests_per_session,
-        "has_phone": bool(request.phone),
-    }
 
 
 @router.post(
     "/extract",
     response_model=TelegramExtractResponse,
     status_code=status.HTTP_202_ACCEPTED,
-    summary="Trigger Telegram message extraction",
+    summary="Start a Telegram extraction job",
     description="""
-    Start an async extraction job for Telegram messages.
-    
-    This endpoint initiates a background job that will:
-    1. Authenticate with Telegram using provided credentials
-    2. Extract messages from configured channels
-    3. Parse and store messages in the database
-    
-    Returns a job_id for tracking extraction progress.
-    
-    Note: Actual extraction logic will be implemented in the next phase.
+    Collect Telegram Saved Messages into the database in the background.
+
+    Only new messages are read unless `force_update=true` (re-read and update
+    everything). The API never prompts for a login code: without an authorized
+    session the job fails with `error_code=auth_required` (log in once with
+    `postparse extract telegram` in a terminal). FloodWaits fail it with
+    `rate_limited`. `max_requests_per_session` is accepted for compatibility
+    and ignored.
     """,
 )
 async def extract_messages(
     request: TelegramExtractRequest,
-    background_tasks: BackgroundTasks,
-    job_manager: JobManager = Depends(get_job_manager),
-    extraction_service: TelegramExtractionService = Depends(get_telegram_extraction_service),
-    user: Optional[dict] = Depends(get_optional_auth),
+    extraction: ExtractionService = Depends(get_extraction_service),
+    runner: JobRunner = Depends(get_job_runner),
+    user: dict[str, Any] | None = Depends(get_optional_auth),
 ) -> TelegramExtractResponse:
-    """
-    Trigger Telegram message extraction with background processing.
-    
-    Args:
-        request: Extraction request with Telegram credentials and options.
-        background_tasks: FastAPI background tasks manager.
-        job_manager: Job state manager (injected dependency).
-        extraction_service: Extraction service (injected dependency).
-        user: Optional authenticated user info.
-        
-    Returns:
-        TelegramExtractResponse with job_id for tracking.
-        
-    Example:
-        POST /api/v1/telegram/extract
+    """Start the extraction job and return its id."""
+    service = with_credentials(
+        extraction,
         {
-            "api_id": 12345678,
-            "api_hash": "0123456789abcdef0123456789abcdef",
-            "phone": "+1234567890",
-            "limit": 100
-        }
-        
-        Response:
-        {
-            "job_id": "550e8400-e29b-41d4-a716-446655440000",
-            "status": "pending",
-            "message_count": 0,
-            "estimated_time": 60
-        }
-    """
-    # Persist only non-sensitive metadata needed for progress/status display.
-    job_metadata = _build_telegram_job_metadata(request)
-    job_id = job_manager.create_job("telegram", job_metadata)
-    
-    # Add extraction task to background tasks
-    # BackgroundTasks supports async functions, so we can add the async method directly
-    background_tasks.add_task(
-        extraction_service.run_extraction,
-        job_id=job_id,
-        api_id=request.api_id,
-        api_hash=request.api_hash,
-        phone=request.phone,
-        limit=request.limit,
-        force_update=request.force_update,
-        max_requests_per_session=request.max_requests_per_session,
+            "TELEGRAM_API_ID": str(request.api_id),
+            "TELEGRAM_API_HASH": request.api_hash,
+            "TELEGRAM_PHONE": request.phone,
+        },
     )
-    
+    params = {
+        "limit": request.limit,
+        "force_update": request.force_update,
+        "max_requests_per_session": request.max_requests_per_session,
+        "has_phone": bool(request.phone),
+    }
+    job_id = runner.submit(
+        "telegram_extract",
+        params,
+        telegram_extract_job(service, limit=request.limit, full=request.force_update),
+        total=request.limit,
+    )
     return TelegramExtractResponse(
-        job_id=job_id,
-        status=ExtractionStatus.PENDING,
-        message_count=0,
-        estimated_time=60,
+        job_id=job_id, status=ExtractionStatus.PENDING, message_count=0, estimated_time=None
     )
 
 
@@ -150,260 +111,82 @@ async def extract_messages(
     "/jobs/{job_id}",
     response_model=JobStatusResponse,
     summary="Check extraction job status",
-    description="""
-    Query the status of a Telegram extraction job.
-    
-    Returns current progress, messages processed, and any errors encountered.
-    """,
+    description="Alias of `GET /api/v1/jobs/{job_id}`.",
 )
-async def get_job_status(
+def get_job_status(
     job_id: str,
-    job_manager: JobManager = Depends(get_job_manager),
-    user: Optional[dict] = Depends(get_optional_auth),
+    jobs: JobManager = Depends(get_job_manager),
+    user: dict[str, Any] | None = Depends(get_optional_auth),
 ) -> JobStatusResponse:
-    """
-    Get extraction job status.
-    
-    Args:
-        job_id: Unique job identifier from extract_messages.
-        job_manager: Job state manager (injected dependency).
-        user: Optional authenticated user info.
-        
-    Returns:
-        JobStatusResponse with current job status and progress.
-        
-    Raises:
-        HTTPException: 404 if job not found.
-        
-    Example:
-        GET /api/v1/telegram/jobs/550e8400-e29b-41d4-a716-446655440000
-        
-        Response:
-        {
-            "job_id": "550e8400-e29b-41d4-a716-446655440000",
-            "status": "running",
-            "progress": 65,
-            "messages_processed": 65,
-            "errors": []
-        }
-    """
-    # Retrieve job from job manager
-    job = job_manager.get_job(job_id)
-    
-    if not job:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Job {job_id} not found",
-        )
-    
-    return JobStatusResponse(
-        job_id=job.job_id,
-        status=job.status,
-        progress=job.progress,
-        messages_processed=job.messages_processed,
-        errors=job.errors,
-    )
+    """Return the status of a job."""
+    return JobStatusResponse.from_job(job_or_404(jobs, job_id))
 
 
 @router.get(
     "/messages",
     response_model=PaginatedResponse[TelegramMessageSchema],
-    summary="List extracted Telegram messages",
+    summary="List saved Telegram messages",
     description="""
-    Retrieve extracted Telegram messages with pagination.
-    
-    Currently supports basic pagination via limit parameter.
-    
-    Note: Advanced filtering (channel_username, offset, date range, content type) 
-    is planned for a future phase and is not yet implemented.
+    Newest first. Filters: `channel_username` (item author, i.e. the
+    forwarded-from channel/user name), `tags` (any of), `q` (full text).
+    Paginate with `next_cursor`; `offset` is deprecated (translated into a
+    cursor, 400 together with `cursor`).
     """,
 )
-async def get_messages(
+def get_messages(
     limit: int = Query(default=50, ge=1, le=100, description="Maximum results to return"),
-    offset: int = Query(default=0, ge=0, description="Number of results to skip (not yet implemented)"),
-    channel_username: Optional[str] = Query(default=None, description="Filter by channel (not yet implemented)"),
-    db: SocialMediaDatabase = Depends(get_db),
-    user: Optional[dict] = Depends(get_optional_auth),
+    offset: int = Query(default=0, ge=0, deprecated=True,
+                        description="Deprecated: number of results to skip; use cursor"),
+    channel_username: str | None = Query(default=None, description="Filter by author/channel"),
+    cursor: str | None = Query(default=None, description="next_cursor of the previous page"),
+    tags: list[str] = Query(default=[], description="Tag filter (any of)"),
+    q: str | None = Query(default=None, description="Full-text query"),
+    query: QueryService = Depends(get_query_service),
+    user: dict[str, Any] | None = Depends(get_optional_auth),
 ) -> PaginatedResponse[TelegramMessageSchema]:
-    """
-    List extracted Telegram messages with pagination.
-    
-    Currently returns messages ordered by creation date (newest first) with basic limit-based pagination.
-    The offset and channel_username parameters are accepted but not yet implemented.
-    
-    Args:
-        limit: Maximum number of messages to return.
-        offset: Number of messages to skip (accepted but not yet implemented).
-        channel_username: Optional channel filter (accepted but not yet implemented).
-        db: Database instance (injected dependency).
-        user: Optional authenticated user info.
-        
-    Returns:
-        PaginatedResponse with list of messages and pagination metadata.
-        
-    Example:
-        GET /api/v1/telegram/messages?limit=20
-        
-        Response:
-        {
-            "items": [...],
-            "total": 20,
-            "limit": 20,
-            "offset": 0,
-            "next_cursor": null,
-            "has_more": true
-        }
-    """
-    # Use database method to retrieve messages
-    # Note: offset and channel_username filters are not yet implemented
-    from datetime import datetime as dt
-    import json
-    
-    messages = db.get_telegram_messages(limit=limit + 1)  # Get one extra to check if more exist
-    
-    # Convert to schema objects
-    message_schemas = []
-    for msg in messages[:limit]:
-        # Parse media_urls from JSON string if needed
-        media_urls = msg.get("media_urls", [])
-        if isinstance(media_urls, str):
-            try:
-                media_urls = json.loads(media_urls) if media_urls else []
-            except json.JSONDecodeError:
-                media_urls = []
-        
-        # Parse created_at timestamp
-        created_at = msg.get("created_at")
-        if created_at and isinstance(created_at, str):
-            try:
-                created_at = dt.fromisoformat(created_at.replace('Z', '+00:00'))
-            except (ValueError, AttributeError):
-                created_at = None
-        
-        # Parse extracted_at (saved_at in database) timestamp
-        extracted_at = msg.get("saved_at")
-        if extracted_at and isinstance(extracted_at, str):
-            try:
-                extracted_at = dt.fromisoformat(extracted_at.replace('Z', '+00:00'))
-            except (ValueError, AttributeError):
-                extracted_at = None
-        
-        message_schemas.append(TelegramMessageSchema(
-            message_id=msg.get("message_id", 0),
-            channel_username=None,  # Database doesn't have this field yet
-            content=msg.get("content"),
-            content_type=msg.get("content_type", "text"),
-            media_urls=media_urls if isinstance(media_urls, list) else [],
-            hashtags=[],  # TODO: Get from telegram_hashtags table
-            mentions=[],  # TODO: Get from separate table
-            created_at=created_at,
-            extracted_at=extracted_at,
-            metadata={},  # Can be populated with other fields if needed
-        ))
-    
-    has_more = len(messages) > limit
-    total = db.count_telegram_messages()  # Get actual count from database for pagination
-    
+    """List messages."""
+    item_filter = item_filter_or_400(
+        source="telegram", q=q, tags=tags,
+        authors=[channel_username.lstrip("@")] if channel_username else [],
+    )
+    position, exhausted = resolve_cursor(query, item_filter, cursor, offset)
+    total = query.count(item_filter)
+    if exhausted:
+        return PaginatedResponse(items=[], total=total, limit=limit, offset=offset,
+                                 next_cursor=None, has_more=False)
+    page = query.search(item_filter, cursor=position, limit=limit)
+    details = query.source_details([v.id for v in page.items])
+    messages = [telegram_message(v, details[v.id][1], details[v.id][2]) for v in page.items]
     return PaginatedResponse(
-        items=message_schemas,
-        total=total,
-        limit=limit,
-        offset=offset,
-        next_cursor=None,
-        has_more=has_more,
+        items=messages, total=total, limit=limit, offset=offset,
+        next_cursor=page.next_cursor, has_more=page.next_cursor is not None,
     )
 
 
 @router.get(
     "/messages/{message_id}",
     response_model=TelegramMessageSchema,
-    summary="Get specific message details",
+    summary="Get one Telegram message",
     description="""
-    Retrieve detailed information about a specific Telegram message.
+    Look up a message by Telegram message id (newest match; pass `chat_id`
+    to disambiguate). `metadata.item_id` links to `/api/v1/items/{id}`.
     """,
 )
-async def get_message(
+def get_message(
     message_id: int,
-    db: SocialMediaDatabase = Depends(get_db),
-    user: Optional[dict] = Depends(get_optional_auth),
+    chat_id: int | None = Query(default=None, description="Restrict to one chat"),
+    query: QueryService = Depends(get_query_service),
+    user: dict[str, Any] | None = Depends(get_optional_auth),
 ) -> TelegramMessageSchema:
-    """
-    Get specific Telegram message by ID.
-    
-    Args:
-        message_id: Telegram message ID.
-        db: Database instance (injected dependency).
-        user: Optional authenticated user info.
-        
-    Returns:
-        TelegramMessageSchema with message details.
-        
-    Raises:
-        HTTPException: 404 if message not found.
-        
-    Example:
-        GET /api/v1/telegram/messages/12345
-        
-        Response:
-        {
-            "message_id": 12345,
-            "channel_username": "cooking_channel",
-            "content": "Delicious pasta recipe!",
-            ...
-        }
-    """
-    from datetime import datetime as dt
-    import json
-    
-    # Retrieve message from database
-    message = db.get_telegram_message(message_id)
-    
-    if not message:
+    """Return one message."""
+    item_id = query.telegram_item_id(message_id, chat_id)
+    detail = query.get_item(item_id) if item_id is not None else None
+    if detail is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Message with ID {message_id} not found",
         )
-    
-    # Parse media_urls from JSON string if needed
-    media_urls = message.get("media_urls", [])
-    if isinstance(media_urls, str):
-        try:
-            media_urls = json.loads(media_urls) if media_urls else []
-        except json.JSONDecodeError:
-            media_urls = []
-    
-    # Parse created_at timestamp
-    created_at = message.get("created_at")
-    if created_at and isinstance(created_at, str):
-        try:
-            created_at = dt.fromisoformat(created_at.replace('Z', '+00:00'))
-        except (ValueError, AttributeError):
-            created_at = None
-    
-    # Parse extracted_at (saved_at in database) timestamp
-    extracted_at = message.get("saved_at")
-    if extracted_at and isinstance(extracted_at, str):
-        try:
-            extracted_at = dt.fromisoformat(extracted_at.replace('Z', '+00:00'))
-        except (ValueError, AttributeError):
-            extracted_at = None
-    
-    # Fetch hashtags from telegram_hashtags table
-    # TODO: Implement hashtag retrieval from database
-    hashtags = []
-    
-    return TelegramMessageSchema(
-        message_id=message.get("message_id", 0),
-        channel_username=None,  # Database doesn't have this field yet
-        content=message.get("content"),
-        content_type=message.get("content_type", "text"),
-        media_urls=media_urls if isinstance(media_urls, list) else [],
-        hashtags=hashtags,
-        mentions=[],  # TODO: Get from separate table
-        created_at=created_at,
-        extracted_at=extracted_at,
-        metadata={},
-    )
+    return telegram_message(detail.item, detail.telegram, [m.media for m in detail.media])
 
 
 @router.websocket("/ws/progress/{job_id}")
@@ -411,68 +194,8 @@ async def websocket_progress(
     websocket: WebSocket,
     job_id: str,
     ws_manager: WebSocketManager = Depends(get_websocket_manager),
-    job_manager: JobManager = Depends(get_job_manager),
-    user: Optional[dict] = Depends(get_current_websocket_user),
-):
-    """
-    WebSocket endpoint for real-time job progress updates.
-    
-    Clients can connect to this endpoint to receive live progress updates
-    for a specific extraction job. The connection will receive JSON messages
-    with job status, progress percentage, and messages processed.
-    
-    Args:
-        websocket: WebSocket connection.
-        job_id: Unique job identifier.
-        ws_manager: WebSocket manager (injected dependency).
-        job_manager: Job state manager (injected dependency).
-        
-    Example:
-        const ws = new WebSocket('ws://localhost:8000/api/v1/telegram/ws/progress/550e8400-e29b-41d4-a716-446655440000');
-        
-        ws.onmessage = (event) => {
-            const data = JSON.parse(event.data);
-            console.log(`Progress: ${data.progress}%`);
-        };
-        
-    Message Format:
-        {
-            "job_id": "550e8400-e29b-41d4-a716-446655440000",
-            "status": "running",
-            "progress": 65,
-            "messages_processed": 65,
-            "errors": [],
-            "timestamp": "2025-11-23T10:30:00Z"
-        }
-    """
-    _ = user
-
-    # Verify job exists
-    job = job_manager.get_job(job_id)
-    if not job:
-        await websocket.accept()
-        await websocket.send_json({
-            "error": f"Job {job_id} not found",
-            "job_id": job_id
-        })
-        await websocket.close()
-        return
-    
-    # Register connection
-    await ws_manager.connect(job_id, websocket)
-    
-    # Send initial job status
-    await ws_manager.send_job_update(job_id, job)
-    
-    try:
-        # Keep connection alive and listen for disconnect
-        while True:
-            # Wait for messages (client may send ping/keepalive)
-            await websocket.receive_text()
-    except WebSocketDisconnect:
-        # Client disconnected
-        await ws_manager.disconnect(job_id, websocket)
-    except Exception as e:
-        # Handle other errors
-        await ws_manager.disconnect(job_id, websocket)
-
+    jobs: JobManager = Depends(get_job_manager),
+    user: dict[str, Any] | None = Depends(get_current_websocket_user),
+) -> None:
+    """Alias of ``WS /api/v1/jobs/{job_id}/ws``."""
+    await serve_job_websocket(websocket, job_id, ws_manager, jobs)

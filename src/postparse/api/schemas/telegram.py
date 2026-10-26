@@ -7,11 +7,12 @@ compatible with the database schema and parser implementations.
 
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, Field, ConfigDict, field_validator
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
-class ExtractionStatus(str, Enum):
+class ExtractionStatus(str, Enum):  # noqa: UP042 - keep str() behaviour
     """
     Status of an extraction job.
 
@@ -76,13 +77,13 @@ class TelegramExtractRequest(BaseModel):
         description="Telegram API hash (32 characters)",
         examples=["0123456789abcdef0123456789abcdef"]
     )
-    phone: Optional[str] = Field(
+    phone: str | None = Field(
         default=None,
         pattern=r"^\+?[1-9]\d{1,14}$",
         description="Phone number in international format (E.164)",
         examples=["+1234567890"]
     )
-    limit: Optional[int] = Field(
+    limit: int | None = Field(
         default=100,
         ge=1,
         le=10000,
@@ -92,7 +93,7 @@ class TelegramExtractRequest(BaseModel):
         default=False,
         description="Re-extract already processed messages"
     )
-    max_requests_per_session: Optional[int] = Field(
+    max_requests_per_session: int | None = Field(
         default=5,
         ge=1,
         le=20,
@@ -144,7 +145,7 @@ class TelegramExtractResponse(BaseModel):
         ge=0,
         description="Estimated messages to process"
     )
-    estimated_time: Optional[int] = Field(
+    estimated_time: int | None = Field(
         default=None,
         ge=0,
         description="Estimated completion time (seconds)"
@@ -208,11 +209,11 @@ class TelegramMessageSchema(BaseModel):
         ...,
         description="Telegram message ID"
     )
-    channel_username: Optional[str] = Field(
+    channel_username: str | None = Field(
         default=None,
         description="Channel username (without @)"
     )
-    content: Optional[str] = Field(
+    content: str | None = Field(
         default=None,
         description="Message text content"
     )
@@ -221,27 +222,27 @@ class TelegramMessageSchema(BaseModel):
         description="Type of content",
         examples=["text", "photo", "video", "document"]
     )
-    media_urls: List[str] = Field(
+    media_urls: list[str] = Field(
         default_factory=list,
         description="List of media URLs"
     )
-    hashtags: List[str] = Field(
+    hashtags: list[str] = Field(
         default_factory=list,
         description="Extracted hashtags (without #)"
     )
-    mentions: List[str] = Field(
+    mentions: list[str] = Field(
         default_factory=list,
         description="Mentioned usernames (without @)"
     )
-    created_at: Optional[datetime] = Field(
+    created_at: datetime | None = Field(
         default=None,
         description="Message creation timestamp"
     )
-    extracted_at: Optional[datetime] = Field(
+    extracted_at: datetime | None = Field(
         default=None,
         description="Extraction timestamp"
     )
-    metadata: Dict[str, Any] = Field(
+    metadata: dict[str, Any] = Field(
         default_factory=dict,
         description="Additional message metadata"
     )
@@ -306,9 +307,53 @@ class JobStatusResponse(BaseModel):
         ge=0,
         description="Messages processed so far"
     )
-    errors: List[str] = Field(
+    errors: list[str] = Field(
         default_factory=list,
         description="Error messages encountered"
     )
+    job_type: str | None = Field(
+        default=None,
+        description="Job kind (telegram_extract, instagram_extract, transcribe, summarize, "
+        "enrich, classify)",
+    )
+    total: int | None = Field(
+        default=None,
+        ge=0,
+        description="Expected number of items, if known",
+    )
+    message: str | None = Field(
+        default=None,
+        description="Latest progress message",
+    )
+    error_code: str | None = Field(
+        default=None,
+        description="Machine-readable failure reason (auth_required, credentials_missing, "
+        "rate_limited, suspected_block, backend_unavailable, llm_error, invalid_request, "
+        "cancelled, internal_error)",
+    )
+    result: dict[str, Any] | None = Field(
+        default=None,
+        description="Service report of a finished job (also for partial runs)",
+    )
+    started_at: datetime | None = Field(default=None, description="Job creation time")
+    finished_at: datetime | None = Field(default=None, description="Job end time")
+
+    @classmethod
+    def from_job(cls, job: Any) -> "JobStatusResponse":
+        """Build the response from a :class:`~postparse.api.services.job_manager.Job`."""
+        return cls(
+            job_id=job.job_id,
+            status=job.status,
+            progress=job.progress,
+            messages_processed=job.messages_processed,
+            errors=list(job.errors),
+            job_type=job.job_type or None,
+            total=job.total,
+            message=job.message,
+            error_code=job.error_code,
+            result=job.result,
+            started_at=job.start_time,
+            finished_at=job.end_time,
+        )
 
 

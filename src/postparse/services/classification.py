@@ -63,6 +63,7 @@ if TYPE_CHECKING:
 __all__ = [
     "DEFAULT_MAX_INPUT_CHARS",
     "ClassificationService",
+    "PersistedOutcome",
     "ClassifierFactory",
     "ComposedInput",
     "ProgressUpdate",
@@ -340,6 +341,22 @@ def _filter_params(item_filter: ItemFilter | None) -> dict[str, Any] | None:
     return data
 
 
+@dataclass(frozen=True, slots=True)
+class PersistedOutcome:
+    """What :meth:`ClassificationService.persist_outcomes` did with one outcome.
+
+    Attributes:
+        item_id: Item the outcome belongs to.
+        status: Stored result status (``ok``, ``no_labels``, ``error``) or
+            ``skipped`` for empty input (nothing stored).
+        result_id: Stored result id (``None`` when skipped).
+    """
+
+    item_id: int
+    status: str
+    result_id: int | None = None
+
+
 class ClassificationService:
     """Classify database items into taxonomies and persist the results.
 
@@ -536,6 +553,83 @@ class ClassificationService:
         if not (text or "").strip():
             return ClassificationOutcome(status="empty")
         return self.classifier_for(spec, provider).classify(text)
+
+    def persist_outcomes(
+        self,
+        taxonomy_name: str,
+        outcomes: Sequence[tuple[int, ClassificationOutcome]],
+        *,
+        classifier: TaxonomyClassifier | None = None,
+        params: Mapping[str, Any] | None = None,
+    ) -> tuple[int, list[PersistedOutcome]]:
+        """Store outcomes of ad-hoc classifications as one finished run.
+
+        Used by the API when a caller classifies a text and asks to keep the
+        result for an item (``persist=true``). Results become the items'
+        current classification like results of :meth:`classify_pending`.
+
+        Args:
+            taxonomy_name: Configured or stored taxonomy.
+            outcomes: ``(item_id, outcome)`` pairs; ``empty`` outcomes are
+                skipped, ``error`` outcomes are stored as ``error`` results.
+            classifier: Classifier that produced the outcomes (provider,
+                model and prompt hash are recorded with the run).
+            params: Extra run parameters recorded in ``classification_runs.params``.
+
+        Returns:
+            ``(run_id, per-outcome info)`` in input order.
+
+        Raises:
+            KeyError: Unknown taxonomy or item.
+            ValueError: Without a database, or for labels outside the taxonomy.
+        """
+        if self.db is None:
+            raise ValueError("persist_outcomes needs a database")
+        spec = self.taxonomy_spec(taxonomy_name)
+        persisted: list[PersistedOutcome] = []
+        with self.db.transaction() as conn:
+            items = ItemsRepo(conn)
+            missing = sorted({item_id for item_id, _ in outcomes if items.get(item_id) is None})
+            if missing:
+                raise KeyError(f"Unknown item id(s): {', '.join(map(str, missing))}")
+            repo = ClassificationRepo(conn)
+            taxonomy = repo.ensure_taxonomy(
+                spec.name, spec.mode, spec.db_labels(), is_legacy=spec.is_legacy
+            )
+            run_id = repo.create_run(
+                taxonomy.id,
+                provider=classifier.provider_name if classifier else None,
+                model=classifier.model_name if classifier else None,
+                prompt_sha256=classifier.prompt_sha256 if classifier else None,
+                params={"origin": "api", "taxonomy_version": taxonomy.version, **(params or {})},
+            )
+            for item_id, outcome in outcomes:
+                details = {"latency_s": round(outcome.latency_s, 3), "requests": outcome.requests}
+                if outcome.status == "ok":
+                    result_id = repo.add_result(
+                        run_id, item_id, "ok", labels=outcome.label_scores(),
+                        confidence=outcome.confidence, reasoning=outcome.reasoning,
+                        details=details,
+                    )
+                elif outcome.status == "no_labels":
+                    result_id = repo.add_result(
+                        run_id, item_id, "no_labels", confidence=outcome.confidence,
+                        reasoning=outcome.reasoning, details=details,
+                    )
+                elif outcome.status == "error":
+                    result_id = repo.add_result(
+                        run_id, item_id, "error", error=outcome.error, details=details
+                    )
+                else:
+                    persisted.append(PersistedOutcome(item_id, "skipped"))
+                    continue
+                persisted.append(PersistedOutcome(item_id, outcome.status, result_id))
+            repo.finish_run(run_id, status="done")
+        logger.info(
+            "Stored %d API classification result(s) for taxonomy %s in run %d",
+            sum(1 for p in persisted if p.result_id is not None), spec.name, run_id,
+        )
+        return run_id, persisted
 
     # -- persistent runs ----------------------------------------------------------
 

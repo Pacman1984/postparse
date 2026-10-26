@@ -8,21 +8,23 @@ This module provides configurable middleware for:
 - Rate limiting (placeholder for future implementation)
 """
 
-import time
-import uuid
-import logging
-import threading
 import json
+import logging
 import re
+import threading
+import time
 import traceback
-from typing import Callable, Optional, Dict, Any
+import uuid
+from collections.abc import Callable
+from typing import Any
+
 from fastapi import HTTPException, Request, Response, status
-from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from postparse.core.utils.config import ConfigManager
 from postparse.api.dependencies import extract_bearer_token, validate_jwt_token
+from postparse.core.utils.config import ConfigManager
 
 logger = logging.getLogger(__name__)
 
@@ -158,12 +160,12 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         self.config = config
         log_level = config.get("api.log_level", "info").upper()
         logger.setLevel(getattr(logging, log_level, logging.INFO))
-        
+
         # Get logging options from config
         self.log_request_body = config.get("api.log_request_body", default=False)
         self.log_response_body = config.get("api.log_response_body", default=False)
         self.log_format = config.get("api.log_format", default="text")
-        
+
         # Configure JSON formatter if requested
         if self.log_format == "json":
             try:
@@ -177,7 +179,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             except ImportError:
                 logger.warning("python-json-logger not installed, using text format")
                 self.log_format = "text"
-    
+
     def _redact_sensitive_data(self, data: Any) -> Any:
         """
         Redact sensitive fields from log data recursively.
@@ -202,7 +204,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         }
 
         if isinstance(data, dict):
-            redacted: Dict[str, Any] = {}
+            redacted: dict[str, Any] = {}
             for key, value in data.items():
                 # Convert camelCase/PascalCase keys into tokenizable snake_case.
                 key_snake = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", str(key))
@@ -318,8 +320,8 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             masked,
         )
         return masked
-    
-    async def _extract_request_body(self, request: Request) -> Optional[str]:
+
+    async def _extract_request_body(self, request: Request) -> str | None:
         """
         Extract request body, redact sensitive content, and truncate for logs.
 
@@ -359,30 +361,30 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 logger.debug(f"Could not extract request body: {e}")
 
         return None
-    
-    def _extract_filters_from_params(self, request: Request) -> Dict[str, Any]:
+
+    def _extract_filters_from_params(self, request: Request) -> dict[str, Any]:
         """
         Extract filter parameters from query string.
-        
+
         Args:
             request: FastAPI Request object.
-            
+
         Returns:
             Dictionary of filter parameters.
         """
         filters = {}
         query_params = dict(request.query_params)
-        
+
         # Common filter fields
         filter_fields = {
             "hashtags", "date_range", "content_type", "owner_username",
             "channel_username", "limit", "cursor", "offset"
         }
-        
+
         for field in filter_fields:
             if field in query_params:
                 filters[field] = query_params[field]
-        
+
         return filters
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
@@ -403,23 +405,23 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         # Get client info
         client_ip = request.client.host if request.client else "unknown"
         user_agent = request.headers.get("user-agent", "unknown")
-        
+
         # Extract request body if enabled
         request_body = await self._extract_request_body(request)
-        
+
         # Extract filter parameters
         filters = self._extract_filters_from_params(request)
 
         # Process request and measure time
         start_time = time.time()
-        
+
         try:
             response = await call_next(request)
             processing_time = time.time() - start_time
-            
+
             # Extract cache status from response headers
             cache_status = response.headers.get("X-Cache-Status", None)
-            
+
             # Build log data
             log_data = {
                 "request_id": request_id,
@@ -430,28 +432,25 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 "client_ip": client_ip,
                 "user_agent": user_agent
             }
-            
+
             if filters:
                 log_data["filters"] = filters
-            
+
             if cache_status:
                 log_data["cache_status"] = cache_status
-            
+
             if request_body:
                 log_data["request_body"] = request_body
-            
+
             # Extract response body for errors
             if response.status_code >= 400 and self.log_response_body:
-                try:
-                    # Response body extraction would require response streaming
-                    # which is complex; skip for now but log error flag
-                    log_data["is_error"] = True
-                except Exception:
-                    pass
-            
+                # Response body extraction would require response streaming,
+                # so only the error flag is logged.
+                log_data["is_error"] = True
+
             # Redact sensitive data before logging
             log_data = self._redact_sensitive_data(log_data)
-            
+
             # Log with appropriate format
             if self.log_format == "json":
                 logger.info(json.dumps(log_data))
@@ -465,16 +464,16 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 if filters:
                     log_msg += f" - Filters: {filters}"
                 logger.info(log_msg)
-            
+
             # Add request ID to response headers
             response.headers["X-Request-ID"] = request_id
             response.headers["X-Processing-Time"] = f"{processing_time:.3f}"
-            
+
             return response
-            
+
         except Exception as e:
             processing_time = time.time() - start_time
-            
+
             # Log error with full details
             error_data = {
                 "request_id": request_id,
@@ -487,17 +486,17 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 "error": str(e),
                 "error_type": type(e).__name__
             }
-            
+
             if filters:
                 error_data["filters"] = filters
-            
+
             # Add stack trace for 500 errors
             if isinstance(e, Exception):
                 error_data["traceback"] = traceback.format_exc()
-            
+
             # Redact sensitive data before logging
             error_data = self._redact_sensitive_data(error_data)
-            
+
             if self.log_format == "json":
                 logger.error(json.dumps(error_data))
             else:
@@ -506,7 +505,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                     f"Error: {str(e)} - Time: {processing_time:.3f}s",
                     exc_info=True
                 )
-            
+
             # Re-raise the exception
             raise
 
@@ -585,13 +584,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self.enabled = config.get("api.rate_limiting.enabled", False)
         self.requests_per_minute = config.get("api.rate_limiting.requests_per_minute", 60)
         self.burst_size = config.get("api.rate_limiting.burst_size", 10)
-        
+
         # In-memory storage for token buckets
-        self._buckets: Dict[str, Dict[str, Any]] = {}
+        self._buckets: dict[str, dict[str, Any]] = {}
         self._lock = threading.Lock()
         self._cleanup_interval = 300  # Cleanup every 5 minutes
         self._last_cleanup = time.time()
-        
+
         logger.info(
             f"Rate limiting initialized: enabled={self.enabled}, "
             f"rate={self.requests_per_minute}/min, burst={self.burst_size}"
@@ -613,7 +612,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 return 429 response
         """
         current_time = time.time()
-        
+
         with self._lock:
             # Get or create bucket for this IP
             if client_ip not in self._buckets:
@@ -621,19 +620,19 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                     "tokens": self.requests_per_minute + self.burst_size,
                     "last_refill": current_time
                 }
-            
+
             bucket = self._buckets[client_ip]
-            
+
             # Calculate time elapsed since last refill
             time_elapsed = current_time - bucket["last_refill"]
-            
+
             # Refill tokens based on time elapsed
             # Rate: requests_per_minute tokens per 60 seconds
             tokens_to_add = (time_elapsed / 60.0) * self.requests_per_minute
             max_tokens = self.requests_per_minute + self.burst_size
             bucket["tokens"] = min(max_tokens, bucket["tokens"] + tokens_to_add)
             bucket["last_refill"] = current_time
-            
+
             # Check if we have tokens available
             if bucket["tokens"] >= 1:
                 bucket["tokens"] -= 1
@@ -660,22 +659,22 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         """
         current_time = time.time()
         cutoff_time = current_time - 3600  # 1 hour ago
-        
+
         with self._lock:
             buckets_to_remove = [
                 ip for ip, bucket in self._buckets.items()
                 if bucket["last_refill"] < cutoff_time
             ]
-            
+
             for ip in buckets_to_remove:
                 del self._buckets[ip]
-            
+
             if buckets_to_remove:
                 logger.info(
                     f"Cleaned up {len(buckets_to_remove)} inactive "
                     f"rate limit buckets"
                 )
-        
+
         self._last_cleanup = current_time
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
@@ -695,14 +694,14 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # Skip if disabled
         if not self.enabled:
             return await call_next(request)
-        
+
         # Extract client IP
         client_ip = request.client.host if request.client else "unknown"
-        
+
         # Skip rate limiting for health endpoints
         if request.url.path in ["/health", "/health/ready", "/health/live"]:
             return await call_next(request)
-        
+
         # Check rate limit
         if not self._check_rate_limit(client_ip):
             return JSONResponse(
@@ -716,11 +715,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                     }
                 }
             )
-        
+
         # Periodic cleanup of old buckets
         current_time = time.time()
         if current_time - self._last_cleanup >= self._cleanup_interval:
             self._cleanup_old_buckets()
-        
+
         return await call_next(request)
 

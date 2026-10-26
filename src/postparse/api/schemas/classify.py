@@ -6,11 +6,40 @@ multi-class classification, wrapping the ClassificationResult from classifiers.
 """
 
 from enum import Enum
-from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, Field, ConfigDict, field_validator
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-class ClassifierType(str, Enum):
+class BatchItemError(BaseModel):
+    """Why one input of a batch failed.
+
+    Attributes:
+        code: ``empty_text``, ``llm_error``, ``unknown_item`` or ``invalid_output``.
+        message: Human-readable description.
+    """
+
+    code: str
+    message: str
+
+
+class BatchItemResult(BaseModel):
+    """Outcome of one batch input (in input order).
+
+    Attributes:
+        input_index: Position of the text in the request.
+        ok: True when ``result`` is set.
+        result: Endpoint-specific result object.
+        error: Failure details when ``ok`` is false.
+    """
+
+    input_index: int
+    ok: bool
+    result: dict[str, Any] | None = None
+    error: BatchItemError | None = None
+
+
+class ClassifierType(str, Enum):  # noqa: UP042 - keep str() behaviour
     """
     Type of classifier to use.
 
@@ -68,7 +97,7 @@ class ClassifyRequest(BaseModel):
         default=ClassifierType.LLM,
         description="Classifier to use"
     )
-    provider_name: Optional[str] = Field(
+    provider_name: str | None = Field(
         default=None,
         description="LLM provider name (for LLM classifier)",
         examples=["ollama", "openai", "anthropic"]
@@ -150,7 +179,7 @@ class ClassifyResponse(BaseModel):
         le=1.0,
         description="Confidence score"
     )
-    details: Dict[str, Any] = Field(
+    details: dict[str, Any] = Field(
         default_factory=dict,
         description="Additional classification details"
     )
@@ -164,7 +193,7 @@ class ClassifyResponse(BaseModel):
         description="Which classifier was used",
         examples=["llm"]
     )
-    input_index: Optional[int] = Field(
+    input_index: int | None = Field(
         default=None,
         ge=0,
         description="Original index in request batch; set only for batch responses"
@@ -206,7 +235,7 @@ class BatchClassifyRequest(BaseModel):
         ]
     })
 
-    texts: List[str] = Field(
+    texts: list[str] = Field(
         ...,
         min_length=1,
         max_length=100,
@@ -216,7 +245,7 @@ class BatchClassifyRequest(BaseModel):
         default=ClassifierType.LLM,
         description="Classifier to use"
     )
-    provider_name: Optional[str] = Field(
+    provider_name: str | None = Field(
         default=None,
         description="LLM provider name (for LLM classifier)",
         examples=["ollama", "openai", "anthropic"]
@@ -224,7 +253,7 @@ class BatchClassifyRequest(BaseModel):
 
     @field_validator("texts")
     @classmethod
-    def validate_texts(cls, v: List[str]) -> List[str]:
+    def validate_texts(cls, v: list[str]) -> list[str]:
         """Validate that all texts are non-empty and within length limits."""
         for i, text in enumerate(v):
             if not text.strip():
@@ -288,7 +317,7 @@ class BatchClassifyResponse(BaseModel):
         ]
     })
 
-    results: List[ClassifyResponse] = Field(
+    results: list[ClassifyResponse] = Field(
         ...,
         description="List of classification results"
     )
@@ -306,6 +335,10 @@ class BatchClassifyResponse(BaseModel):
         ...,
         ge=0.0,
         description="Total processing time in seconds"
+    )
+    items: list[BatchItemResult] = Field(
+        default_factory=list,
+        description="Per-input outcomes in input order ({input_index, ok, result | error})",
     )
 
 
@@ -365,7 +398,7 @@ class MultiClassifyRequest(BaseModel):
         description="Content to classify",
         examples=["Check out this new FastAPI library!"]
     )
-    classes: Optional[Dict[str, str]] = Field(
+    classes: dict[str, str] | None = Field(
         default=None,
         description="Runtime class definitions (dict mapping class name to description). "
                     "If None, uses classes from config.toml [classification.classes].",
@@ -374,7 +407,7 @@ class MultiClassifyRequest(BaseModel):
             "python_package": "Python libraries or packages"
         }]
     )
-    provider_name: Optional[str] = Field(
+    provider_name: str | None = Field(
         default=None,
         description="LLM provider name (for classification)",
         examples=["openai", "ollama", "anthropic", "lm_studio"]
@@ -390,7 +423,7 @@ class MultiClassifyRequest(BaseModel):
 
     @field_validator("classes")
     @classmethod
-    def validate_classes(cls, v: Optional[Dict[str, str]]) -> Optional[Dict[str, str]]:
+    def validate_classes(cls, v: dict[str, str] | None) -> dict[str, str] | None:
         """Validate that classes dict has at least 2 entries if provided."""
         if v is not None and len(v) < 2:
             raise ValueError("At least 2 classes are required for classification")
@@ -427,7 +460,7 @@ class MultiClassifyResponse(BaseModel):
             {
                 "label": "python_package",
                 "confidence": 0.92,
-                "reasoning": "The text mentions FastAPI library and building APIs, which is clearly about Python packages.",
+                "reasoning": "The text mentions the FastAPI library (a Python package).",
                 "available_classes": ["recipe", "python_package", "movie_review"],
                 "processing_time": 0.345,
                 "classifier_used": "multi_class_llm",
@@ -436,7 +469,7 @@ class MultiClassifyResponse(BaseModel):
             {
                 "label": "recipe",
                 "confidence": 0.95,
-                "reasoning": "The text contains cooking instructions with specific times and ingredients.",
+                "reasoning": "The text contains cooking instructions and ingredients.",
                 "available_classes": ["recipe", "tech_news", "other"],
                 "processing_time": 0.289,
                 "classifier_used": "multi_class_llm",
@@ -456,11 +489,11 @@ class MultiClassifyResponse(BaseModel):
         le=1.0,
         description="Confidence score (0.0-1.0)"
     )
-    reasoning: Optional[str] = Field(
+    reasoning: str | None = Field(
         default=None,
         description="LLM's reasoning for the classification"
     )
-    available_classes: List[str] = Field(
+    available_classes: list[str] = Field(
         ...,
         description="List of class names that were available for classification"
     )
@@ -474,7 +507,7 @@ class MultiClassifyResponse(BaseModel):
         description="Classifier type used",
         examples=["multi_class_llm"]
     )
-    input_index: Optional[int] = Field(
+    input_index: int | None = Field(
         default=None,
         ge=0,
         description="Original index in request batch; set only for batch responses"
@@ -526,13 +559,13 @@ class BatchMultiClassifyRequest(BaseModel):
         ]
     })
 
-    texts: List[str] = Field(
+    texts: list[str] = Field(
         ...,
         min_length=1,
         max_length=100,
         description="List of texts to classify"
     )
-    classes: Optional[Dict[str, str]] = Field(
+    classes: dict[str, str] | None = Field(
         default=None,
         description="Runtime class definitions (dict mapping class name to description). "
                     "If None, uses classes from config.toml [classification.classes].",
@@ -541,7 +574,7 @@ class BatchMultiClassifyRequest(BaseModel):
             "python_package": "Python libraries or packages"
         }]
     )
-    provider_name: Optional[str] = Field(
+    provider_name: str | None = Field(
         default=None,
         description="LLM provider name (for classification)",
         examples=["openai", "ollama", "anthropic", "lm_studio"]
@@ -549,7 +582,7 @@ class BatchMultiClassifyRequest(BaseModel):
 
     @field_validator("texts")
     @classmethod
-    def validate_texts(cls, v: List[str]) -> List[str]:
+    def validate_texts(cls, v: list[str]) -> list[str]:
         """Validate that all texts are non-empty and within length limits."""
         for i, text in enumerate(v):
             if not text.strip():
@@ -560,7 +593,7 @@ class BatchMultiClassifyRequest(BaseModel):
 
     @field_validator("classes")
     @classmethod
-    def validate_classes(cls, v: Optional[Dict[str, str]]) -> Optional[Dict[str, str]]:
+    def validate_classes(cls, v: dict[str, str] | None) -> dict[str, str] | None:
         """Validate that classes dict has at least 2 entries if provided."""
         if v is not None and len(v) < 2:
             raise ValueError("At least 2 classes are required for classification")
@@ -617,7 +650,7 @@ class BatchMultiClassifyResponse(BaseModel):
         ]
     })
 
-    results: List[MultiClassifyResponse] = Field(
+    results: list[MultiClassifyResponse] = Field(
         ...,
         description="List of multi-class classification results"
     )
@@ -635,6 +668,10 @@ class BatchMultiClassifyResponse(BaseModel):
         ...,
         ge=0.0,
         description="Total processing time in seconds"
+    )
+    items: list[BatchItemResult] = Field(
+        default_factory=list,
+        description="Per-input outcomes in input order ({input_index, ok, result | error})",
     )
 
 
@@ -658,11 +695,11 @@ class MultiLabelClassifyRequest(BaseModel):
     text: str = Field(
         ..., min_length=1, max_length=10000, description="Content to classify"
     )
-    classes: Optional[Dict[str, str]] = Field(
+    classes: dict[str, str] | None = Field(
         default=None,
         description="Runtime class definitions. If None, uses config.toml.",
     )
-    provider_name: Optional[str] = Field(
+    provider_name: str | None = Field(
         default=None, description="LLM provider name"
     )
 
@@ -677,8 +714,8 @@ class MultiLabelClassifyRequest(BaseModel):
     @field_validator("classes")
     @classmethod
     def validate_classes(
-        cls, v: Optional[Dict[str, str]]
-    ) -> Optional[Dict[str, str]]:
+        cls, v: dict[str, str] | None
+    ) -> dict[str, str] | None:
         """Validate at least 2 classes if provided."""
         if v is not None and len(v) < 2:
             raise ValueError("At least 2 classes are required")
@@ -688,13 +725,13 @@ class MultiLabelClassifyRequest(BaseModel):
 class MultiLabelClassifyResponse(BaseModel):
     """Response schema for multi-label classification results."""
 
-    labels: List[LabelScoreResponse] = Field(
+    labels: list[LabelScoreResponse] = Field(
         ..., description="Matching labels with confidence scores"
     )
-    reasoning: Optional[str] = Field(
+    reasoning: str | None = Field(
         default=None, description="LLM's reasoning"
     )
-    available_classes: List[str] = Field(
+    available_classes: list[str] = Field(
         ..., description="All class names available"
     )
     processing_time: float = Field(
@@ -703,7 +740,7 @@ class MultiLabelClassifyResponse(BaseModel):
     classifier_used: str = Field(
         default="multi_label_llm", description="Classifier type used"
     )
-    input_index: Optional[int] = Field(
+    input_index: int | None = Field(
         default=None,
         ge=0,
         description="Original index in request batch; set only for batch responses"
@@ -713,19 +750,19 @@ class MultiLabelClassifyResponse(BaseModel):
 class BatchMultiLabelClassifyRequest(BaseModel):
     """Request schema for batch multi-label classification."""
 
-    texts: List[str] = Field(
+    texts: list[str] = Field(
         ..., min_length=1, max_length=100, description="Texts to classify"
     )
-    classes: Optional[Dict[str, str]] = Field(
+    classes: dict[str, str] | None = Field(
         default=None, description="Runtime class definitions."
     )
-    provider_name: Optional[str] = Field(
+    provider_name: str | None = Field(
         default=None, description="LLM provider name"
     )
 
     @field_validator("texts")
     @classmethod
-    def validate_texts(cls, v: List[str]) -> List[str]:
+    def validate_texts(cls, v: list[str]) -> list[str]:
         """Validate texts are non-empty."""
         for i, text in enumerate(v):
             if not text.strip():
@@ -737,8 +774,8 @@ class BatchMultiLabelClassifyRequest(BaseModel):
     @field_validator("classes")
     @classmethod
     def validate_classes(
-        cls, v: Optional[Dict[str, str]]
-    ) -> Optional[Dict[str, str]]:
+        cls, v: dict[str, str] | None
+    ) -> dict[str, str] | None:
         """Validate at least 2 classes if provided."""
         if v is not None and len(v) < 2:
             raise ValueError("At least 2 classes are required")
@@ -748,11 +785,15 @@ class BatchMultiLabelClassifyRequest(BaseModel):
 class BatchMultiLabelClassifyResponse(BaseModel):
     """Response schema for batch multi-label classification results."""
 
-    results: List[MultiLabelClassifyResponse] = Field(
+    results: list[MultiLabelClassifyResponse] = Field(
         ..., description="Multi-label results"
     )
     total_processed: int = Field(..., ge=0, description="Total texts processed")
     failed_count: int = Field(default=0, ge=0, description="Failed count")
     total_processing_time: float = Field(
         ..., ge=0.0, description="Total processing time in seconds"
+    )
+    items: list[BatchItemResult] = Field(
+        default_factory=list,
+        description="Per-input outcomes in input order ({input_index, ok, result | error})",
     )

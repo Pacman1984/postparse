@@ -7,8 +7,9 @@ and Telegram messages with various filters.
 
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional, Dict, Any, Generic, TypeVar
-from pydantic import BaseModel, Field, ConfigDict, field_validator
+from typing import Any, Generic, TypeVar
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 T = TypeVar("T")
 
@@ -43,11 +44,11 @@ class PaginationMetadata(BaseModel):
         ]
     })
 
-    cursor: Optional[str] = Field(
+    cursor: str | None = Field(
         default=None,
         description="Current pagination cursor (base64-encoded)"
     )
-    next_cursor: Optional[str] = Field(
+    next_cursor: str | None = Field(
         default=None,
         description="Next page cursor (None if no more results)"
     )
@@ -63,7 +64,7 @@ class PaginationMetadata(BaseModel):
     )
 
 
-class ContentTypeFilter(str, Enum):
+class ContentTypeFilter(str, Enum):  # noqa: UP042 - keep str() behaviour
     """
     Content type filter for posts/messages.
 
@@ -164,20 +165,20 @@ class SearchPostsRequest(BaseModel):
         ]
     })
 
-    hashtags: Optional[List[str]] = Field(
+    hashtags: list[str] | None = Field(
         default=None,
         description="Hashtags to filter by (OR logic)",
         examples=[["recipe", "cooking"]]
     )
-    date_range: Optional[DateRangeFilter] = Field(
+    date_range: DateRangeFilter | None = Field(
         default=None,
         description="Date range filter"
     )
-    content_type: Optional[ContentTypeFilter] = Field(
+    content_type: ContentTypeFilter | None = Field(
         default=None,
         description="Content type filter"
     )
-    owner_username: Optional[str] = Field(
+    owner_username: str | None = Field(
         default=None,
         description="Filter by post owner",
         examples=["cooking_profile"]
@@ -188,21 +189,21 @@ class SearchPostsRequest(BaseModel):
         le=100,
         description="Maximum results to return"
     )
-    cursor: Optional[str] = Field(
+    cursor: str | None = Field(
         default=None,
         description="Pagination cursor (base64-encoded string from previous response)"
     )
-    
+
     @field_validator("cursor")
     @classmethod
-    def validate_cursor(cls, v: Optional[str]) -> Optional[str]:
+    def validate_cursor(cls, v: str | None) -> str | None:
         """Validate that cursor is a valid base64 string."""
         if v is not None:
             try:
                 import base64
                 base64.b64decode(v.encode())
             except Exception:
-                raise ValueError("cursor must be a valid base64-encoded string")
+                raise ValueError("cursor must be a valid base64-encoded string") from None
         return v
 
 
@@ -244,20 +245,20 @@ class SearchMessagesRequest(BaseModel):
         ]
     })
 
-    hashtags: Optional[List[str]] = Field(
+    hashtags: list[str] | None = Field(
         default=None,
         description="Hashtags to filter by (OR logic)",
         examples=[["recipe"]]
     )
-    date_range: Optional[DateRangeFilter] = Field(
+    date_range: DateRangeFilter | None = Field(
         default=None,
         description="Date range filter"
     )
-    content_type: Optional[ContentTypeFilter] = Field(
+    content_type: ContentTypeFilter | None = Field(
         default=None,
         description="Content type filter"
     )
-    channel_username: Optional[str] = Field(
+    channel_username: str | None = Field(
         default=None,
         description="DEPRECATED - Not supported. Will return 400 error if provided.",
         examples=None,
@@ -269,21 +270,21 @@ class SearchMessagesRequest(BaseModel):
         le=100,
         description="Maximum results to return"
     )
-    cursor: Optional[str] = Field(
+    cursor: str | None = Field(
         default=None,
         description="Pagination cursor (base64-encoded string from previous response)"
     )
-    
+
     @field_validator("cursor")
     @classmethod
-    def validate_cursor(cls, v: Optional[str]) -> Optional[str]:
+    def validate_cursor(cls, v: str | None) -> str | None:
         """Validate that cursor is a valid base64 string."""
         if v is not None:
             try:
                 import base64
                 base64.b64decode(v.encode())
             except Exception:
-                raise ValueError("cursor must be a valid base64-encoded string")
+                raise ValueError("cursor must be a valid base64-encoded string") from None
         return v
 
 
@@ -307,11 +308,13 @@ class PostSearchResult(BaseModel):
 
     shortcode: str
     owner_username: str
-    caption: Optional[str] = None
+    caption: str | None = None
     is_video: bool = False
     likes: int = 0
-    hashtags: List[str] = Field(default_factory=list)
-    created_at: Optional[datetime] = None
+    hashtags: list[str] = Field(default_factory=list)
+    created_at: datetime | None = None
+    item_id: int | None = Field(default=None, description="Schema v2 item id")
+    snippet: str | None = Field(default=None, description="Match snippet for text queries")
 
 
 class MessageSearchResult(BaseModel):
@@ -336,22 +339,24 @@ class MessageSearchResult(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     message_id: int
-    chat_id: Optional[int] = Field(
+    chat_id: int | None = Field(
         default=None,
         description="Telegram chat/channel ID (numeric identifier)"
     )
-    channel_username: Optional[str] = Field(
+    channel_username: str | None = Field(
         default=None,
         description="DEPRECATED - Not stored in database, always None",
         deprecated=True
     )
-    content: Optional[str] = None
+    content: str | None = None
     content_type: str = "text"
-    hashtags: List[str] = Field(default_factory=list)
-    created_at: Optional[datetime] = None
+    hashtags: list[str] = Field(default_factory=list)
+    created_at: datetime | None = None
+    item_id: int | None = Field(default=None, description="Schema v2 item id")
+    snippet: str | None = Field(default=None, description="Match snippet for text queries")
 
 
-class SearchResponse(BaseModel, Generic[T]):
+class SearchResponse(BaseModel, Generic[T]):  # noqa: UP046
     """
     Generic search response schema with cursor-based pagination.
 
@@ -397,7 +402,7 @@ class SearchResponse(BaseModel, Generic[T]):
         ]
     })
 
-    results: List[T] = Field(
+    results: list[T] = Field(
         ...,
         description="List of search results"
     )
@@ -406,7 +411,7 @@ class SearchResponse(BaseModel, Generic[T]):
         ge=0,
         description="Total matching results"
     )
-    filters_applied: Dict[str, Any] = Field(
+    filters_applied: dict[str, Any] = Field(
         default_factory=dict,
         description="Filters that were applied"
     )

@@ -1,424 +1,207 @@
-"""
-Pytest fixtures for PostParse API tests.
+"""Fixtures for the API integration tests.
 
-This module provides shared fixtures for testing the FastAPI application,
-including mock database, classifiers, cache managers, and test data helpers.
+Every test gets a fresh schema v2 database in ``tmp_path`` seeded with a small
+corpus (both sources, an undated item, tags, media with a transcript, a
+summary, links, classifications). The app is built with
+:func:`postparse.api.main.create_app` and services from
+:func:`postparse.api.deps.build_services`; individual services are replaced by
+fakes through ``build_services(**overrides)``. LLM calls go to the
+deterministic keyword model of ``tests/fake_llm.py``; nothing touches the
+network or real accounts.
 """
 
-import asyncio
-import pytest
+from __future__ import annotations
+
 import time
-from datetime import datetime
-from typing import Dict, Any, List
-from unittest.mock import Mock, patch
+from collections.abc import Callable, Iterator
+from pathlib import Path
+from typing import Any
+
+import pytest
 from fastapi.testclient import TestClient
 
-from postparse.api.main import app
-from postparse.api.services.job_manager import JobManager
-from postparse.core.data.database import SocialMediaDatabase
+from postparse.api.deps import ApiServices, build_services
+from postparse.api.main import create_app
 from postparse.api.services.cache_manager import CacheManager
+from postparse.classification import TaxonomySpec
+from postparse.config import Settings
+from postparse.core.db import Database
+from postparse.core.db.models import (
+    InstagramDetail,
+    ItemUpsert,
+    MediaInput,
+    TelegramDetail,
+)
+from postparse.core.db.repos import (
+    ClassificationRepo,
+    ItemsRepo,
+    LinksRepo,
+    MediaRepo,
+    SummariesRepo,
+    TranscriptsRepo,
+)
 from postparse.core.utils.config import ConfigManager
+from postparse.services.classification import ClassificationService
+from tests.fake_llm import fake_classifier_factory
 
-
-@pytest.fixture(autouse=True)
-def no_real_social_logins():
-    """
-    Prevent extraction background jobs from logging in to Telegram/Instagram.
-
-    Endpoint tests only check that jobs are accepted; without this fixture the
-    background job would construct a real parser and try to log in with the
-    dummy credentials from the request. Tests that need a parser patch
-    ``extraction_service.<Parser>`` themselves, which takes precedence.
-    """
-    def _refuse(*args, **kwargs):
-        raise RuntimeError("Real Telegram/Instagram logins are disabled in tests")
-
-    target = "postparse.api.services.extraction_service"
-    with (
-        patch(f"{target}.TelegramParser", side_effect=_refuse),
-        patch(f"{target}.InstaloaderParser", side_effect=_refuse),
-        patch(f"{target}.InstagramAPIParser", side_effect=_refuse),
-    ):
-        yield
-
-
-@pytest.fixture(scope="module")
-def test_client():
-    """
-    Create a FastAPI TestClient for testing.
-    
-    This fixture is module-scoped to avoid recreating the client
-    for every test, which would reinitialize the app multiple times.
-    
-    Note: Rate limiting is disabled in config/config.toml for development/testing.
-    
-    Returns:
-        TestClient: FastAPI test client instance.
-    
-    Example:
-        def test_health(test_client):
-            response = test_client.get("/health")
-            assert response.status_code == 200
-    """
-    with TestClient(app) as client:
-        yield client
-
-
-@pytest.fixture(scope="module")
-def api_version():
-    """
-    Get the API version from the running application.
-    
-    This avoids hardcoding version strings in tests.
-    
-    Returns:
-        str: API version string.
-    """
-    with TestClient(app) as client:
-        response = client.get("/")
-        if response.status_code == 200:
-            return response.json().get("version", "0.1.0")
-    return "0.1.0"
-
-
-@pytest.fixture(scope="function")
-def wait_for_jobs():
-    """
-    Fixture to help wait for background extraction jobs to complete.
-    
-    This ensures background tasks have time to clean up properly before
-    the test finishes and the event loop closes.
-    
-    Returns:
-        Callable that waits for job completion with timeout.
-    
-    Example:
-        def test_extraction(client, wait_for_jobs):
-            response = client.post("/api/v1/telegram/extract", json={...})
-            job_id = response.json()["job_id"]
-            wait_for_jobs(job_id, timeout=10.0)
-    """
-    def _wait(job_id: str = None, timeout: float = 5.0):
-        """
-        Wait for jobs to complete or timeout.
-        
-        Args:
-            job_id: Optional specific job ID to wait for.
-            timeout: Maximum time to wait in seconds.
-        """
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            # Give background tasks time to process
-            time.sleep(0.1)
-            
-            # If we've waited at least 1 second, that's usually enough
-            # for cleanup to start
-            if time.time() - start_time >= 1.0:
-                break
-        
-        # Give a final moment for cleanup
-        time.sleep(0.1)
-    
-    return _wait
+TOPICS = TaxonomySpec.adhoc(
+    {"recipe": "Cooking", "tech": "Software", "travel": "Trips"}, mode="multi", name="topics"
+)
 
 
 @pytest.fixture
-def test_config() -> ConfigManager:
-    """
-    Create ConfigManager instance with test-specific configuration.
-    
-    Returns:
-        ConfigManager: Config manager with test settings.
-    
-    Example:
-        def test_feature(test_config):
-            db_path = test_config.get('database.default_db_path')
-            assert 'test' in db_path
-    """
-    config = Mock(spec=ConfigManager)
-    config.get.side_effect = lambda key, default=None: {
-        "database.default_db_path": "data/test_social_media.db",
-        "api.cache.enabled": False,
-        "api.auth.enabled": False,
-        "api.log_level": "debug"
-    }.get(key, default)
-    return config
+def config() -> ConfigManager:
+    """The test-suite config (``config/config.toml`` in the session directory)."""
+    return ConfigManager("config/config.toml")
 
 
 @pytest.fixture
-def mock_db_with_sample_data() -> SocialMediaDatabase:
-    """
-    Create mock database with realistic sample posts and messages.
-    
-    This fixture provides a database instance pre-populated with:
-    - Instagram posts with various hashtags, dates, content types, and owners
-    - Telegram messages with various hashtags, dates, content types, and channels
-    
-    Returns:
-        Mock SocialMediaDatabase instance with sample data.
-    
-    Example:
-        def test_search(mock_db_with_sample_data):
-            posts, cursor = mock_db_with_sample_data.search_instagram_posts(
-                hashtags=["recipe"]
-            )
-            assert len(posts) > 0
-    """
-    db = Mock(spec=SocialMediaDatabase)
-    
-    # Sample Instagram posts
-    sample_posts = [
-        {
-            "id": 1,
-            "shortcode": "ABC123",
-            "owner_username": "chef_alice",
-            "caption": "Delicious pasta recipe #recipe #italian #pasta",
-            "is_video": False,
-            "likes": 150,
-            "hashtags": ["recipe", "italian", "pasta"],
-            "mentions": [],
-            "created_at": "2024-01-10T10:00:00"
-        },
-        {
-            "id": 2,
-            "shortcode": "DEF456",
-            "owner_username": "chef_bob",
-            "caption": "Cooking video tutorial #recipe #cooking #video",
-            "is_video": True,
-            "likes": 320,
-            "hashtags": ["recipe", "cooking", "video"],
-            "mentions": [],
-            "created_at": "2024-01-15T12:00:00"
-        },
-        {
-            "id": 3,
-            "shortcode": "GHI789",
-            "owner_username": "chef_alice",
-            "caption": "Weekend baking session #baking #dessert",
-            "is_video": False,
-            "likes": 200,
-            "hashtags": ["baking", "dessert"],
-            "mentions": [],
-            "created_at": "2024-01-20T14:00:00"
-        }
-    ]
-    
-    # Sample Telegram messages
-    sample_messages = [
-        {
-            "id": 1,
-            "message_id": 1001,
-            "chat_id": -1001234567890,
-            "content": "Today's recipe share #recipe #daily",
-            "content_type": "text",
-            "hashtags": ["recipe", "daily"],
-            "created_at": "2024-01-12T09:00:00"
-        },
-        {
-            "id": 2,
-            "message_id": 1002,
-            "chat_id": -1009876543210,
-            "content": "Beautiful food photography",
-            "content_type": "photo",
-            "hashtags": ["food", "photo"],
-            "created_at": "2024-01-18T11:00:00"
-        },
-        {
-            "id": 3,
-            "message_id": 1003,
-            "chat_id": -1001234567890,
-            "content": "Video cooking tutorial #recipe #tutorial",
-            "content_type": "video",
-            "hashtags": ["recipe", "tutorial"],
-            "created_at": "2024-01-22T13:00:00"
-        }
-    ]
-    
-    # Mock search methods with filtering logic
-    def search_posts(hashtags=None, date_range=None, content_type=None,
-                    owner_username=None, limit=50, cursor=None):
-        filtered = [p.copy() for p in sample_posts]
-        
-        if hashtags:
-            filtered = [p for p in filtered if any(h in p["hashtags"] for h in hashtags)]
-        if content_type == "video":
-            filtered = [p for p in filtered if p["is_video"]]
-        elif content_type == "image":
-            filtered = [p for p in filtered if not p["is_video"]]
-        if owner_username:
-            filtered = [p for p in filtered if p["owner_username"] == owner_username]
-        
-        results = filtered[:limit]
-        next_cursor = "cursor_next" if len(filtered) > limit else None
-        return results, next_cursor
-    
-    def search_messages(hashtags=None, date_range=None, content_type=None,
-                       limit=50, cursor=None):
-        filtered = [m.copy() for m in sample_messages]
-        
-        if hashtags:
-            filtered = [m for m in filtered if any(h in m["hashtags"] for h in hashtags)]
-        if content_type:
-            filtered = [m for m in filtered if m["content_type"] == content_type]
-        # Note: channel_username filtering is not supported
-        
-        results = filtered[:limit]
-        next_cursor = "cursor_next" if len(filtered) > limit else None
-        return results, next_cursor
-    
-    db.search_instagram_posts.side_effect = search_posts
-    db.search_telegram_messages.side_effect = search_messages
-    db.count_instagram_posts_filtered.return_value = len(sample_posts)
-    db.count_telegram_messages_filtered.return_value = len(sample_messages)
-    db._encode_cursor.return_value = "encoded_cursor"
-    db._decode_cursor.return_value = ("2024-01-01T00:00:00", 1)
-    
-    return db
+def settings(tmp_path: Path) -> Settings:
+    """Settings with every path below ``tmp_path``."""
+    return Settings(data_dir=tmp_path / "data", db_path=tmp_path / "api.db")
 
 
 @pytest.fixture
-def mock_classifier():
-    """
-    Classifier factory backed by a deterministic keyword FunctionModel.
-
-    Returns:
-        ``(spec, provider_name) -> TaxonomyClassifier`` factory (override for
-        ``get_classifier_factory``).
-
-    Example:
-        def test_classification(client_with_overrides):
-            response = client_with_overrides.post("/api/v1/classify/recipe",
-                                                  json={"text": "Recipe for pasta"})
-            assert response.json()["label"] == "recipe"
-    """
-    from tests.fake_llm import fake_classifier_factory
-
-    return fake_classifier_factory()
+def db(settings: Settings) -> Database:
+    """Empty, migrated schema v2 database."""
+    assert settings.db_path is not None
+    return Database.open(settings.db_path)
 
 
 @pytest.fixture
-def mock_cache_manager():
-    """
-    Create mock CacheManager with in-memory backend.
-    
-    Returns:
-        CacheManager with in-memory storage (no Redis required).
-    
-    Example:
-        def test_caching(mock_cache_manager):
-            mock_cache_manager.set("key", "value")
-            assert mock_cache_manager.get("key") == "value"
-    """
-    config = Mock(spec=ConfigManager)
-    config.get.side_effect = lambda key, default=None: {
-        "api.cache.enabled": True,
-        "api.cache.default_ttl": 300,
-        "api.cache.search_ttl": 600,
-        "api.cache.max_memory_mb": 100
-    }.get(key, default)
-    
-    cache = CacheManager(config)
-    return cache
+def seeded(db: Database) -> dict[str, int]:
+    """Seed the corpus and return ``{name: item_id}``."""
+    ids: dict[str, int] = {}
+    with db.transaction() as conn:
+        items = ItemsRepo(conn)
+
+        def add(key: str, **kwargs: Any) -> None:
+            ids[key], _ = items.upsert(ItemUpsert(**kwargs))
+
+        add("pasta", source="instagram", external_id="SC_PASTA", kind="video",
+            text="Creamy pasta carbonara rezept https://example.com/carbonara",
+            author="chef", url="https://www.instagram.com/p/SC_PASTA/",
+            created_at="2024-03-10T12:00:00Z", hashtags=("pasta", "dinner"),
+            mentions=("friend",),
+            detail=InstagramDetail("SC_PASTA", owner_id=7, typename="GraphVideo",
+                                   likes=120, comments=4),
+            media=(MediaInput(0, "video", remote_url="https://cdn.example/pasta.mp4"),))
+        add("cake", source="instagram", external_id="SC_CAKE", kind="image",
+            text="Chocolate cake recipe", author="baker",
+            created_at="2024-02-01T08:00:00Z", hashtags=("dessert",),
+            detail=InstagramDetail("SC_CAKE", likes=10, comments=1),
+            media=(MediaInput(0, "image", remote_url="https://cdn.example/cake.jpg"),))
+        add("carousel", source="instagram", external_id="SC_TRIP", kind="carousel",
+            text="Beach trip photos", author="chef",
+            created_at="2023-07-01T10:00:00Z", hashtags=("travel",),
+            detail=InstagramDetail("SC_TRIP"))
+        add("python", source="telegram", external_id="100:1", kind="text",
+            text="New Python release notes #python", author="pychannel",
+            created_at="2024-03-31T23:59:59Z", hashtags=("python",),
+            detail=TelegramDetail(100, 1, views=50))
+        add("undated", source="telegram", external_id="100:2", kind="document",
+            text="Undated pasta document", author="pychannel",
+            collected_at="2024-01-15T00:00:00Z", hashtags=("pasta",),
+            detail=TelegramDetail(100, 2))
+        add("undated2", source="telegram", external_id="100:3", kind="text",
+            text="Another undated note", author="other",
+            collected_at="2024-01-15T00:00:00Z",
+            detail=TelegramDetail(100, 3))
+
+        media_id = MediaRepo(conn).for_item(ids["pasta"])[0].id
+        TranscriptsRepo(conn).add(
+            media_id, backend="whisper", model="small", text="stir the guanciale",
+            language="it", segments=[{"start": 0.0, "end": 1.5, "text": "stir the guanciale"}],
+            duration_s=1.5,
+        )
+        MediaRepo(conn).mark_transcribed(media_id)
+        SummariesRepo(conn).add(
+            ids["pasta"], "A carbonara video.\n\n- Use guanciale\n- No cream",
+            provider="fake", model="fake-model",
+        )
+        links = LinksRepo(conn)
+        link_id = links.for_items([ids["pasta"]])[ids["pasta"]][0].id
+        links.add_fetch(link_id, fetcher="generic", status="ok", http_status=200,
+                        title="Carbonara", text="The classic recipe")
+
+        repo = ClassificationRepo(conn)
+        tax = repo.ensure_taxonomy("topics", "multi", ["recipe", "tech", "travel"])
+        run = repo.create_run(tax.id)
+        repo.add_result(run, ids["pasta"], "ok", [("recipe", 0.9)])
+        repo.add_result(run, ids["cake"], "ok", ["recipe"])
+        repo.add_result(run, ids["python"], "ok", ["tech"])
+        repo.finish_run(run)
+    return ids
 
 
 @pytest.fixture
-def client_with_overrides(mock_db_with_sample_data, mock_classifier, mock_cache_manager):
-    """
-    Create TestClient with all dependencies overridden for isolated testing.
-    
-    This fixture provides a fully configured test client with:
-    - Mock database with sample data
-    - Mock classifier with deterministic results
-    - Mock cache manager with in-memory storage
-    
-    Args:
-        mock_db_with_sample_data: Mock database fixture.
-        mock_classifier: Mock classifier fixture.
-        mock_cache_manager: Mock cache manager fixture.
-    
-    Returns:
-        TestClient with overridden dependencies.
-    
-    Example:
-        def test_endpoint(client_with_overrides):
-            response = client_with_overrides.get("/api/v1/search/posts")
-            assert response.status_code == 200
-    """
-    from postparse.api.dependencies import (
-        get_db,
-        get_classifier_factory,
-        get_cache_manager
+def classification(
+    db: Database, settings: Settings, config: ConfigManager
+) -> ClassificationService:
+    """Classification service with the ``topics`` taxonomy and the fake keyword model."""
+    return ClassificationService(
+        db, settings, config=config, taxonomies={"topics": TOPICS},
+        classifier_factory=fake_classifier_factory(),
     )
 
-    app.dependency_overrides[get_db] = lambda: mock_db_with_sample_data
-    app.dependency_overrides[get_classifier_factory] = lambda: mock_classifier
-    app.dependency_overrides[get_cache_manager] = lambda: mock_cache_manager
-    
-    client = TestClient(app)
-    yield client
-    
-    # Cleanup
-    app.dependency_overrides.clear()
+
+ServicesFactory = Callable[..., ApiServices]
 
 
-def create_sample_post(**kwargs) -> Dict[str, Any]:
-    """
-    Create sample Instagram post dict with defaults.
-    
-    Args:
-        **kwargs: Override default field values.
-    
-    Returns:
-        Dict representing an Instagram post.
-    
-    Example:
-        post = create_sample_post(
-            shortcode="XYZ999",
-            owner_username="test_user",
-            is_video=True
-        )
-    """
-    defaults = {
-        "id": 1,
-        "shortcode": "ABC123",
-        "owner_username": "test_user",
-        "caption": "Test post #test",
-        "is_video": False,
-        "likes": 100,
-        "hashtags": ["test"],
-        "mentions": [],
-        "created_at": datetime.now().isoformat()
-    }
-    defaults.update(kwargs)
-    return defaults
+@pytest.fixture
+def make_services(
+    db: Database, settings: Settings, config: ConfigManager, classification: ClassificationService
+) -> ServicesFactory:
+    """``make_services(**overrides)`` -> services on the test database."""
+
+    def make(**overrides: Any) -> ApiServices:
+        overrides.setdefault("classification", classification)
+        overrides.setdefault("cache", CacheManager(False))
+        return build_services(settings, config, db=db, **overrides)
+
+    return make
 
 
-def create_sample_message(**kwargs) -> Dict[str, Any]:
-    """
-    Create sample Telegram message dict with defaults.
-    
-    Args:
-        **kwargs: Override default field values.
-    
-    Returns:
-        Dict representing a Telegram message.
-    
-    Example:
-        message = create_sample_message(
-            message_id=2002,
-            channel_username="my_channel",
-            content_type="photo"
-        )
-    """
-    defaults = {
-        "id": 1,
-        "message_id": 1001,
-        "channel_username": "test_channel",
-        "content": "Test message #test",
-        "content_type": "text",
-        "hashtags": ["test"],
-        "created_at": datetime.now().isoformat()
-    }
-    defaults.update(kwargs)
-    return defaults
+ClientFactory = Callable[..., TestClient]
 
+
+@pytest.fixture
+def make_client(
+    make_services: ServicesFactory, settings: Settings, config: ConfigManager
+) -> Iterator[ClientFactory]:
+    """``make_client(**overrides)`` -> started TestClient (lifespan entered)."""
+    clients: list[TestClient] = []
+
+    def make(**overrides: Any) -> TestClient:
+        services = make_services(**overrides)
+        app = create_app(config=config, settings=settings, services=services)
+        client = TestClient(app)
+        client.__enter__()
+        clients.append(client)
+        return client
+
+    yield make
+    for client in clients:
+        client.__exit__(None, None, None)
+
+
+@pytest.fixture
+def client(make_client: ClientFactory, seeded: dict[str, int]) -> TestClient:
+    """Client on the seeded database with default services."""
+    return make_client()
+
+
+def services_of(client: TestClient) -> ApiServices:
+    """Return the service container behind a test client."""
+    return client.app.state.services  # type: ignore[attr-defined]
+
+
+def wait_for_job(client: TestClient, job_id: str, timeout: float = 10.0) -> dict[str, Any]:
+    """Poll the job until it is completed or failed."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        data = client.get(f"/api/v1/jobs/{job_id}").json()
+        if data["status"] in ("completed", "failed"):
+            return data
+        time.sleep(0.02)
+    raise AssertionError(f"job {job_id} did not finish: {data}")

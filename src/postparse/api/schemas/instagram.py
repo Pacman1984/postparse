@@ -6,10 +6,11 @@ compatible with the database schema and parser implementations.
 """
 
 from datetime import datetime
-from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, Field, ConfigDict, HttpUrl, SecretStr
+from typing import Any
 
-from .telegram import ExtractionStatus, JobStatusResponse
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
+
+from .telegram import ExtractionStatus
 
 
 class InstagramExtractRequest(BaseModel):
@@ -20,11 +21,14 @@ class InstagramExtractRequest(BaseModel):
 
     Attributes:
         username: Instagram account username.
-        password: Account password (for Instaloader method).
+        password: Account password (optional when a valid session file exists;
+            falls back to ``INSTAGRAM_PASSWORD``).
         access_token: API access token (for Platform API method).
         limit: Maximum number of posts to extract.
-        force_update: Whether to re-extract already processed posts.
-        use_api: Use Platform API instead of Instaloader.
+        force_update: Walk the whole saved feed and update known posts.
+        use_api: Platform API extraction (not supported; returns 400).
+        stop_after_known: Early stop after this many known posts in a row.
+        refresh_dates: Re-fetch unverified (v1) post dates after collecting.
 
     Example:
         # Instaloader method
@@ -73,15 +77,15 @@ class InstagramExtractRequest(BaseModel):
         description="Instagram username",
         examples=["cooking_profile"]
     )
-    password: Optional[SecretStr] = Field(
+    password: SecretStr | None = Field(
         default=None,
         description="Account password (for Instaloader method)"
     )
-    access_token: Optional[SecretStr] = Field(
+    access_token: SecretStr | None = Field(
         default=None,
         description="API access token (for Platform API method)"
     )
-    limit: Optional[int] = Field(
+    limit: int | None = Field(
         default=50,
         ge=1,
         le=1000,
@@ -94,6 +98,15 @@ class InstagramExtractRequest(BaseModel):
     use_api: bool = Field(
         default=False,
         description="Use Platform API instead of Instaloader"
+    )
+    stop_after_known: int | None = Field(
+        default=20,
+        ge=1,
+        description="Stop after this many consecutive known posts (ignored with force_update)",
+    )
+    refresh_dates: bool = Field(
+        default=False,
+        description="Afterwards re-fetch dates of posts imported from schema v1",
     )
 
 
@@ -141,7 +154,7 @@ class InstagramExtractResponse(BaseModel):
         ge=0,
         description="Estimated posts to process"
     )
-    estimated_time: Optional[int] = Field(
+    estimated_time: int | None = Field(
         default=None,
         ge=0,
         description="Estimated completion time (seconds)"
@@ -211,11 +224,11 @@ class InstagramPostSchema(BaseModel):
         ...,
         description="Instagram post shortcode"
     )
-    owner_username: Optional[str] = Field(
+    owner_username: str | None = Field(
         default=None,
         description="Post owner username"
     )
-    caption: Optional[str] = Field(
+    caption: str | None = Field(
         default=None,
         description="Post caption text"
     )
@@ -223,7 +236,7 @@ class InstagramPostSchema(BaseModel):
         default=False,
         description="Whether post contains video"
     )
-    media_url: Optional[str] = Field(
+    media_url: str | None = Field(
         default=None,
         description="URL to post media"
     )
@@ -237,23 +250,23 @@ class InstagramPostSchema(BaseModel):
         ge=0,
         description="Number of comments"
     )
-    hashtags: List[str] = Field(
+    hashtags: list[str] = Field(
         default_factory=list,
         description="Extracted hashtags (without #)"
     )
-    mentions: List[str] = Field(
+    mentions: list[str] = Field(
         default_factory=list,
         description="Mentioned usernames (without @)"
     )
-    created_at: Optional[datetime] = Field(
+    created_at: datetime | None = Field(
         default=None,
         description="Post creation timestamp"
     )
-    extracted_at: Optional[datetime] = Field(
+    extracted_at: datetime | None = Field(
         default=None,
         description="Extraction timestamp"
     )
-    metadata: Dict[str, Any] = Field(
+    metadata: dict[str, Any] = Field(
         default_factory=dict,
         description="Additional post metadata"
     )

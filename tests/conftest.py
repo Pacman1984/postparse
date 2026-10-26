@@ -290,29 +290,23 @@ def _no_model_discovery(request, monkeypatch):
 @pytest.fixture(autouse=True)
 def _clear_llm_caches():
     """Forget discovered/built LLM models so provider configs never leak between tests."""
-    from postparse.api.dependencies import clear_classifier_cache
     from postparse.llm.client import clear_model_cache
 
     clear_model_cache()
-    clear_classifier_cache()
     yield
     clear_model_cache()
-    clear_classifier_cache()
 
 
 @pytest.fixture(autouse=True)
 def _clear_cached_config():
     """Reset lru-cached config singletons so each test sees a fresh config."""
     from postparse.core.utils import config as config_module
-    from postparse.api import dependencies
     from postparse.config import clear_settings_cache
 
     config_module.get_config.cache_clear()
-    dependencies.get_config.cache_clear()
     clear_settings_cache()
     yield
     config_module.get_config.cache_clear()
-    dependencies.get_config.cache_clear()
     clear_settings_cache()
 
 

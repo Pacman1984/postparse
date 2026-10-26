@@ -1,99 +1,48 @@
-"""Unit tests for health router metrics behavior.
+"""Unit tests for the database check of the health router."""
 
-These tests validate that the `/metrics` endpoint handler computes database
-totals using dedicated COUNT queries instead of loading paginated row lists.
-"""
+from __future__ import annotations
 
-from typing import Any, Dict, cast
+from pathlib import Path
+from types import SimpleNamespace
 
-import pytest
-
-from postparse.api.routers.health import get_metrics
-from postparse.core.utils.config import ConfigManager
-
-
-class _CountOnlyDatabase:
-    """Database stub that supports counts and rejects row fetches.
-
-    Args:
-        instagram_total: Total Instagram posts to return from count query.
-        telegram_total: Total Telegram messages to return from count query.
-    """
-
-    def __init__(self, instagram_total: int, telegram_total: int) -> None:
-        """Initialize count values for the stub.
-
-        Args:
-            instagram_total: Instagram posts count.
-            telegram_total: Telegram messages count.
-        """
-        self.instagram_total = instagram_total
-        self.telegram_total = telegram_total
-
-    def count_instagram_posts(self) -> int:
-        """Return the configured Instagram count.
-
-        Returns:
-            Total number of Instagram posts.
-        """
-        return self.instagram_total
-
-    def count_telegram_messages(self) -> int:
-        """Return the configured Telegram count.
-
-        Returns:
-            Total number of Telegram messages.
-        """
-        return self.telegram_total
-
-    def get_instagram_posts(self, limit: int = 1000) -> list[Dict[str, Any]]:
-        """Fail if row-fetch API is called.
-
-        Args:
-            limit: Maximum number of posts requested.
-
-        Returns:
-            This method never returns.
-
-        Raises:
-            AssertionError: Always, because this API should not be used.
-        """
-        _ = limit
-        raise AssertionError("metrics should not fetch instagram rows")
-
-    def get_telegram_messages(self, limit: int = 1000) -> list[Dict[str, Any]]:
-        """Fail if row-fetch API is called.
-
-        Args:
-            limit: Maximum number of messages requested.
-
-        Returns:
-            This method never returns.
-
-        Raises:
-            AssertionError: Always, because this API should not be used.
-        """
-        _ = limit
-        raise AssertionError("metrics should not fetch telegram rows")
+from postparse.api.routers.health import database_check
+from postparse.core.db import Database
+from postparse.core.db.migrate import latest_version
+from postparse.core.db.models import ItemUpsert
+from postparse.core.db.repos import ItemsRepo
 
 
-class TestHealthMetrics:
-    """Tests for metrics aggregation in the health router."""
+def _services(db: Database) -> SimpleNamespace:
+    return SimpleNamespace(db=db)
 
-    @pytest.mark.asyncio
-    async def test_get_metrics_uses_database_count_queries(self) -> None:
-        """Use count methods to return uncapped totals.
 
-        Example:
-            When database totals exceed 1000, metrics should still return the
-            full values from count queries.
-        """
-        db = _CountOnlyDatabase(instagram_total=2501, telegram_total=9876)
+def test_empty_database_is_ok(tmp_path: Path) -> None:
+    result = database_check(_services(Database.open(tmp_path / "h.db")))
+    assert result["status"] == "ok"
+    assert result["items"] == 0 and result["fts_in_sync"] is True
+    assert result["schema_version"] == latest_version()
 
-        metrics = await get_metrics(
-            db=cast(Any, db),
-            config=cast(ConfigManager, object()),
-        )
 
-        assert metrics["database"]["instagram_posts"] == 2501
-        assert metrics["database"]["telegram_messages"] == 9876
+def test_counts_items_and_index(tmp_path: Path) -> None:
+    db = Database.open(tmp_path / "h.db")
+    with db.transaction() as conn:
+        for n in range(3):
+            ItemsRepo(conn).upsert(ItemUpsert(source="telegram", external_id=f"1:{n}",
+                                              kind="text", text=f"message {n}"))
+    result = database_check(_services(db))
+    assert (result["items"], result["fts_indexed"]) == (3, 3)
+
+
+def test_outdated_schema_is_degraded(tmp_path: Path) -> None:
+    db = Database.open(tmp_path / "h.db")
+    with db.transaction() as conn:
+        conn.execute("PRAGMA user_version = 1")
+    result = database_check(_services(db))
+    assert result["status"] == "degraded" and result["schema_version"] == 1
+
+
+def test_unreadable_database_is_error(tmp_path: Path) -> None:
+    folder = tmp_path / "not-a-db"
+    folder.mkdir()
+    result = database_check(_services(Database(folder, migrate=False)))
+    assert result["status"] == "error" and "error" in result

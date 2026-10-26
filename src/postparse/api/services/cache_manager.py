@@ -1,292 +1,238 @@
-"""
-Cache management service for API responses.
+"""Response cache for read endpoints (optional Redis, in-memory fallback).
 
-This module provides Redis-based caching with graceful fallback to in-memory
-cache when Redis is unavailable.
+Keys are namespaced ``postparse:v2:{resource}:{hash}`` where ``hash`` is a
+SHA-256 over the normalized request parameters, so different schema versions
+or resources never collide. :meth:`CacheManager.invalidate` deletes every key
+below a prefix; the job runner calls it after jobs and the classify endpoints
+after persisting results.
+
+The client is synchronous. Endpoints that use the cache are plain ``def``
+handlers (FastAPI runs them in the threadpool); async callers wrap calls in
+``anyio.to_thread.run_sync``.
+
+Configuration (``[api.cache]``)::
+
+    enabled = false                       # off: every call is a no-op
+    redis_url = "redis://localhost:6379/0"
+    default_ttl = 300                     # seconds
+    search_ttl = 600                      # seconds for search/list endpoints
+    max_entries = 1000                    # in-memory fallback size
+
+Example:
+    >>> cache = CacheManager(enabled=True)          # Redis unavailable -> memory
+    >>> key = cache.key("items", q="pasta", limit=20)
+    >>> cache.set(key, {"items": []})
+    >>> cache.invalidate("items")
+    1
 """
 
-import json
+from __future__ import annotations
+
 import hashlib
+import json
 import logging
-from typing import Any, Optional, Dict
-from functools import lru_cache
+import threading
+import time
+from collections import OrderedDict
+from datetime import date, datetime
+from enum import Enum
+from typing import Any
 
-from postparse.core.utils.config import ConfigManager
+__all__ = ["KEY_NAMESPACE", "CacheManager"]
 
 logger = logging.getLogger(__name__)
 
+#: Prefix of every cache key written by this module.
+KEY_NAMESPACE = "postparse:v2:"
+
+
+def _normalize(value: Any) -> Any:
+    """Return a JSON-stable representation of a parameter value."""
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, (list, tuple, set, frozenset)):
+        items = [_normalize(v) for v in value]
+        return sorted(items, key=repr) if isinstance(value, (set, frozenset)) else items
+    if isinstance(value, dict):
+        return {str(k): _normalize(v) for k, v in sorted(value.items())}
+    return value
+
 
 class CacheManager:
+    """Small key/value cache with TTLs and prefix invalidation.
+
+    Args:
+        enabled: ``False`` turns every operation into a no-op.
+        redis_url: Redis server; ignored when ``client`` is given.
+        default_ttl: TTL in seconds when :meth:`set` gets none.
+        search_ttl: TTL used by search/list endpoints.
+        max_entries: Size of the in-memory fallback (oldest entries evicted).
+        client: Ready Redis-compatible client (tests pass ``fakeredis``).
+        clock: Monotonic clock for the in-memory TTLs.
     """
-    Manages caching operations with Redis or in-memory fallback.
-    
-    This class provides a unified interface for caching API responses
-    with automatic fallback to in-memory storage if Redis is unavailable.
-    
-    Attributes:
-        config: ConfigManager instance for accessing configuration.
-        redis_client: Redis client instance (None if unavailable).
-        memory_cache: In-memory cache dict (used as fallback).
-        is_redis_available: Boolean indicating Redis connection status.
-        
-    Example:
-        >>> from postparse.core.utils.config import ConfigManager
-        >>> config = ConfigManager()
-        >>> cache = CacheManager(config)
-        >>> cache.set("key1", {"data": "value"}, ttl=300)
-        >>> result = cache.get("key1")
-        >>> print(result)
-        {'data': 'value'}
-    """
-    
-    def __init__(self, config: ConfigManager):
-        """
-        Initialize cache manager with configuration.
-        
-        Args:
-            config: ConfigManager instance for accessing cache settings.
-            
-        Example:
-            >>> config = ConfigManager()
-            >>> cache = CacheManager(config)
-            >>> print(cache.is_available())
-            True
-        """
-        self.config = config
-        self.redis_client: Optional[Any] = None
-        self.memory_cache: Dict[str, Any] = {}
-        self.is_redis_available = False
-        
-        # Check if caching is enabled
-        cache_enabled = config.get("api.cache.enabled", default=False)
-        if not cache_enabled:
-            logger.info("Caching is disabled in configuration")
+
+    def __init__(
+        self,
+        enabled: bool = False,
+        *,
+        redis_url: str = "redis://localhost:6379/0",
+        default_ttl: int = 300,
+        search_ttl: int = 600,
+        max_entries: int = 1000,
+        client: Any = None,
+        clock: Any = time.monotonic,
+    ) -> None:
+        self.enabled = bool(enabled)
+        self.default_ttl = int(default_ttl)
+        self.search_ttl = int(search_ttl)
+        self.max_entries = max(1, int(max_entries))
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._memory: OrderedDict[str, tuple[float, str]] = OrderedDict()
+        self.redis_client: Any = None
+        if not self.enabled:
             return
-        
-        # Try to initialize Redis
+        if client is not None:
+            self.redis_client = client
+            return
         try:
             import redis
-            redis_url = config.get("api.cache.redis_url", default="redis://localhost:6379/0")
-            self.redis_client = redis.from_url(
-                redis_url,
-                decode_responses=True,
-                socket_connect_timeout=2,
-                socket_timeout=2
-            )
-            # Test connection
-            self.redis_client.ping()
-            self.is_redis_available = True
-            logger.info(f"Redis cache connected successfully: {redis_url}")
-        except ImportError:
-            logger.warning("Redis package not installed, using in-memory cache")
-        except Exception as e:
-            logger.warning(f"Redis connection failed, using in-memory cache: {e}")
-    
-    def is_available(self) -> bool:
-        """
-        Check if caching is available (Redis or in-memory).
-        
-        Returns:
-            True if caching is enabled, False otherwise.
-            
-        Example:
-            >>> cache = CacheManager(config)
-            >>> if cache.is_available():
-            ...     cache.set("key", "value")
-        """
-        return self.config.get("api.cache.enabled", default=False)
-    
-    def get(self, key: str) -> Optional[Any]:
-        """
-        Retrieve cached value by key.
-        
-        Args:
-            key: Cache key to retrieve.
-            
-        Returns:
-            Cached value (deserialized from JSON) or None if not found.
-            
-        Example:
-            >>> cache.set("user:123", {"name": "John"})
-            >>> user = cache.get("user:123")
-            >>> print(user)
-            {'name': 'John'}
-        """
-        if not self.is_available():
-            return None
-        
-        try:
-            if self.is_redis_available and self.redis_client:
-                value = self.redis_client.get(key)
-                if value:
-                    logger.debug(f"Cache hit (Redis): {key}")
-                    return json.loads(value)
-                logger.debug(f"Cache miss (Redis): {key}")
-                return None
-            else:
-                value = self.memory_cache.get(key)
-                if value:
-                    logger.debug(f"Cache hit (memory): {key}")
-                    return value
-                logger.debug(f"Cache miss (memory): {key}")
-                return None
-        except Exception as e:
-            logger.error(f"Cache get error for key {key}: {e}")
-            return None
-    
-    def set(self, key: str, value: Any, ttl: Optional[int] = None) -> bool:
-        """
-        Cache a value with optional TTL.
-        
-        Args:
-            key: Cache key to store.
-            value: Value to cache (will be JSON serialized).
-            ttl: Time-to-live in seconds (uses default_ttl from config if None).
-            
-        Returns:
-            True if successful, False otherwise.
-            
-        Example:
-            >>> cache.set("posts:all", [{"id": 1}, {"id": 2}], ttl=600)
-            True
-        """
-        if not self.is_available():
-            return False
-        
-        if ttl is None:
-            ttl = self.config.get("api.cache.default_ttl", default=300)
-        
-        try:
-            if self.is_redis_available and self.redis_client:
-                serialized = json.dumps(value)
-                self.redis_client.setex(key, ttl, serialized)
-                logger.debug(f"Cache set (Redis): {key} (TTL: {ttl}s)")
-                return True
-            else:
-                # In-memory cache doesn't support TTL natively, store value only
-                self.memory_cache[key] = value
-                logger.debug(f"Cache set (memory): {key}")
-                # Limit memory cache size
-                max_size = self.config.get("api.cache.max_memory_mb", default=100) * 10
-                if len(self.memory_cache) > max_size:
-                    # Remove oldest entry (FIFO)
-                    self.memory_cache.pop(next(iter(self.memory_cache)))
-                return True
-        except Exception as e:
-            logger.error(f"Cache set error for key {key}: {e}")
-            return False
-    
-    def delete(self, key: str) -> bool:
-        """
-        Remove a cached value.
-        
-        Args:
-            key: Cache key to remove.
-            
-        Returns:
-            True if successful, False otherwise.
-            
-        Example:
-            >>> cache.delete("user:123")
-            True
-        """
-        if not self.is_available():
-            return False
-        
-        try:
-            if self.is_redis_available and self.redis_client:
-                self.redis_client.delete(key)
-                logger.debug(f"Cache delete (Redis): {key}")
-                return True
-            else:
-                if key in self.memory_cache:
-                    del self.memory_cache[key]
-                    logger.debug(f"Cache delete (memory): {key}")
-                return True
-        except Exception as e:
-            logger.error(f"Cache delete error for key {key}: {e}")
-            return False
-    
-    def clear_pattern(self, pattern: str) -> int:
-        """
-        Clear all keys matching a pattern.
-        
-        Args:
-            pattern: Pattern to match (e.g., 'search:posts:*').
-            
-        Returns:
-            Number of keys deleted.
-            
-        Example:
-            >>> cache.clear_pattern("search:*")
-            15
-        """
-        if not self.is_available():
-            return 0
-        
-        try:
-            if self.is_redis_available and self.redis_client:
-                keys = self.redis_client.keys(pattern)
-                if keys:
-                    deleted = self.redis_client.delete(*keys)
-                    logger.info(f"Cache pattern clear (Redis): {pattern} ({deleted} keys)")
-                    return deleted
-                return 0
-            else:
-                # Simple pattern matching for in-memory cache
-                # Convert glob pattern to prefix matching
-                prefix = pattern.replace("*", "")
-                keys_to_delete = [k for k in self.memory_cache.keys() if k.startswith(prefix)]
-                for key in keys_to_delete:
-                    del self.memory_cache[key]
-                logger.info(f"Cache pattern clear (memory): {pattern} ({len(keys_to_delete)} keys)")
-                return len(keys_to_delete)
-        except Exception as e:
-            logger.error(f"Cache pattern clear error for pattern {pattern}: {e}")
-            return 0
-    
-    def generate_cache_key(self, prefix: str, **params) -> str:
-        """
-        Generate deterministic cache key from parameters.
-        
-        Args:
-            prefix: Key prefix (e.g., 'search:posts').
-            **params: Filter parameters to include in key.
-            
-        Returns:
-            Generated cache key string.
-            
-        Example:
-            >>> key = cache.generate_cache_key(
-            ...     "search:posts",
-            ...     hashtags=["recipe"],
-            ...     content_type="video",
-            ...     limit=20
-            ... )
-            >>> print(key)
-            search:posts:a3f5b9c1e2d4...
-        """
-        from datetime import datetime
-        
-        # Normalize params for JSON serialization
-        def normalize_value(value):
-            """Convert non-JSON-serializable types to serializable forms."""
-            if isinstance(value, datetime):
-                return value.isoformat()
-            elif isinstance(value, tuple):
-                return [normalize_value(v) for v in value]
-            elif isinstance(value, list):
-                return [normalize_value(v) for v in value]
-            elif isinstance(value, dict):
-                return {k: normalize_value(v) for k, v in value.items()}
-            return value
-        
-        # Normalize all params
-        normalized_params = {k: normalize_value(v) for k, v in params.items()}
-        
-        # Sort params for deterministic key generation
-        sorted_params = sorted(normalized_params.items())
-        params_str = json.dumps(sorted_params, sort_keys=True)
-        params_hash = hashlib.md5(params_str.encode()).hexdigest()[:16]
-        return f"{prefix}:{params_hash}"
 
+            candidate = redis.from_url(
+                redis_url, socket_connect_timeout=2, socket_timeout=2, decode_responses=True
+            )
+            candidate.ping()
+            self.redis_client = candidate
+            logger.info("Redis cache connected")
+        except Exception as exc:  # noqa: BLE001 - any connection problem means fallback
+            logger.warning("Redis unavailable (%s); using the in-memory cache", exc)
+
+    @classmethod
+    def from_config(cls, config: Any, *, client: Any = None) -> CacheManager:
+        """Create a cache from ``[api.cache]`` of a ``ConfigManager`` (``None``: disabled)."""
+        if config is None:
+            return cls(False)
+        return cls(
+            bool(config.get("api.cache.enabled", default=False)),
+            redis_url=config.get("api.cache.redis_url", default="redis://localhost:6379/0"),
+            default_ttl=int(config.get("api.cache.default_ttl", default=300)),
+            search_ttl=int(config.get("api.cache.search_ttl", default=600)),
+            max_entries=int(config.get("api.cache.max_entries", default=1000)),
+            client=client,
+        )
+
+    # -- info --------------------------------------------------------------------
+
+    @property
+    def backend(self) -> str:
+        """``redis``, ``memory`` or ``disabled``."""
+        if not self.enabled:
+            return "disabled"
+        return "redis" if self.redis_client is not None else "memory"
+
+    def is_available(self) -> bool:
+        """True when caching is enabled (Redis or memory)."""
+        return self.enabled
+
+    # -- keys --------------------------------------------------------------------
+
+    @staticmethod
+    def key(resource: str, **params: Any) -> str:
+        """Build ``postparse:v2:{resource}:{hash}`` for request parameters.
+
+        ``None`` values are dropped, so absent and explicitly empty optional
+        parameters share a key.
+        """
+        payload = {k: _normalize(v) for k, v in sorted(params.items()) if v is not None}
+        digest = hashlib.sha256(
+            json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
+        ).hexdigest()[:32]
+        return f"{KEY_NAMESPACE}{resource}:{digest}"
+
+    # -- operations --------------------------------------------------------------
+
+    def get(self, key: str) -> Any | None:
+        """Return the cached value, or ``None`` on a miss / when disabled."""
+        if not self.enabled:
+            return None
+        try:
+            if self.redis_client is not None:
+                raw = self.redis_client.get(key)
+            else:
+                raw = self._memory_get(key)
+        except Exception as exc:  # noqa: BLE001 - a broken cache must not fail requests
+            logger.warning("Cache get failed: %s", exc)
+            return None
+        if raw is None:
+            return None
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8")
+        return json.loads(raw)
+
+    def set(self, key: str, value: Any, ttl: int | None = None) -> bool:
+        """Store a JSON-serializable value; returns ``True`` when stored."""
+        if not self.enabled:
+            return False
+        ttl = int(ttl if ttl is not None else self.default_ttl)
+        serialized = json.dumps(value, ensure_ascii=False, default=str)
+        try:
+            if self.redis_client is not None:
+                self.redis_client.setex(key, ttl, serialized)
+            else:
+                self._memory_set(key, serialized, ttl)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Cache set failed: %s", exc)
+            return False
+        return True
+
+    def invalidate(self, prefix: str = "") -> int:
+        """Delete every key below ``postparse:v2:{prefix}``.
+
+        Args:
+            prefix: Resource prefix (``""``: the whole namespace).
+
+        Returns:
+            Number of deleted keys.
+        """
+        if not self.enabled:
+            return 0
+        pattern = KEY_NAMESPACE + prefix
+        try:
+            if self.redis_client is not None:
+                keys = list(self.redis_client.scan_iter(match=pattern + "*", count=500))
+                deleted = int(self.redis_client.delete(*keys)) if keys else 0
+            else:
+                with self._lock:
+                    keys = [k for k in self._memory if k.startswith(pattern)]
+                    for k in keys:
+                        del self._memory[k]
+                deleted = len(keys)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Cache invalidation failed: %s", exc)
+            return 0
+        if deleted:
+            logger.debug("Invalidated %d cache keys below %s", deleted, pattern)
+        return deleted
+
+    # -- in-memory fallback ------------------------------------------------------
+
+    def _memory_get(self, key: str) -> str | None:
+        with self._lock:
+            entry = self._memory.get(key)
+            if entry is None:
+                return None
+            expires, value = entry
+            if expires <= self._clock():
+                del self._memory[key]
+                return None
+            self._memory.move_to_end(key)
+            return value
+
+    def _memory_set(self, key: str, value: str, ttl: int) -> None:
+        with self._lock:
+            self._memory[key] = (self._clock() + ttl, value)
+            self._memory.move_to_end(key)
+            while len(self._memory) > self.max_entries:
+                self._memory.popitem(last=False)

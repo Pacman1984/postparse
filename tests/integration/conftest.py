@@ -5,20 +5,10 @@ Integration tests test the interaction between multiple components
 and may use real databases (in-memory SQLite) and services.
 """
 
-import asyncio
 import pytest
-import tempfile
 import warnings
-from pathlib import Path
-from typing import Dict, Any
-from unittest.mock import Mock
 
-from fastapi.testclient import TestClient
-
-from postparse.api.main import app
 from postparse.core.data.database import SocialMediaDatabase
-from postparse.api.services.cache_manager import CacheManager
-from postparse.core.utils.config import ConfigManager
 
 
 @pytest.fixture(scope="function")
@@ -57,43 +47,6 @@ def real_database(temp_db_path):
     """
     db = SocialMediaDatabase(temp_db_path)
     yield db
-
-
-@pytest.fixture(scope="module")
-def test_client():
-    """
-    Create a FastAPI TestClient for integration testing.
-
-    Returns:
-        TestClient: FastAPI test client instance.
-
-    Example:
-        def test_health(test_client):
-            response = test_client.get("/health")
-            assert response.status_code == 200
-    """
-    with TestClient(app) as client:
-        yield client
-
-
-@pytest.fixture
-def mock_cache_manager():
-    """
-    Create CacheManager with in-memory backend for integration tests.
-
-    Returns:
-        CacheManager with in-memory storage (no Redis required).
-    """
-    config = Mock(spec=ConfigManager)
-    config.get.side_effect = lambda key, default=None: {
-        "api.cache.enabled": True,
-        "api.cache.default_ttl": 300,
-        "api.cache.search_ttl": 600,
-        "api.cache.max_memory_mb": 100
-    }.get(key, default)
-
-    cache = CacheManager(config)
-    return cache
 
 
 @pytest.fixture(autouse=True)

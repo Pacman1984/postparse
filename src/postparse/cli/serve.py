@@ -14,7 +14,6 @@ from rich.panel import Panel
 from postparse.cli.utils import (
     get_console,
     load_config,
-    print_success,
     print_error,
     print_info,
 )
@@ -48,39 +47,39 @@ from postparse.cli.utils import (
 @click.pass_context
 def serve(ctx, host, port, reload, workers, log_level):
     """🚀 Start the FastAPI server.
-    
+
     This command starts the FastAPI server using Uvicorn. The server provides
     REST API endpoints for extraction, classification, and search operations.
-    
+
     Examples:
         postparse serve
-        
+
         postparse serve --port 8080 --reload
-        
+
         postparse serve --workers 4 --log-level debug
-    
+
     The API will be available at:
         - Swagger UI: http://localhost:8000/docs
         - ReDoc: http://localhost:8000/redoc
-    
+
     Note:
         Use --reload for development. For production, use multiple workers
         without reload for better performance.
     """
     console = get_console()
-    
+
     try:
         # Load config
         config_path = ctx.obj.get('config')
         config = load_config(config_path)
-        
+
         # Determine server settings
         server_host = host or config.get('api.host', default='0.0.0.0')
         server_port = port or config.get('api.port', default=8000)
         server_reload = reload or config.get('api.reload', default=False)
         server_workers = workers or config.get('api.workers', default=1)
-        server_log_level = log_level or config.get('api.log_level', default='info')
-        
+        server_log_level = str(log_level or config.get('api.log_level', default='info')).lower()
+
         # Display startup info
         startup_info = f"""[bold cyan]PostParse API Server[/bold cyan]
 
@@ -92,27 +91,38 @@ def serve(ctx, host, port, reload, workers, log_level):
   • Workers: {server_workers}
   • Auto-reload: {'Yes' if server_reload else 'No'}
   • Log level: {server_log_level}
-  • Auth enabled: {config.get('api.auth_enabled', default=False)}
-  • Rate limiting: {config.get('api.rate_limiting', default=False)}
+  • Auth enabled: {config.get('api.auth.enabled', default=False)}
+  • Rate limiting: {config.get('api.rate_limiting.enabled', default=False)}
 
 [yellow]Press Ctrl+C to stop the server[/yellow]
 """
-        
+
         console.print(Panel(startup_info, border_style="green"))
-        
+
         # Import uvicorn and start server
+        import os
+        from pathlib import Path
+
         import uvicorn
-        
+
+        # The app (also in reload/worker processes) reads the same config file,
+        # so the API uses the same database and session paths as the CLI.
+        if config_path:
+            os.environ["POSTPARSE_CONFIG"] = str(Path(config_path).resolve())
+        elif isinstance(getattr(config, "config_path", None), (str, Path)):
+            os.environ["POSTPARSE_CONFIG"] = str(Path(config.config_path).resolve())
+
         # Run server
         uvicorn.run(
             "postparse.api.main:app",
             host=server_host,
             port=server_port,
             reload=server_reload,
-            workers=server_workers if not server_reload else 1,  # Reload doesn't work with multiple workers
+            # Reload does not work with multiple workers.
+            workers=server_workers if not server_reload else 1,
             log_level=server_log_level,
         )
-        
+
     except KeyboardInterrupt:
         console.print()
         print_info("Server stopped by user")
@@ -122,5 +132,5 @@ def serve(ctx, host, port, reload, workers, log_level):
         print_error(f"Failed to start server: {e}")
         if ctx.obj.get('verbose'):
             console.print_exception()
-        raise click.Abort()
+        raise click.Abort() from e
 

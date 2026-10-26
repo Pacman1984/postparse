@@ -10,9 +10,10 @@ This module provides reusable schema classes for:
 All schemas use Pydantic v2 syntax with comprehensive validation and examples.
 """
 
-from datetime import datetime, UTC
-from typing import Any, Dict, Generic, List, Optional, TypeVar
-from pydantic import BaseModel, Field, ConfigDict
+from datetime import UTC, datetime
+from typing import Any, Generic, TypeVar
+
+from pydantic import BaseModel, ConfigDict, Field
 
 # Generic type for paginated responses
 T = TypeVar("T")
@@ -67,7 +68,7 @@ class HealthResponse(BaseModel):
         default_factory=lambda: datetime.now(UTC),
         description="Current server timestamp"
     )
-    details: Optional[Dict[str, Any]] = Field(
+    details: dict[str, Any] | None = Field(
         default=None,
         description="Additional health check details"
     )
@@ -117,7 +118,7 @@ class ErrorResponse(BaseModel):
         description="Human-readable error message",
         examples=["Text field is required", "Resource not found"]
     )
-    details: Optional[Dict[str, Any]] = Field(
+    details: dict[str, Any] | None = Field(
         default=None,
         description="Additional error context"
     )
@@ -154,7 +155,7 @@ class SuccessResponse(BaseModel):
         description="Success message",
         examples=["Operation completed successfully"]
     )
-    data: Optional[Dict[str, Any]] = Field(
+    data: dict[str, Any] | None = Field(
         default=None,
         description="Additional response data"
     )
@@ -192,18 +193,18 @@ class PaginationParams(BaseModel):
         le=100,
         description="Maximum number of items to return"
     )
-    offset: Optional[int] = Field(
+    offset: int | None = Field(
         default=0,
         ge=0,
         description="Number of items to skip (offset-based pagination)"
     )
-    cursor: Optional[str] = Field(
+    cursor: str | None = Field(
         default=None,
         description="Cursor for next page (cursor-based pagination)"
     )
 
 
-class PaginatedResponse(BaseModel, Generic[T]):
+class PaginatedResponse(BaseModel, Generic[T]):  # noqa: UP046
     """
     Generic paginated response schema.
 
@@ -244,7 +245,7 @@ class PaginatedResponse(BaseModel, Generic[T]):
         ]
     })
 
-    items: List[T] = Field(
+    items: list[T] = Field(
         ...,
         description="List of items for current page"
     )
@@ -258,12 +259,12 @@ class PaginatedResponse(BaseModel, Generic[T]):
         ge=1,
         description="Maximum items per page"
     )
-    offset: Optional[int] = Field(
+    offset: int | None = Field(
         default=None,
         ge=0,
         description="Current offset (offset-based pagination)"
     )
-    next_cursor: Optional[str] = Field(
+    next_cursor: str | None = Field(
         default=None,
         description="Cursor for next page (cursor-based pagination)"
     )

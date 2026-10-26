@@ -10,7 +10,7 @@ import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from postparse.api.schemas.telegram import ExtractionStatus
 
@@ -42,7 +42,7 @@ def _is_sensitive_metadata_key(key: str) -> bool:
     return any(marker in key_lower for marker in _SENSITIVE_METADATA_MARKERS)
 
 
-def _sanitize_job_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
+def _sanitize_job_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     """
     Remove credential-bearing fields from job metadata recursively.
 
@@ -56,7 +56,7 @@ def _sanitize_job_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
         safe_metadata = _sanitize_job_metadata({"password": "x", "limit": 100})
         # {"limit": 100}
     """
-    sanitized: Dict[str, Any] = {}
+    sanitized: dict[str, Any] = {}
     for key, value in metadata.items():
         if _is_sensitive_metadata_key(key):
             continue
@@ -77,7 +77,7 @@ def _sanitize_job_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
 class Job:
     """
     Represents an extraction job with status tracking.
-    
+
     Attributes:
         job_id: Unique identifier for the job (UUID)
         status: Current status of the job (ExtractionStatus enum)
@@ -88,7 +88,7 @@ class Job:
         end_time: Timestamp when job completed or failed
         job_type: Type of extraction ('telegram' or 'instagram')
         metadata: Additional request parameters and metadata
-    
+
     Example:
         >>> job = Job(
         ...     job_id="550e8400-e29b-41d4-a716-446655440000",
@@ -97,25 +97,46 @@ class Job:
         ...     metadata={"api_id": "12345", "limit": 100}
         ... )
     """
-    
+
     job_id: str
     status: ExtractionStatus
     progress: int = 0
     messages_processed: int = 0
-    errors: List[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
     start_time: datetime = field(default_factory=datetime.now)
-    end_time: Optional[datetime] = None
-    job_type: str = ""  # 'telegram' or 'instagram'
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    end_time: datetime | None = None
+    job_type: str = ""  # job kind, e.g. 'telegram_extract' (legacy: 'telegram')
+    metadata: dict[str, Any] = field(default_factory=dict)
+    result: dict[str, Any] | None = None
+    error_code: str | None = None
+    total: int | None = None
+    message: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the JSON payload used by the status endpoint and WebSocket events."""
+        return {
+            "job_id": self.job_id,
+            "job_type": self.job_type,
+            "status": self.status.value,
+            "progress": self.progress,
+            "messages_processed": self.messages_processed,
+            "total": self.total,
+            "message": self.message,
+            "errors": list(self.errors),
+            "error_code": self.error_code,
+            "result": self.result,
+            "started_at": self.start_time.isoformat(),
+            "finished_at": self.end_time.isoformat() if self.end_time else None,
+        }
 
 
 class JobManager:
     """
     Thread-safe manager for extraction job lifecycle.
-    
+
     This class provides a singleton pattern for managing extraction jobs in memory,
     with thread-safe operations for creating, updating, and retrieving job status.
-    
+
     Example:
         >>> manager = JobManager()
         >>> job_id = manager.create_job('telegram', {'limit': 100})
@@ -124,24 +145,24 @@ class JobManager:
         >>> print(f"Progress: {job.progress}%")
         Progress: 50%
     """
-    
+
     def __init__(self):
         """Initialize JobManager with empty job store and lock."""
-        self._jobs: Dict[str, Job] = {}
+        self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
         logger.info("JobManager initialized")
-    
-    def create_job(self, job_type: str, metadata: Dict[str, Any]) -> str:
+
+    def create_job(self, job_type: str, metadata: dict[str, Any]) -> str:
         """
         Create a new extraction job with PENDING status.
-        
+
         Args:
             job_type: Type of extraction ('telegram' or 'instagram')
             metadata: Dictionary containing non-sensitive request metadata.
-        
+
         Returns:
             Generated job_id (UUID string)
-        
+
         Example:
             >>> manager = JobManager()
             >>> job_id = manager.create_job('telegram', {
@@ -157,23 +178,23 @@ class JobManager:
             job_type=job_type,
             metadata=safe_metadata,
         )
-        
+
         with self._lock:
             self._jobs[job_id] = job
-        
+
         logger.info(f"Created {job_type} job {job_id}")
         return job_id
-    
-    def get_job(self, job_id: str) -> Optional[Job]:
+
+    def get_job(self, job_id: str) -> Job | None:
         """
         Retrieve a job by its ID.
-        
+
         Args:
             job_id: UUID string of the job
-        
+
         Returns:
             Job object if found, None otherwise
-        
+
         Example:
             >>> job = manager.get_job('550e8400-e29b-41d4-a716-446655440000')
             >>> if job:
@@ -181,28 +202,28 @@ class JobManager:
         """
         with self._lock:
             return self._jobs.get(job_id)
-    
+
     def update_job_status(
         self,
         job_id: str,
         status: ExtractionStatus,
         progress: int,
         messages_processed: int,
-        errors: Optional[List[str]] = None,
+        errors: list[str] | None = None,
     ) -> None:
         """
         Update job status, progress, and error information atomically.
-        
+
         Args:
             job_id: UUID string of the job
             status: New ExtractionStatus
             progress: Progress percentage (0-100)
             messages_processed: Number of items processed so far
             errors: Optional list of error messages to append
-        
+
         Raises:
             ValueError: If job_id not found
-        
+
         Example:
             >>> manager.update_job_status(
             ...     job_id,
@@ -216,30 +237,72 @@ class JobManager:
             job = self._jobs.get(job_id)
             if job is None:
                 raise ValueError(f"Job {job_id} not found")
-            
+
             job.status = status
             job.progress = min(100, max(0, progress))
             job.messages_processed = messages_processed
-            
+
             if errors:
                 job.errors.extend(errors)
-        
+
         logger.info(
             f"Updated job {job_id}: status={status}, progress={progress}%, "
             f"processed={messages_processed}"
         )
-    
-    def mark_job_completed(self, job_id: str, messages_processed: int) -> None:
+
+    def set_progress(
+        self,
+        job_id: str,
+        processed: int,
+        total: int | None = None,
+        message: str | None = None,
+    ) -> Job:
+        """
+        Record live progress of a running job.
+
+        Args:
+            job_id: UUID string of the job
+            processed: Items handled so far
+            total: Expected total, if known (drives the percentage)
+            message: Short status text
+
+        Returns:
+            The updated job.
+
+        Raises:
+            ValueError: If job_id not found
+        """
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                raise ValueError(f"Job {job_id} not found")
+            job.status = ExtractionStatus.RUNNING
+            job.messages_processed = max(0, int(processed))
+            if total is not None:
+                job.total = int(total)
+            if job.total:
+                # Never report 100 % before the job has actually finished.
+                job.progress = min(99, int(job.messages_processed * 100 / job.total))
+            job.message = message
+            return job
+
+    def mark_job_completed(
+        self,
+        job_id: str,
+        messages_processed: int,
+        result: dict[str, Any] | None = None,
+    ) -> None:
         """
         Mark a job as successfully completed.
-        
+
         Args:
             job_id: UUID string of the job
             messages_processed: Final count of processed items
-        
+            result: Optional JSON-serializable job result (service report)
+
         Raises:
             ValueError: If job_id not found
-        
+
         Example:
             >>> manager.mark_job_completed(job_id, 200)
         """
@@ -247,25 +310,37 @@ class JobManager:
             job = self._jobs.get(job_id)
             if job is None:
                 raise ValueError(f"Job {job_id} not found")
-            
+
             job.status = ExtractionStatus.COMPLETED
             job.progress = 100
             job.messages_processed = messages_processed
             job.end_time = datetime.now()
-        
+            if result is not None:
+                job.result = result
+
         logger.info(f"Job {job_id} completed: {messages_processed} items processed")
-    
-    def mark_job_failed(self, job_id: str, error: str) -> None:
+
+    def mark_job_failed(
+        self,
+        job_id: str,
+        error: str,
+        error_code: str | None = None,
+        result: dict[str, Any] | None = None,
+        messages_processed: int | None = None,
+    ) -> None:
         """
         Mark a job as failed with error message.
-        
+
         Args:
             job_id: UUID string of the job
             error: Error message describing the failure
-        
+            error_code: Machine-readable code (``auth_required``, ``rate_limited``, ...)
+            result: Optional partial result (counts of a partial run)
+            messages_processed: Optional final count of processed items
+
         Raises:
             ValueError: If job_id not found
-        
+
         Example:
             >>> manager.mark_job_failed(job_id, "Connection timeout")
         """
@@ -273,20 +348,25 @@ class JobManager:
             job = self._jobs.get(job_id)
             if job is None:
                 raise ValueError(f"Job {job_id} not found")
-            
+
             job.status = ExtractionStatus.FAILED
             job.errors.append(error)
             job.end_time = datetime.now()
-        
+            job.error_code = error_code
+            if result is not None:
+                job.result = result
+            if messages_processed is not None:
+                job.messages_processed = messages_processed
+
         logger.error(f"Job {job_id} failed: {error}")
-    
-    def list_jobs(self) -> List[Job]:
+
+    def list_jobs(self) -> list[Job]:
         """
         Retrieve all jobs (for debugging/admin purposes).
-        
+
         Returns:
             List of all Job objects
-        
+
         Example:
             >>> jobs = manager.list_jobs()
             >>> for job in jobs:
@@ -294,36 +374,36 @@ class JobManager:
         """
         with self._lock:
             return list(self._jobs.values())
-    
+
     def cleanup_old_jobs(self, max_age_hours: int = 24) -> int:
         """
         Remove jobs older than specified age to prevent memory leaks.
-        
+
         Args:
             max_age_hours: Maximum age in hours before cleanup (default: 24)
-        
+
         Returns:
             Number of jobs cleaned up
-        
+
         Example:
             >>> cleaned = manager.cleanup_old_jobs(max_age_hours=12)
             >>> print(f"Cleaned up {cleaned} old jobs")
         """
         cutoff_time = datetime.now() - timedelta(hours=max_age_hours)
         cleaned_count = 0
-        
+
         with self._lock:
             jobs_to_remove = [
                 job_id
                 for job_id, job in self._jobs.items()
                 if job.start_time < cutoff_time
             ]
-            
+
             for job_id in jobs_to_remove:
                 del self._jobs[job_id]
                 cleaned_count += 1
-        
+
         if cleaned_count > 0:
             logger.info(f"Cleaned up {cleaned_count} jobs older than {max_age_hours} hours")
-        
+
         return cleaned_count

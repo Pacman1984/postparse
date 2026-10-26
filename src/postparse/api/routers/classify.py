@@ -1,16 +1,23 @@
 """
 FastAPI router for classification endpoints.
 
-All endpoints run on the generic :class:`~postparse.classification.TaxonomyClassifier`:
+All endpoints run on the shared :class:`~postparse.services.classification.ClassificationService`
+and its cached :class:`~postparse.classification.TaxonomyClassifier` instances:
 
 - ``/recipe`` and ``/batch``: ad-hoc single-label taxonomy ``recipe`` / ``not_recipe``
 - ``/multi`` and ``/multi/batch``: ad-hoc single-label taxonomy from the request
   ``classes`` (default: labels of the configured ``topics`` taxonomy)
 - ``/multilabel`` and ``/multilabel/batch``: the same as multi-label taxonomy
 - ``/classifiers``: configured taxonomies and providers
+- ``/run``: background job classifying pending database items (``postparse classify run``)
+- ``/{taxonomy}`` and ``/{taxonomy}/batch``: classify texts into a configured or
+  stored taxonomy; ``persist=true`` stores the results for ``item_id(s)`` as a
+  classification run
 
-Nothing is persisted here; database classification runs through
-``postparse classify run`` / :class:`~postparse.services.classification.ClassificationService`.
+Batch responses list every input as ``{input_index, ok, result | error}``; one
+failing input never fails the request. Taxonomy names ``recipe``, ``batch``,
+``multi``, ``multilabel``, ``classifiers`` and ``run`` are shadowed by the
+fixed routes above.
 """
 
 import logging
@@ -18,16 +25,23 @@ import time
 from collections.abc import Callable, Mapping
 from typing import Any
 
+import anyio
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from postparse.api.dependencies import (
     RECIPE_SPEC,
     ClassifierFactory,
+    get_cache_manager,
+    get_classification_service,
     get_classifier_factory,
     get_config,
+    get_job_runner,
     get_optional_auth,
     get_taxonomies,
 )
+from postparse.api.jobs.kinds import classify_job
+from postparse.api.jobs.runner import JobRunner
+from postparse.api.routers._common import accepted, item_filter_or_400
 from postparse.api.schemas import (
     BatchClassifyRequest,
     BatchClassifyResponse,
@@ -35,6 +49,8 @@ from postparse.api.schemas import (
     ClassifyResponse,
 )
 from postparse.api.schemas.classify import (
+    BatchItemError,
+    BatchItemResult,
     BatchMultiClassifyRequest,
     BatchMultiClassifyResponse,
     BatchMultiLabelClassifyRequest,
@@ -45,6 +61,18 @@ from postparse.api.schemas.classify import (
     MultiLabelClassifyRequest,
     MultiLabelClassifyResponse,
 )
+from postparse.api.schemas.pipeline import (
+    ClassifyRunRequest,
+    JobAcceptedResponse,
+    LabelScore,
+    PersistedInfo,
+    TaxonomyBatchRequest,
+    TaxonomyBatchResponse,
+    TaxonomyClassifyRequest,
+    TaxonomyClassifyResponse,
+    drop_none,
+)
+from postparse.api.services.cache_manager import CacheManager
 from postparse.classification import (
     DEFAULT_TAXONOMY,
     ClassificationError,
@@ -52,9 +80,9 @@ from postparse.classification import (
     TaxonomyClassifier,
     TaxonomySpec,
 )
-from postparse.core.utils.config import ConfigManager
 from postparse.llm.client import api_type_for, max_concurrency_for, output_mode_for
 from postparse.llm.config import LLMConfig
+from postparse.services.classification import ClassificationService
 
 logger = logging.getLogger(__name__)
 
@@ -197,21 +225,37 @@ def _multilabel_response(
     )
 
 
+def _batch_error(outcome: ClassificationOutcome) -> BatchItemError:
+    """Error object of a failed batch input."""
+    if outcome.status == "empty":
+        return BatchItemError(code="empty_text", message="Text is empty")
+    return BatchItemError(code="llm_error", message=outcome.error or "Classification failed")
+
+
 async def _run_batch(
     classifier: TaxonomyClassifier,
     texts: list[str],
     build: Callable[..., Any],
-) -> tuple[list[Any], int]:
-    """Classify a batch with the classifier's concurrency; returns (results, failed)."""
+) -> tuple[list[Any], list[BatchItemResult], int]:
+    """Classify a batch with the classifier's concurrency.
+
+    Returns:
+        ``(successful results, per-input outcomes, failed count)``. One failing
+        input never fails the request.
+    """
     outcomes = await classifier.aclassify_many(texts)
     results: list[Any] = []
+    items: list[BatchItemResult] = []
     failed = 0
     for index, outcome in enumerate(outcomes):
         if not outcome.succeeded:
             failed += 1
+            items.append(BatchItemResult(input_index=index, ok=False, error=_batch_error(outcome)))
             continue
-        results.append(build(outcome, classifier, outcome.latency_s, index))
-    return results, failed
+        built = build(outcome, classifier, outcome.latency_s, index)
+        results.append(built)
+        items.append(BatchItemResult(input_index=index, ok=True, result=built.model_dump()))
+    return results, items, failed
 
 
 # ---------------------------------------------------------------------------
@@ -272,9 +316,10 @@ async def classify_batch(
     """Classify multiple texts as recipe or non-recipe."""
     start = time.perf_counter()
     classifier = _get_classifier(factory, RECIPE_SPEC, request.provider_name)
-    results, failed = await _run_batch(classifier, request.texts, _recipe_response)
+    results, items, failed = await _run_batch(classifier, request.texts, _recipe_response)
     return BatchClassifyResponse(
         results=results,
+        items=items,
         total_processed=len(request.texts),
         failed_count=failed,
         total_processing_time=time.perf_counter() - start,
@@ -337,9 +382,10 @@ async def classify_multi_batch(
     start = time.perf_counter()
     spec = _adhoc_spec(request.classes, taxonomies, mode="single")
     classifier = _get_classifier(factory, spec, request.provider_name)
-    results, failed = await _run_batch(classifier, request.texts, _multi_response)
+    results, items, failed = await _run_batch(classifier, request.texts, _multi_response)
     return BatchMultiClassifyResponse(
         results=results,
+        items=items,
         total_processed=len(request.texts),
         failed_count=failed,
         total_processing_time=time.perf_counter() - start,
@@ -390,9 +436,10 @@ async def classify_multilabel_batch(
     start = time.perf_counter()
     spec = _adhoc_spec(request.classes, taxonomies, mode="multi")
     classifier = _get_classifier(factory, spec, request.provider_name)
-    results, failed = await _run_batch(classifier, request.texts, _multilabel_response)
+    results, items, failed = await _run_batch(classifier, request.texts, _multilabel_response)
     return BatchMultiLabelClassifyResponse(
         results=results,
+        items=items,
         total_processed=len(request.texts),
         failed_count=failed,
         total_processing_time=time.perf_counter() - start,
@@ -410,37 +457,36 @@ async def classify_multilabel_batch(
     summary="List available classifiers",
     description="List classifier endpoints, configured taxonomies and LLM providers.",
 )
-async def list_classifiers(
-    config: ConfigManager = Depends(get_config),
+def list_classifiers(
+    config: Any = Depends(get_config),
+    service: ClassificationService = Depends(get_classification_service),
     user: dict | None = Depends(get_optional_auth),
 ) -> dict[str, list[dict[str, Any]]]:
     """List available classifiers, taxonomies and providers."""
     providers: list[dict[str, Any]] = []
     try:
-        llm_config = LLMConfig.from_config_manager(config)
-        providers = [
-            {
-                "name": provider.name,
-                "status": "configured",
-                "default": provider.name == llm_config.default_provider,
-                "model": provider.model,
-                "api_type": api_type_for(provider),
-                "output_mode": output_mode_for(provider),
-                "max_concurrency": max_concurrency_for(provider),
-            }
-            for provider in llm_config.providers
-        ]
+        llm_config = service.llm_config or (
+            LLMConfig.from_config_manager(config) if config is not None else None
+        )
+        if llm_config is not None:
+            providers = [
+                {
+                    "name": provider.name,
+                    "status": "configured",
+                    "default": provider.name == llm_config.default_provider,
+                    "model": provider.model,
+                    "api_type": api_type_for(provider),
+                    "output_mode": output_mode_for(provider),
+                    "max_concurrency": max_concurrency_for(provider),
+                }
+                for provider in llm_config.providers
+            ]
     except (ValueError, TypeError) as exc:
         # pydantic.ValidationError is a ValueError subclass. A broken LLM config
         # must not turn the listing into a 500; report what is available.
         logger.warning("Could not load LLM provider configuration: %s", exc)
 
-    taxonomies: list[dict[str, Any]] = []
-    try:
-        taxonomies = [spec.to_dict() for spec in get_taxonomies(config).values()]
-    except ValueError as exc:
-        logger.warning("Could not load taxonomies: %s", exc)
-
+    taxonomies = [spec.to_dict() for spec in service.taxonomies.values()]
     return {
         "classifiers": [
             {
@@ -461,7 +507,215 @@ async def list_classifiers(
                 "description": "Multi-label classification (0..N labels per text)",
                 "endpoint": "/api/v1/classify/multilabel",
             },
+            {
+                "type": "taxonomy",
+                "name": "taxonomy",
+                "description": "Classification into a configured taxonomy (optionally persisted)",
+                "endpoint": "/api/v1/classify/{taxonomy}",
+            },
         ],
         "taxonomies": taxonomies,
         "providers": providers,
     }
+
+
+# ---------------------------------------------------------------------------
+# Persisted classification runs (job)
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/run",
+    response_model=JobAcceptedResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Start a classification run",
+    description="""
+    Classify pending database items of a taxonomy in the background and store
+    the results (`postparse classify run`). `scope`: `default` (new and never
+    classified items), `backfill` (everything not done for the current label
+    set) or `reprocess` (everything matching `filters`).
+    """,
+)
+async def run_classification(
+    request: ClassifyRunRequest,
+    service: ClassificationService = Depends(get_classification_service),
+    runner: JobRunner = Depends(get_job_runner),
+    user: dict | None = Depends(get_optional_auth),
+) -> JobAcceptedResponse:
+    """Start the job."""
+    await _spec_or_404(service, request.taxonomy)
+    item_filter = None
+    if request.filters is not None:
+        f = request.filters
+        item_filter = item_filter_or_400(
+            q=f.q, source=f.source, tags=f.tags, authors=f.authors, kinds=f.kinds,
+            labels=f.labels, date_from=f.date_from, date_to=f.date_to,
+            has_transcript=f.has_transcript,
+        )
+    job_id = runner.submit(
+        "classify",
+        drop_none(request.model_dump()),
+        classify_job(
+            service, taxonomy=request.taxonomy, scope=request.scope, filters=item_filter,
+            limit=request.limit, provider=request.provider,
+            wait_for_transcripts=request.wait_for_transcripts,
+        ),
+        total=request.limit,
+    )
+    return accepted(job_id, "classify")
+
+
+# ---------------------------------------------------------------------------
+# Taxonomy classification
+# ---------------------------------------------------------------------------
+
+
+async def _spec_or_404(service: ClassificationService, name: str) -> TaxonomySpec:
+    """Resolve a configured/stored taxonomy (may read the database: worker thread)."""
+    try:
+        return await anyio.to_thread.run_sync(service.taxonomy_spec, name)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc.args[0] if exc.args else exc)
+        ) from exc
+
+
+def _taxonomy_result(
+    outcome: ClassificationOutcome,
+    classifier: TaxonomyClassifier,
+    elapsed: float,
+) -> TaxonomyClassifyResponse:
+    return TaxonomyClassifyResponse(
+        taxonomy=classifier.spec.name,
+        mode=classifier.spec.mode,
+        status=outcome.status,
+        label=outcome.label,
+        labels=[LabelScore(label=lb, confidence=c) for lb, c in outcome.label_scores()],
+        confidence=outcome.confidence,
+        reasoning=outcome.reasoning,
+        available_labels=list(classifier.spec.label_names),
+        provider=classifier.provider_name,
+        model=classifier.model_name,
+        processing_time=elapsed,
+    )
+
+
+async def _persist(
+    service: ClassificationService,
+    cache: CacheManager,
+    taxonomy: str,
+    outcomes: list[tuple[int, ClassificationOutcome]],
+    classifier: TaxonomyClassifier,
+) -> PersistedInfo:
+    """Store outcomes as one run (worker thread) and invalidate the cache."""
+
+    def store() -> PersistedInfo:
+        run_id, persisted = service.persist_outcomes(
+            taxonomy, outcomes, classifier=classifier
+        )
+        cache.invalidate()
+        return PersistedInfo(run_id=run_id, result_ids=[p.result_id for p in persisted])
+
+    try:
+        return await anyio.to_thread.run_sync(store)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc.args[0] if exc.args else exc)
+        ) from exc
+
+
+@router.post(
+    "/{taxonomy}",
+    response_model=TaxonomyClassifyResponse,
+    summary="Classify a text into a taxonomy",
+    description="""
+    Classify `text` into a configured (or stored) taxonomy, e.g. `topics`.
+    With `persist=true` the result is stored for `item_id` as a classification
+    run and becomes the item's current classification.
+    """,
+)
+async def classify_taxonomy(
+    taxonomy: str,
+    request: TaxonomyClassifyRequest,
+    service: ClassificationService = Depends(get_classification_service),
+    factory: ClassifierFactory = Depends(get_classifier_factory),
+    cache: CacheManager = Depends(get_cache_manager),
+    user: dict | None = Depends(get_optional_auth),
+) -> TaxonomyClassifyResponse:
+    """Classify one text."""
+    if request.persist and request.item_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="persist=true requires item_id"
+        )
+    start = time.perf_counter()
+    spec = await _spec_or_404(service, taxonomy)
+    classifier = _get_classifier(factory, spec, request.provider_name)
+    outcome = await _classify(classifier, request.text, "Classification")
+    response = _taxonomy_result(outcome, classifier, time.perf_counter() - start)
+    if request.persist:
+        assert request.item_id is not None
+        response.persisted = await _persist(
+            service, cache, taxonomy, [(request.item_id, outcome)], classifier
+        )
+    return response
+
+
+@router.post(
+    "/{taxonomy}/batch",
+    response_model=TaxonomyBatchResponse,
+    summary="Classify several texts into a taxonomy",
+    description="""
+    Up to 100 texts. `results` lists every input as `{input_index, ok, result
+    | error{code, message}}` (codes: `empty_text`, `llm_error`). With
+    `persist=true`, `item_ids` (same length as `texts`) are required; failed
+    inputs are stored as `error` results and stay pending.
+    """,
+)
+async def classify_taxonomy_batch(
+    taxonomy: str,
+    request: TaxonomyBatchRequest,
+    service: ClassificationService = Depends(get_classification_service),
+    factory: ClassifierFactory = Depends(get_classifier_factory),
+    cache: CacheManager = Depends(get_cache_manager),
+    user: dict | None = Depends(get_optional_auth),
+) -> TaxonomyBatchResponse:
+    """Classify several texts."""
+    if request.item_ids is not None and len(request.item_ids) != len(request.texts):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="item_ids must have the same length as texts",
+        )
+    if request.persist and request.item_ids is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="persist=true requires item_ids"
+        )
+    start = time.perf_counter()
+    spec = await _spec_or_404(service, taxonomy)
+    classifier = _get_classifier(factory, spec, request.provider_name)
+    outcomes = await classifier.aclassify_many(request.texts)
+    results: list[BatchItemResult] = []
+    failed = 0
+    for index, outcome in enumerate(outcomes):
+        if outcome.succeeded:
+            body = _taxonomy_result(outcome, classifier, outcome.latency_s).model_dump()
+            results.append(BatchItemResult(input_index=index, ok=True, result=body))
+        else:
+            failed += 1
+            results.append(
+                BatchItemResult(input_index=index, ok=False, error=_batch_error(outcome))
+            )
+    persisted = None
+    if request.persist:
+        assert request.item_ids is not None
+        persisted = await _persist(
+            service, cache, taxonomy, list(zip(request.item_ids, outcomes, strict=True)),
+            classifier,
+        )
+    return TaxonomyBatchResponse(
+        taxonomy=spec.name,
+        results=results,
+        total_processed=len(request.texts),
+        failed_count=failed,
+        total_processing_time=time.perf_counter() - start,
+        persisted=persisted,
+    )

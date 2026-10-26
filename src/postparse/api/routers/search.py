@@ -1,38 +1,172 @@
+"""Search endpoints over schema v2 items (via :class:`QueryService`).
+
+``/posts`` (Instagram) and ``/messages`` (Telegram) keep their response
+format; filters are query parameters: ``hashtags``/``tags`` (repeatable, any
+of), ``start_date``/``end_date`` (``YYYY-MM-DD`` or ISO datetime, inclusive),
+``content_type``, ``owner_username``/``channel_username`` (author), ``q``
+(full text) plus keyset pagination with ``cursor``. Results are cached when
+``[api.cache] enabled`` (``X-Cache-Status: HIT|MISS``); jobs and persisted
+classifications invalidate the cache.
 """
-FastAPI router for search endpoints.
 
-This module provides HTTP endpoints for searching Instagram posts and
-Telegram messages with various filters and cursor-based pagination.
-"""
+from __future__ import annotations
 
-from datetime import datetime as dt
-from typing import Dict, Any, List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status, Response
+import dataclasses
+import logging
+from collections.abc import Callable
+from datetime import UTC, date, datetime
+from typing import Any
 
-from postparse.core.data.database import SocialMediaDatabase
-from postparse.api.dependencies import get_db, get_optional_auth, get_cache_manager
-from postparse.api.services.cache_manager import CacheManager
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+
+from postparse.api.dependencies import get_cache_manager, get_optional_auth, get_query_service
+from postparse.api.routers._common import CONTENT_TYPE_KINDS, item_filter_or_400
 from postparse.api.schemas import (
-    SearchPostsRequest,
-    SearchMessagesRequest,
-    SearchResponse,
-    PostSearchResult,
+    ContentTypeFilter,
     MessageSearchResult,
     PaginationMetadata,
+    PostSearchResult,
+    SearchResponse,
 )
-import logging
+from postparse.api.services.cache_manager import CacheManager
+from postparse.core.db.models import ItemFilter
+from postparse.services.query import InvalidCursorError, ItemView, QueryService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/v1/search",
     tags=["search"],
-    responses={
-        400: {"description": "Invalid request"},
-        401: {"description": "Unauthorized"},
-        500: {"description": "Internal server error"},
-    },
+    responses={400: {"description": "Invalid request"}, 401: {"description": "Unauthorized"}},
 )
+
+
+def _parse_bound(value: str | None, name: str) -> date | datetime | None:
+    """Parse ``YYYY-MM-DD`` (whole day) or an ISO datetime (naive = UTC)."""
+    if not value:
+        return None
+    try:
+        if len(value) == 10:
+            return date.fromisoformat(value)
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid {name} {value!r}; use YYYY-MM-DD or an ISO datetime",
+        ) from exc
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def _as_datetime(value: date | datetime) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    return datetime(value.year, value.month, value.day, tzinfo=UTC)
+
+
+def _build_filter(
+    source: str,
+    *,
+    tags: list[str],
+    authors: list[str],
+    content_type: ContentTypeFilter | None,
+    start_date: str | None,
+    end_date: str | None,
+    q: str | None,
+) -> ItemFilter:
+    kinds = CONTENT_TYPE_KINDS[content_type.value] if content_type else ()
+    base = item_filter_or_400(source=source, tags=tags, authors=authors, kinds=kinds, q=q)
+    start = _parse_bound(start_date, "start_date")
+    end = _parse_bound(end_date, "end_date")
+    if start is not None and end is not None and _as_datetime(start) > _as_datetime(end):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="start_date is after end_date"
+        )
+    return dataclasses.replace(base, date_from=start, date_to=end)
+
+
+def _filters_applied(**values: Any) -> dict[str, Any]:
+    return {k: v for k, v in values.items() if v not in (None, [], "")}
+
+
+def _search(
+    resource: str,
+    response: Response,
+    cache: CacheManager,
+    query: QueryService,
+    item_filter: ItemFilter,
+    *,
+    cursor: str | None,
+    limit: int,
+    filters_applied: dict[str, Any],
+    convert: Callable[[list[ItemView], QueryService], list[Any]],
+) -> dict[str, Any]:
+    """Run (or fetch from cache) one search and return the response payload."""
+    key = cache.key(resource, filters=filters_applied, cursor=cursor, limit=limit)
+    cached = cache.get(key)
+    if cached is not None:
+        response.headers["X-Cache-Status"] = "HIT"
+        return cached
+    response.headers["X-Cache-Status"] = "MISS"
+    try:
+        page = query.search(item_filter, cursor=cursor, limit=limit)
+    except InvalidCursorError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid cursor: {exc}"
+        ) from exc
+    payload = SearchResponse[Any](
+        results=convert(page.items, query),
+        total_count=query.count(item_filter),
+        filters_applied=filters_applied,
+        pagination=PaginationMetadata(
+            cursor=cursor, next_cursor=page.next_cursor,
+            has_more=page.next_cursor is not None, limit=limit,
+        ),
+    ).model_dump(mode="json")
+    cache.set(key, payload, ttl=cache.search_ttl)
+    return payload
+
+
+def _hashtags(view: ItemView) -> list[str]:
+    return [t[1:] for t in view.tags if t.startswith("#")]
+
+
+def _posts(views: list[ItemView], query: QueryService) -> list[PostSearchResult]:
+    details = query.source_details([v.id for v in views])
+    results = []
+    for v in views:
+        ig, _, media = details[v.id]
+        results.append(PostSearchResult(
+            shortcode=ig.shortcode if ig else v.external_id,
+            owner_username=v.author or "",
+            caption=v.text[:200] if v.text else None,
+            is_video=v.kind == "video" or any(m.media_type == "video" for m in media),
+            likes=max(0, (ig.likes if ig else 0) or 0),
+            hashtags=_hashtags(v),
+            created_at=v.created_at,
+            item_id=v.id,
+            snippet=v.snippet,
+        ))
+    return results
+
+
+def _messages(views: list[ItemView], query: QueryService) -> list[MessageSearchResult]:
+    details = query.source_details([v.id for v in views])
+    results = []
+    for v in views:
+        _, tg, _ = details[v.id]
+        tail = v.external_id.rpartition(":")[2]
+        results.append(MessageSearchResult(
+            message_id=tg.message_id if tg else (int(tail) if tail.isdigit() else 0),
+            chat_id=tg.chat_id if tg else None,
+            channel_username=v.author,
+            content=v.text[:200] if v.text else None,
+            content_type=v.kind,
+            hashtags=_hashtags(v),
+            created_at=v.created_at,
+            item_id=v.id,
+            snippet=v.snippet,
+        ))
+    return results
 
 
 @router.get(
@@ -40,182 +174,42 @@ router = APIRouter(
     response_model=SearchResponse[PostSearchResult],
     summary="Search Instagram posts",
     description="""
-    Search Instagram posts with advanced filters and cursor-based pagination.
-    
-    Supports:
-    - Multiple hashtags with OR logic (matches any hashtag)
-    - Date range filtering
-    - Content type filtering (image, video)
-    - Owner username filtering
-    - Cursor-based pagination for efficient navigation
-    - Redis caching for improved performance
-    
-    Returns paginated search results with filter metadata and cache status headers.
+    Filters (all combined with AND): `hashtags`/`tags` (repeatable, any of),
+    `start_date`/`end_date`, `content_type` (`image` includes carousels),
+    `owner_username`, `q` (full text; quoted phrases and `prefix*`). Results
+    are newest first; posts without a date sort by collection time.
     """,
 )
-async def search_posts(
+def search_posts(
     response: Response,
-    request: SearchPostsRequest = Depends(),
-    db: SocialMediaDatabase = Depends(get_db),
+    hashtags: list[str] = Query(default=[], description="Hashtags (any of)"),
+    tags: list[str] = Query(default=[], description="Tags: #hashtag, @mention or name"),
+    start_date: str | None = Query(default=None, description="From (inclusive)"),
+    end_date: str | None = Query(default=None, description="To (inclusive)"),
+    content_type: ContentTypeFilter | None = Query(default=None),
+    owner_username: str | None = Query(default=None, description="Post owner"),
+    q: str | None = Query(default=None, description="Full-text query"),
+    limit: int = Query(default=50, ge=1, le=100),
+    cursor: str | None = Query(default=None, description="next_cursor of the previous page"),
+    query: QueryService = Depends(get_query_service),
     cache: CacheManager = Depends(get_cache_manager),
-    user: Dict[str, Any] = Depends(get_optional_auth),
-) -> SearchResponse[PostSearchResult]:
-    """
-    Search Instagram posts with advanced filters and cursor-based pagination.
-    
-    This endpoint supports combined filtering with multiple criteria:
-    - Hashtags: OR logic (matches posts with any of the specified hashtags)
-    - Date range: Filters posts created within the specified time window
-    - Content type: Filters by media type (video or image)
-    - Owner username: Filters posts by owner
-    
-    Implements cursor-based pagination for efficient large result set traversal.
-    Results are cached with Redis for improved performance on repeated queries.
-    
-    Args:
-        response: FastAPI Response object for setting headers.
-        request: SearchPostsRequest containing all query parameters.
-        db: Database instance (injected dependency).
-        cache: CacheManager for caching results.
-        user: Optional authenticated user info.
-        
-    Returns:
-        SearchResponse with filtered posts and metadata.
-        
-    Example:
-        GET /api/v1/search/posts?hashtags=recipe&hashtags=cooking&content_type=video&limit=20
-        
-        Response:
-        {
-            "results": [...],
-            "total_count": 150,
-            "filters_applied": {
-                "hashtags": ["recipe", "cooking"],
-                "content_type": "video"
-            },
-            "pagination": {
-                "cursor": null,
-                "next_cursor": "MjAyNC0wMS0xNVQxMDozMDowMHwxMjM=",
-                "has_more": true,
-                "limit": 20
-            }
-        }
-    """
-    # Build filter parameters for database query
-    date_range_tuple = None
-    if request.date_range:
-        date_range_tuple = (request.date_range.start_date, request.date_range.end_date)
-    
-    content_type_str = request.content_type.value if request.content_type else None
-    
-    # Generate cache key from filters
-    cache_key = cache.generate_cache_key(
-        "search:posts",
-        hashtags=request.hashtags,
-        date_range=date_range_tuple,
-        content_type=content_type_str,
-        owner_username=request.owner_username,
-        limit=request.limit,
-        cursor=request.cursor
+    user: dict[str, Any] | None = Depends(get_optional_auth),
+) -> dict[str, Any]:
+    """Search Instagram posts."""
+    all_tags = [*hashtags, *tags]
+    item_filter = _build_filter(
+        "instagram", tags=all_tags, authors=[owner_username] if owner_username else [],
+        content_type=content_type, start_date=start_date, end_date=end_date, q=q,
     )
-    
-    # Check cache first
-    cached_result = None
-    if cache.is_available():
-        cached_result = cache.get(cache_key)
-        if cached_result:
-            logger.debug(f"Cache hit for key: {cache_key}")
-            response.headers["X-Cache-Status"] = "HIT"
-            return SearchResponse(**cached_result)
-    
-    # Cache miss - query database
-    logger.debug(f"Cache miss for key: {cache_key}")
-    response.headers["X-Cache-Status"] = "MISS"
-    
-    # Validate cursor if provided
-    if request.cursor:
-        try:
-            db._decode_cursor(request.cursor)
-        except ValueError as e:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid cursor: {str(e)}"
-            )
-    
-    # Search database with all filters
-    posts, next_cursor = db.search_instagram_posts(
-        hashtags=request.hashtags,
-        date_range=date_range_tuple,
-        content_type=content_type_str,
-        owner_username=request.owner_username,
-        limit=request.limit,
-        cursor=request.cursor
+    applied = _filters_applied(
+        hashtags=all_tags,
+        date_range=({"start_date": start_date, "end_date": end_date}
+                    if start_date or end_date else None),
+        content_type=content_type.value if content_type else None,
+        owner_username=owner_username, q=q,
     )
-    
-    # Convert to search result schemas
-    results = []
-    for post in posts:
-        # Parse created_at timestamp
-        created_at = post.get("created_at")
-        if isinstance(created_at, str) and created_at.strip():
-            try:
-                created_at = dt.fromisoformat(created_at.replace('Z', '+00:00'))
-            except (ValueError, AttributeError):
-                created_at = None
-        else:
-            created_at = None
-        
-        results.append(PostSearchResult(
-            shortcode=post.get("shortcode", ""),
-            owner_username=post.get("owner_username", ""),
-            caption=post.get("caption", "")[:200] if post.get("caption") else None,
-            is_video=post.get("is_video", False),
-            likes=post.get("likes", 0),
-            hashtags=post.get("hashtags", []),
-            created_at=created_at,
-        ))
-    
-    # Build filters_applied dict
-    filters_applied = {}
-    if request.hashtags:
-        filters_applied["hashtags"] = request.hashtags
-    if request.date_range:
-        filters_applied["date_range"] = {
-            "start_date": request.date_range.start_date.isoformat(),
-            "end_date": request.date_range.end_date.isoformat()
-        }
-    if request.content_type:
-        filters_applied["content_type"] = request.content_type.value
-    if request.owner_username:
-        filters_applied["owner_username"] = request.owner_username
-    
-    # Get total count with filters
-    total_count = db.count_instagram_posts_filtered(
-        hashtags=request.hashtags,
-        date_range=date_range_tuple,
-        content_type=content_type_str,
-        owner_username=request.owner_username
-    )
-    
-    # Build response
-    response_data = SearchResponse(
-        results=results,
-        total_count=total_count,
-        filters_applied=filters_applied,
-        pagination=PaginationMetadata(
-            cursor=request.cursor,
-            next_cursor=next_cursor,
-            has_more=next_cursor is not None,
-            limit=request.limit
-        ),
-    )
-    
-    # Cache the result
-    if cache.is_available():
-        search_ttl = cache.config.get("api.cache.search_ttl", default=600)
-        cache.set(cache_key, response_data.model_dump(), ttl=search_ttl)
-    
-    return response_data
+    return _search("search:posts", response, cache, query, item_filter, cursor=cursor,
+                   limit=limit, filters_applied=applied, convert=_posts)
 
 
 @router.get(
@@ -223,249 +217,63 @@ async def search_posts(
     response_model=SearchResponse[MessageSearchResult],
     summary="Search Telegram messages",
     description="""
-    Search Telegram messages with advanced filters and cursor-based pagination.
-    
-    Supports:
-    - Multiple hashtags with OR logic (matches any hashtag)
-    - Date range filtering
-    - Content type filtering (text, photo, video, document)
-    - Cursor-based pagination for efficient navigation
-    - Redis caching for improved performance
-    
-    Note: Channel username filtering is NOT supported as the underlying database
-    schema does not store channel username information. Requests with channel_username
-    will be rejected with a 400 error. Results include chat_id (numeric identifier)
-    which can be used to identify the source chat/channel.
-    
-    Returns paginated search results with filter metadata and cache status headers.
+    Filters (all combined with AND): `hashtags`/`tags`, `start_date`/`end_date`,
+    `content_type`, `channel_username` (author: forwarded-from name), `q`.
     """,
 )
-async def search_messages(
+def search_messages(
     response: Response,
-    request: SearchMessagesRequest = Depends(),
-    db: SocialMediaDatabase = Depends(get_db),
+    hashtags: list[str] = Query(default=[], description="Hashtags (any of)"),
+    tags: list[str] = Query(default=[], description="Tags: #hashtag, @mention or name"),
+    start_date: str | None = Query(default=None, description="From (inclusive)"),
+    end_date: str | None = Query(default=None, description="To (inclusive)"),
+    content_type: ContentTypeFilter | None = Query(default=None),
+    channel_username: str | None = Query(default=None, description="Author / channel"),
+    q: str | None = Query(default=None, description="Full-text query"),
+    limit: int = Query(default=50, ge=1, le=100),
+    cursor: str | None = Query(default=None, description="next_cursor of the previous page"),
+    query: QueryService = Depends(get_query_service),
     cache: CacheManager = Depends(get_cache_manager),
-    user: Dict[str, Any] = Depends(get_optional_auth),
-) -> SearchResponse[MessageSearchResult]:
-    """
-    Search Telegram messages with advanced filters and cursor-based pagination.
-    
-    This endpoint supports combined filtering with multiple criteria:
-    - Hashtags: OR logic (matches messages with any of the specified hashtags)
-    - Date range: Filters messages created within the specified time window
-    - Content type: Filters by content type (text/photo/video/document)
-    
-    Note: Channel username filtering is NOT supported as the underlying database
-    schema does not store channel username information. Results include chat_id
-    (numeric identifier) which can be used to identify the source chat/channel.
-    
-    Implements cursor-based pagination for efficient large result set traversal.
-    Results are cached with Redis for improved performance on repeated queries.
-    
-    Args:
-        response: FastAPI Response object for setting headers.
-        request: SearchMessagesRequest containing all query parameters.
-        db: Database instance (injected dependency).
-        cache: CacheManager for caching results.
-        user: Optional authenticated user info.
-        
-    Returns:
-        SearchResponse with filtered messages and metadata.
-        Each message result includes chat_id for identifying the source.
-        
-    Raises:
-        HTTPException: 400 if channel_username filter is provided (unsupported).
-        
-    Example:
-        GET /api/v1/search/messages?hashtags=news&content_type=photo&limit=20
-        
-        Response:
-        {
-            "results": [
-                {
-                    "message_id": 12345,
-                    "chat_id": -1001234567890,
-                    "content": "News article...",
-                    "content_type": "photo",
-                    "hashtags": ["news"],
-                    "created_at": "2024-01-15T10:30:00Z"
-                }
-            ],
-            "total_count": 89,
-            "filters_applied": {
-                "hashtags": ["news"],
-                "content_type": "photo"
-            },
-            "pagination": {
-                "cursor": null,
-                "next_cursor": "MjAyNC0wMS0xNVQxMDozMDowMHw0NTY=",
-                "has_more": true,
-                "limit": 20
-            }
-        }
-    """
-    # Validate that unsupported filters are not provided
-    if request.channel_username:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="channel_username filter is not supported. The database does not store channel information for Telegram messages."
-        )
-    
-    # Build filter parameters for database query
-    date_range_tuple = None
-    if request.date_range:
-        date_range_tuple = (request.date_range.start_date, request.date_range.end_date)
-    
-    content_type_str = request.content_type.value if request.content_type else None
-    
-    # Generate cache key from filters
-    cache_key = cache.generate_cache_key(
-        "search:messages",
-        hashtags=request.hashtags,
-        date_range=date_range_tuple,
-        content_type=content_type_str,
-        limit=request.limit,
-        cursor=request.cursor
+    user: dict[str, Any] | None = Depends(get_optional_auth),
+) -> dict[str, Any]:
+    """Search Telegram messages."""
+    all_tags = [*hashtags, *tags]
+    author = channel_username.lstrip("@") if channel_username else None
+    item_filter = _build_filter(
+        "telegram", tags=all_tags, authors=[author] if author else [],
+        content_type=content_type, start_date=start_date, end_date=end_date, q=q,
     )
-    
-    # Check cache first
-    cached_result = None
-    if cache.is_available():
-        cached_result = cache.get(cache_key)
-        if cached_result:
-            logger.debug(f"Cache hit for key: {cache_key}")
-            response.headers["X-Cache-Status"] = "HIT"
-            return SearchResponse(**cached_result)
-    
-    # Cache miss - query database
-    logger.debug(f"Cache miss for key: {cache_key}")
-    response.headers["X-Cache-Status"] = "MISS"
-    
-    # Validate cursor if provided
-    if request.cursor:
-        try:
-            db._decode_cursor(request.cursor)
-        except ValueError as e:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid cursor: {str(e)}"
-            )
-    
-    # Search database with all filters
-    messages, next_cursor = db.search_telegram_messages(
-        hashtags=request.hashtags,
-        date_range=date_range_tuple,
-        content_type=content_type_str,
-        limit=request.limit,
-        cursor=request.cursor
+    applied = _filters_applied(
+        hashtags=all_tags,
+        date_range=({"start_date": start_date, "end_date": end_date}
+                    if start_date or end_date else None),
+        content_type=content_type.value if content_type else None,
+        channel_username=author, q=q,
     )
-    
-    # Convert to search result schemas
-    results = []
-    for msg in messages:
-        # Parse created_at timestamp
-        created_at = msg.get("created_at")
-        if isinstance(created_at, str) and created_at.strip():
-            try:
-                created_at = dt.fromisoformat(created_at.replace('Z', '+00:00'))
-            except (ValueError, AttributeError):
-                created_at = None
-        else:
-            created_at = None
-        
-        results.append(MessageSearchResult(
-            message_id=msg.get("message_id", 0),
-            chat_id=msg.get("chat_id"),  # Telegram chat/channel ID
-            channel_username=None,  # Not stored in database
-            content=msg.get("content", "")[:200] if msg.get("content") else None,
-            content_type=msg.get("content_type", "text"),
-            hashtags=msg.get("hashtags", []),
-            created_at=created_at,
-        ))
-    
-    # Build filters_applied dict
-    filters_applied = {}
-    if request.hashtags:
-        filters_applied["hashtags"] = request.hashtags
-    if request.date_range:
-        filters_applied["date_range"] = {
-            "start_date": request.date_range.start_date.isoformat(),
-            "end_date": request.date_range.end_date.isoformat()
-        }
-    if request.content_type:
-        filters_applied["content_type"] = request.content_type.value
-    
-    # Get total count with filters
-    total_count = db.count_telegram_messages_filtered(
-        hashtags=request.hashtags,
-        date_range=date_range_tuple,
-        content_type=content_type_str
-    )
-    
-    # Build response
-    response_data = SearchResponse(
-        results=results,
-        total_count=total_count,
-        filters_applied=filters_applied,
-        pagination=PaginationMetadata(
-            cursor=request.cursor,
-            next_cursor=next_cursor,
-            has_more=next_cursor is not None,
-            limit=request.limit
-        ),
-    )
-    
-    # Cache the result
-    if cache.is_available():
-        search_ttl = cache.config.get("api.cache.search_ttl", default=600)
-        cache.set(cache_key, response_data.model_dump(), ttl=search_ttl)
-    
-    return response_data
+    return _search("search:messages", response, cache, query, item_filter, cursor=cursor,
+                   limit=limit, filters_applied=applied, convert=_messages)
 
 
 @router.get(
     "/hashtags",
-    response_model=Dict[str, List[Dict[str, Any]]],
-    summary="List all unique hashtags",
+    response_model=dict[str, list[dict[str, Any]]],
+    summary="List hashtags with usage counts",
     description="""
-    List all unique hashtags with usage counts.
-    
-    Returns hashtags from both Instagram posts and Telegram messages,
-    aggregated and sorted by usage count (descending).
+    Most used hashtags across both sources: `{"tag", "count", "source"}` with
+    `source` = `instagram`, `telegram` or `both`, plus per-source counts.
     """,
 )
-async def list_hashtags(
+def list_hashtags(
     limit: int = Query(default=100, ge=1, le=500, description="Maximum hashtags to return"),
-    db: SocialMediaDatabase = Depends(get_db),
-    user: Dict[str, Any] = Depends(get_optional_auth),
-) -> Dict[str, List[Dict[str, Any]]]:
-    """
-    List all unique hashtags with usage counts from database.
-    
-    Aggregates hashtags from both Instagram posts and Telegram messages,
-    counts their occurrences, and returns them sorted by count (descending).
-    
-    Args:
-        limit: Maximum number of hashtags to return.
-        db: Database instance (injected dependency).
-        user: Optional authenticated user info.
-        
-    Returns:
-        Dictionary with hashtags and their usage counts.
-        
-    Example:
-        GET /api/v1/search/hashtags?limit=50
-        
-        Response:
-        {
-            "hashtags": [
-                {"tag": "recipe", "count": 125, "source": "both"},
-                {"tag": "cooking", "count": 89, "source": "instagram"},
-                {"tag": "italian", "count": 67, "source": "telegram"}
-            ]
-        }
-    """
-    # Use database method to get all hashtags (handles connection internally)
-    hashtags = db.get_all_hashtags(limit=limit)
+    query: QueryService = Depends(get_query_service),
+    user: dict[str, Any] | None = Depends(get_optional_auth),
+) -> dict[str, list[dict[str, Any]]]:
+    """List hashtags."""
+    rows = query.tag_counts_by_source("hashtag", limit=limit)
+    hashtags = []
+    for row in rows:
+        ig, tg = int(row["instagram"]), int(row["telegram"])
+        source = "both" if ig and tg else ("instagram" if ig else "telegram")
+        hashtags.append({"tag": row["tag"], "count": row["count"], "source": source,
+                         "instagram": ig, "telegram": tg})
     return {"hashtags": hashtags}
-

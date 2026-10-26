@@ -3,7 +3,7 @@
 ## SocialMediaDatabase
 
 ```python
-from backend.postparse.core.data.database import SocialMediaDatabase
+from postparse.core.data.database import SocialMediaDatabase
 
 db = SocialMediaDatabase("data/social_media.db")
 ```
@@ -33,7 +33,7 @@ db = SocialMediaDatabase("data/social_media.db")
 ## Telegram Parser
 
 ```python
-from backend.postparse.services.parsers.telegram.telegram_parser import (
+from postparse.services.parsers.telegram.telegram_parser import (
     save_telegram_messages,
     TelegramParser,
 )
@@ -52,7 +52,7 @@ async with TelegramParser(api_id="...", api_hash="...", phone="...") as parser:
 ## Instagram Parser
 
 ```python
-from backend.postparse.services.parsers.instagram.instagram_parser import InstaloaderParser
+from postparse.services.parsers.instagram.instagram_parser import InstaloaderParser
 
 parser = InstaloaderParser(username="...", password="...")
 count = parser.save_posts_to_db(db, limit=50, force_update=False)
@@ -61,7 +61,7 @@ count = parser.save_posts_to_db(db, limit=50, force_update=False)
 ## Classifiers
 
 ```python
-from backend.postparse.services.analysis.classifiers import (
+from postparse.services.analysis.classifiers import (
     RecipeLLMClassifier,
     MultiClassLLMClassifier,
     MultiLabelLLMClassifier,
@@ -85,7 +85,7 @@ result = clf.predict_multilabel("...")
 ## Enrichment
 
 ```python
-from backend.postparse.services.enrichment import YouTubeEnricher, LinkScraper, XEnricher
+from postparse.services.enrichment import YouTubeEnricher, LinkScraper, XEnricher
 
 yt = YouTubeEnricher(timeout=10)
 result = yt.enrich("", source_url="https://youtube.com/watch?v=abc")

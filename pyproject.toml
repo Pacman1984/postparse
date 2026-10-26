@@ -43,10 +43,10 @@ dependencies = [
 ]
 
 [project.scripts]
-postparse = "backend.postparse.cli.main:main"
+postparse = "postparse.cli.main:main"
 
 [project.optional-dependencies]
-# Data-science stack used only by exploratory notebooks (not imported by backend/ or tests/).
+# Data-science stack used only by exploratory notebooks (not imported by src/ or tests/).
 notebooks = [
     "xgboost",
     "matplotlib",
@@ -92,7 +92,7 @@ all = [
 Homepage = "https://github.com/sebpachl/postparse"
 
 [tool.hatch.build.targets.wheel]
-packages = ["backend"]
+packages = ["src/postparse"]
 
 [dependency-groups]
 dev = [

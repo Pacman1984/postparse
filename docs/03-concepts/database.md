@@ -49,7 +49,7 @@ Polymorphic reference: `content_id` + `content_source` point to either `instagra
 ## Query Examples
 
 ```python
-from backend.postparse.core.data.database import SocialMediaDatabase
+from postparse.core.data.database import SocialMediaDatabase
 
 db = SocialMediaDatabase("data/social_media.db")
 

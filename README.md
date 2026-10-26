@@ -149,9 +149,9 @@ For CLI details, see **[05-usage/basic](docs/05-usage/basic.md)** and **[06-api/
 ## Quick Example
 
 ```python
-from backend.postparse.services.parsers.telegram.telegram_parser import save_telegram_messages
-from backend.postparse.core.data.database import SocialMediaDatabase
-from backend.postparse.services.analysis.classifiers import RecipeLLMClassifier
+from postparse.services.parsers.telegram.telegram_parser import save_telegram_messages
+from postparse.core.data.database import SocialMediaDatabase
+from postparse.services.analysis.classifiers import RecipeLLMClassifier
 
 # Extract Telegram messages
 count = save_telegram_messages(
@@ -180,7 +180,7 @@ For more examples, see **[08-examples/recipes](docs/08-examples/recipes.md)**.
 Classify text into custom categories:
 
 ```python
-from backend.postparse.services.analysis.classifiers import MultiClassLLMClassifier
+from postparse.services.analysis.classifiers import MultiClassLLMClassifier
 
 # Define your classes
 classes = {
@@ -227,10 +227,10 @@ PostParse now includes a REST API built with FastAPI for programmatic access to 
 
 ```bash
 # Development mode (with auto-reload)
-uv run python -m backend.postparse.api.main
+uv run python -m postparse.api.main
 
 # Or using uvicorn directly
-uv run uvicorn backend.postparse.api.main:app --reload --host 0.0.0.0 --port 8000
+uv run uvicorn postparse.api.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 ### API Documentation
@@ -390,7 +390,7 @@ For Telegram extraction, you need:
 **First-time Setup (Interactive):**
 
 ```python
-from backend.postparse.services.parsers.telegram.telegram_parser import TelegramParser
+from postparse.services.parsers.telegram.telegram_parser import TelegramParser
 
 # Run once interactively to create session
 parser = TelegramParser(api_id="...", api_hash="...", phone="+1234567890")
@@ -413,7 +413,7 @@ After session is created, API calls will use the cached session.
 ## Project Structure
 
 ```
-backend/postparse/
+src/postparse/
 ├── api/                    # FastAPI REST API
 │   ├── routers/            # API route handlers
 │   ├── schemas/            # Pydantic request/response models

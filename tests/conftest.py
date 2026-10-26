@@ -129,7 +129,7 @@ def _install_dotenv_guard() -> None:
 
 def _install_config_guard() -> None:
     """Make ConfigManager refuse to load the repository's real config file."""
-    from backend.postparse.core.utils.config import ConfigManager
+    from postparse.core.utils.config import ConfigManager
 
     original = ConfigManager._find_config_file
 
@@ -274,8 +274,8 @@ def _no_real_redis(monkeypatch):
 @pytest.fixture(autouse=True)
 def _clear_cached_config():
     """Reset lru-cached config singletons so each test sees a fresh config."""
-    from backend.postparse.core.utils import config as config_module
-    from backend.postparse.api import dependencies
+    from postparse.core.utils import config as config_module
+    from postparse.api import dependencies
 
     config_module.get_config.cache_clear()
     dependencies.get_config.cache_clear()

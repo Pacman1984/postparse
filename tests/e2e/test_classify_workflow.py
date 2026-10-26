@@ -13,11 +13,11 @@ from unittest.mock import Mock, patch
 
 from fastapi.testclient import TestClient
 
-from backend.postparse.api.main import app
-from backend.postparse.core.data.database import SocialMediaDatabase
-from backend.postparse.api.services.cache_manager import CacheManager
-from backend.postparse.core.utils.config import ConfigManager
-from backend.postparse.services.analysis.classifiers.base import ClassificationResult
+from postparse.api.main import app
+from postparse.core.data.database import SocialMediaDatabase
+from postparse.api.services.cache_manager import CacheManager
+from postparse.core.utils.config import ConfigManager
+from postparse.services.analysis.classifiers.base import ClassificationResult
 
 
 @pytest.fixture(scope="module")
@@ -109,7 +109,7 @@ def e2e_classify_client(e2e_classify_database) -> TestClient:
     Returns:
         TestClient: Configured for E2E testing.
     """
-    from backend.postparse.api.dependencies import get_db, get_cache_manager
+    from postparse.api.dependencies import get_db, get_cache_manager
 
     # Create cache manager with disabled caching
     config = Mock(spec=ConfigManager)
@@ -177,7 +177,7 @@ class TestClassifyEndpointE2E:
         Verifies complete classification workflow.
         """
         with patch(
-            "backend.postparse.api.dependencies.get_recipe_llm_classifier",
+            "postparse.api.dependencies.get_recipe_llm_classifier",
             return_value=lambda: mock_recipe_classifier,
         ):
             response = e2e_classify_client.post(
@@ -208,7 +208,7 @@ class TestClassifyEndpointE2E:
         Verifies non-recipe classification.
         """
         with patch(
-            "backend.postparse.api.dependencies.get_recipe_llm_classifier",
+            "postparse.api.dependencies.get_recipe_llm_classifier",
             return_value=lambda: mock_recipe_classifier,
         ):
             response = e2e_classify_client.post(

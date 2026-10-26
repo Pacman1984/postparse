@@ -10,10 +10,10 @@ uv sync --extra dev
 uv run pytest tests/
 
 # Run with coverage
-uv run pytest --cov=backend.postparse tests/
+uv run pytest --cov=postparse tests/
 
 # Run specific test file
-uv run pytest tests/unit/backend/cli/test_enrich.py -v
+uv run pytest tests/unit/cli/test_enrich.py -v
 ```
 
 ## Test Structure

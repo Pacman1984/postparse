@@ -13,7 +13,7 @@ uv run postparse classify db --classifier multilabel
 ## 1. Extract Telegram Messages
 
 ```python
-from backend.postparse.services.parsers.telegram.telegram_parser import save_telegram_messages
+from postparse.services.parsers.telegram.telegram_parser import save_telegram_messages
 
 count = save_telegram_messages(
     api_id="your_api_id",
@@ -29,8 +29,8 @@ print(f"Saved {count} messages")
 ## 2. Extract Instagram Posts
 
 ```python
-from backend.postparse.services.parsers.instagram.instagram_parser import InstaloaderParser
-from backend.postparse.core.data.database import SocialMediaDatabase
+from postparse.services.parsers.instagram.instagram_parser import InstaloaderParser
+from postparse.core.data.database import SocialMediaDatabase
 
 db = SocialMediaDatabase("my_data.db")
 parser = InstaloaderParser(username="user", password="pass")
@@ -41,8 +41,8 @@ print(f"Saved {saved_count} posts")
 ## 3. Classify and Save Results
 
 ```python
-from backend.postparse.core.data.database import SocialMediaDatabase
-from backend.postparse.services.analysis.classifiers import RecipeLLMClassifier
+from postparse.core.data.database import SocialMediaDatabase
+from postparse.services.analysis.classifiers import RecipeLLMClassifier
 
 db = SocialMediaDatabase("my_data.db")
 classifier = RecipeLLMClassifier()
@@ -90,7 +90,7 @@ Scraped text (title, description, body) is stored in `content_expanded`. Classif
 ## 7. Programmatic Enrichment
 
 ```python
-from backend.postparse.services.enrichment import YouTubeEnricher, LinkScraper
+from postparse.services.enrichment import YouTubeEnricher, LinkScraper
 
 # YouTube
 yt = YouTubeEnricher(timeout=10.0)

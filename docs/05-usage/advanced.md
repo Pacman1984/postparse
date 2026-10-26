@@ -3,8 +3,8 @@
 ## Batch Extraction
 
 ```python
-from backend.postparse.services.parsers.instagram.instagram_parser import InstaloaderParser
-from backend.postparse.core.data.database import SocialMediaDatabase
+from postparse.services.parsers.instagram.instagram_parser import InstaloaderParser
+from postparse.core.data.database import SocialMediaDatabase
 
 db = SocialMediaDatabase("data.db")
 parser = InstaloaderParser(username="user", password="pass", min_delay=5.0, max_delay=15.0)
@@ -22,7 +22,7 @@ postparse classify db --classifier multiclass \
 ## Custom Provider
 
 ```python
-from backend.postparse.services.analysis.classifiers import RecipeLLMClassifier
+from postparse.services.analysis.classifiers import RecipeLLMClassifier
 
 classifier = RecipeLLMClassifier(provider_name='openai')
 result = classifier.predict("Boil pasta, add sauce")
@@ -32,10 +32,10 @@ result = classifier.predict("Boil pasta, add sauce")
 
 ```bash
 # Development
-uv run uvicorn backend.postparse.api.main:app --reload --port 8000
+uv run uvicorn postparse.api.main:app --reload --port 8000
 
 # Production
-uv run uvicorn backend.postparse.api.main:app --workers 4 --port 8000
+uv run uvicorn postparse.api.main:app --workers 4 --port 8000
 ```
 
 Interactive docs: http://localhost:8000/docs

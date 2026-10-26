@@ -12,10 +12,10 @@ from unittest.mock import Mock
 
 from fastapi.testclient import TestClient
 
-from backend.postparse.api.main import app
-from backend.postparse.core.data.database import SocialMediaDatabase
-from backend.postparse.api.services.cache_manager import CacheManager
-from backend.postparse.core.utils.config import ConfigManager
+from postparse.api.main import app
+from postparse.core.data.database import SocialMediaDatabase
+from postparse.api.services.cache_manager import CacheManager
+from postparse.core.utils.config import ConfigManager
 
 
 @pytest.fixture(scope="session")
@@ -110,7 +110,7 @@ def e2e_client(e2e_database):
     Returns:
         TestClient: Configured for E2E testing.
     """
-    from backend.postparse.api.dependencies import get_db, get_cache_manager
+    from postparse.api.dependencies import get_db, get_cache_manager
 
     # Create cache manager with in-memory storage
     config = Mock(spec=ConfigManager)

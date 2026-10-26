@@ -5,7 +5,7 @@
 PostParse is a Python package with a layered structure:
 
 ```
-backend/postparse/
+src/postparse/
 ├── api/                    # FastAPI REST API
 │   ├── routers/            # Route handlers
 │   ├── schemas/            # Pydantic models

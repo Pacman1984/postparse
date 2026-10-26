@@ -34,7 +34,7 @@
 
 **Quick test:**
 ```python
-from backend.postparse.services.analysis.classifiers import RecipeLLMClassifier
+from postparse.services.analysis.classifiers import RecipeLLMClassifier
 classifier = RecipeLLMClassifier()
 result = classifier.predict("Test recipe: mix flour and water")
 print(result.label)

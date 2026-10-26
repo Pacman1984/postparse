@@ -308,3 +308,135 @@ def export(ctx, output, format, source, limit):
             console.print_exception()
         raise click.Abort()
 
+
+
+# ---------------------------------------------------------------------------
+# Schema v2 database maintenance (postparse.core.db)
+# ---------------------------------------------------------------------------
+
+_DB_OPTION_HELP = 'Schema v2 database file (default: Settings.db_path)'
+
+
+def _v2_db_path(ctx: click.Context, db_path: str | None) -> Path:
+    """Resolve the schema v2 database path from ``--db`` or the settings."""
+    if db_path:
+        return Path(db_path).resolve()
+    from postparse.config import get_settings
+
+    settings = get_settings(ctx.obj.get('config') if ctx.obj else None)
+    assert settings.db_path is not None
+    return settings.db_path
+
+
+@db.command()
+@click.option('--db', 'db_path', type=click.Path(dir_okay=False), help=_DB_OPTION_HELP)
+@click.pass_context
+def migrate(ctx: click.Context, db_path: str | None) -> None:
+    """🧱 Apply pending schema v2 migrations (creates the database if needed)."""
+    from postparse.core.db import MigrationError, connect
+    from postparse.core.db.migrate import migrate as run_migrations
+
+    path = _v2_db_path(ctx, db_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = connect(path)
+    try:
+        applied = run_migrations(conn)
+        version = conn.execute('PRAGMA user_version').fetchone()[0]
+    except MigrationError as exc:
+        print_error(str(exc))
+        ctx.exit(1)
+        return
+    finally:
+        conn.close()
+    if applied:
+        names = ', '.join(f'{m.version:04d}_{m.name}' for m in applied)
+        print_success(f'Applied {len(applied)} migration(s) to {path}: {names}')
+    else:
+        print_info(f'{path} is up to date')
+    print_info(f'Schema version: {version}')
+
+
+@db.command()
+@click.option('--db', 'db_path', type=click.Path(dir_okay=False), help=_DB_OPTION_HELP)
+@click.pass_context
+def check(ctx: click.Context, db_path: str | None) -> None:
+    """🩺 Verify integrity, foreign keys, schema version and the search index."""
+    from postparse.core.db import MigrationError, connect
+    from postparse.core.db.migrate import discover_migrations, pending_migrations
+    from postparse.core.db.repos import SearchRepo
+
+    path = _v2_db_path(ctx, db_path)
+    if not path.exists():
+        print_error(f'Database not found: {path} (run `postparse db migrate`)')
+        ctx.exit(1)
+        return
+
+    problems: list[str] = []
+    conn = connect(path)
+    try:
+        integrity = [row[0] for row in conn.execute('PRAGMA integrity_check').fetchall()]
+        if integrity != ['ok']:
+            problems.append('integrity_check: ' + '; '.join(map(str, integrity[:10])))
+
+        fk_rows = conn.execute('PRAGMA foreign_key_check').fetchall()
+        if fk_rows:
+            problems.append(f'foreign_key_check: {len(fk_rows)} violation(s)')
+
+        migrations = discover_migrations()
+        version = conn.execute('PRAGMA user_version').fetchone()[0]
+        try:
+            pending = pending_migrations(conn, migrations)
+        except MigrationError as exc:
+            problems.append(str(exc))
+            pending = []
+        if pending:
+            problems.append(f'{len(pending)} pending migration(s); run `postparse db migrate`')
+        expected = migrations[-1].version if migrations else 0
+        if not pending and version != expected:
+            problems.append(f'user_version is {version}, expected {expected}')
+
+        if not pending and version > 0:
+            search = SearchRepo(conn)
+            items = conn.execute('SELECT count(*) FROM items').fetchone()[0]
+            docs = conn.execute('SELECT count(*) FROM search_docs').fetchone()[0]
+            indexed = search.indexed_count()
+            if not (items == docs == indexed):
+                problems.append(
+                    f'search index out of sync: items={items}, search_docs={docs}, '
+                    f'fts={indexed} (run `postparse db reindex`)'
+                )
+            if not search.integrity_check():
+                problems.append('FTS integrity-check failed (run `postparse db reindex`)')
+            print_info(f'Items: {items:,}  indexed: {indexed:,}')
+    finally:
+        conn.close()
+
+    print_info(f'Database: {path}')
+    print_info(f'Schema version: {version}')
+    if problems:
+        for problem in problems:
+            print_error(problem)
+        ctx.exit(1)
+        return
+    print_success('Database check passed')
+
+
+@db.command()
+@click.option('--db', 'db_path', type=click.Path(dir_okay=False), help=_DB_OPTION_HELP)
+@click.pass_context
+def reindex(ctx: click.Context, db_path: str | None) -> None:
+    """🔎 Rebuild all search documents and optimize the full-text index."""
+    from postparse.core.db import Database
+    from postparse.core.db.repos import SearchRepo
+
+    path = _v2_db_path(ctx, db_path)
+    if not path.exists():
+        print_error(f'Database not found: {path} (run `postparse db migrate`)')
+        ctx.exit(1)
+        return
+    database = Database.open(path)
+    with database.transaction() as conn:
+        search = SearchRepo(conn)
+        count = search.rebuild_all()
+        search.optimize()
+    print_success(f'Reindexed {count:,} item(s) in {path}')

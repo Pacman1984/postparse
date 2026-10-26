@@ -276,12 +276,15 @@ def _clear_cached_config():
     """Reset lru-cached config singletons so each test sees a fresh config."""
     from postparse.core.utils import config as config_module
     from postparse.api import dependencies
+    from postparse.config import clear_settings_cache
 
     config_module.get_config.cache_clear()
     dependencies.get_config.cache_clear()
+    clear_settings_cache()
     yield
     config_module.get_config.cache_clear()
     dependencies.get_config.cache_clear()
+    clear_settings_cache()
 
 
 def pytest_configure(config):

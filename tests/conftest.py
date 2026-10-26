@@ -394,6 +394,10 @@ def pytest_configure(config):
     # remove the variable with monkeypatch and use tmp .env files.
     os.environ["POSTPARSE_NO_DOTENV"] = "1"
 
+    # rich wraps and truncates CLI output to the terminal width; fix it so
+    # assertions on CLI output don't depend on the runner or tmp path lengths.
+    os.environ["COLUMNS"] = "200"
+
     # Live runs may use API keys exported in the shell (never from config/.env).
     if not config.getoption("--run-live"):
         for name in _CREDENTIAL_ENV_VARS:

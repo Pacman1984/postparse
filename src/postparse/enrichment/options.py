@@ -28,7 +28,7 @@ from typing import Any
 
 __all__ = ["EnrichmentOptions", "default_user_agent"]
 
-_PROJECT_URL = "https://github.com/sebpachl/postparse"
+_PROJECT_URL = "https://github.com/Pacman1984/postparse"
 
 
 def default_user_agent() -> str:

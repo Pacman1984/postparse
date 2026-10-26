@@ -40,6 +40,7 @@ class TestEnvLoading:
 
         # Change to temp directory
         monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("POSTPARSE_NO_DOTENV", raising=False)
 
         with patch("postparse.cli.main.load_dotenv") as mock_load:
             result = load_env_files()
@@ -53,6 +54,7 @@ class TestEnvLoading:
         """Test that load_env_files searches multiple standard locations."""
         # Use a real temporary directory with no .env files
         monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("POSTPARSE_NO_DOTENV", raising=False)
         
         # Mock __file__ to point to temp directory so script_dir check also fails
         fake_file = str(tmp_path / "fake" / "cli" / "main.py")

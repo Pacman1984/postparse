@@ -74,4 +74,5 @@ def test_no_config_file_uses_defaults(tmp_path: Path, monkeypatch: pytest.Monkey
     monkeypatch.setattr(ConfigManager, "_find_config_file", _not_found)
     clear_settings_cache()
     assert get_settings().db_path == tmp_path / "data" / "postparse.db"
-    assert "POSTPARSE_DB_PATH" not in os.environ
+    # Boolean check: a failing ``in os.environ`` assertion would print the environment.
+    assert os.environ.get("POSTPARSE_DB_PATH") is None

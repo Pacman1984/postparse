@@ -19,6 +19,7 @@ It also isolates the test suite from the developer's real environment:
 """
 
 import asyncio
+import io
 import os
 import shutil
 import sqlite3
@@ -26,6 +27,7 @@ import tempfile
 import pytest
 import warnings
 from pathlib import Path
+from contextlib import contextmanager
 from typing import List, Optional
 from unittest.mock import patch
 from urllib.parse import urlparse
@@ -55,6 +57,7 @@ _CREDENTIAL_ENV_VARS = (
 )
 
 _isolation_violations: List[str] = []
+_dotenv_violations: List[str] = []
 _original_cwd: Path = Path.cwd()
 _session_dir: Optional[Path] = None
 _original_sqlite_connect = sqlite3.connect
@@ -103,26 +106,66 @@ def _guarded_sqlite_connect(database, *args, **kwargs):
     return _original_sqlite_connect(database, *args, **kwargs)
 
 
+def _record_dotenv_attempt(kind: str, path: object) -> None:
+    """Remember a blocked attempt to locate or read a repository ``.env`` file."""
+    # Only the path is recorded, never any file contents or environment values.
+    message = f"Test tried to {kind} a repository .env file: {path}"
+    _dotenv_violations.append(message)
+    _isolation_violations.append(message)
+
+
 def _install_dotenv_guard() -> None:
-    """Prevent the code under test from loading the developer's .env files."""
+    """Prevent the code under test from loading the developer's .env files.
+
+    Every python-dotenv entry point is covered, however it is imported
+    (``from dotenv import load_dotenv``, ``dotenv.main.load_dotenv``,
+    ``dotenv_values``, ``find_dotenv``):
+
+    - ``DotEnv._get_stream`` (used by ``load_dotenv`` and ``dotenv_values``)
+      yields an empty stream for any path inside the repository;
+    - ``find_dotenv`` returns ``""`` instead of a repository ``.env`` file;
+    - ``load_dotenv`` without a path or stream loads nothing.
+
+    Each blocked attempt is recorded in ``_dotenv_violations`` (and fails the
+    session through ``_isolation_violations``).
+    """
     try:
         import dotenv
         import dotenv.main
     except ImportError:  # pragma: no cover - python-dotenv is a runtime dependency
         return
 
-    original = dotenv.main.load_dotenv
+    original_load = dotenv.main.load_dotenv
+    original_find = dotenv.main.find_dotenv
+    original_get_stream = dotenv.main.DotEnv._get_stream
+
+    @contextmanager
+    def _guarded_get_stream(self):
+        if self.dotenv_path:
+            resolved = Path(os.fspath(self.dotenv_path)).resolve()
+            if _is_inside(resolved, REPO_ROOT):
+                _record_dotenv_attempt("read", resolved)
+                yield io.StringIO("")
+                return
+        with original_get_stream(self) as stream:
+            yield stream
+
+    def _guarded_find_dotenv(*args, **kwargs):
+        found = original_find(*args, **kwargs)
+        if found and _is_inside(Path(found).resolve(), REPO_ROOT):
+            _record_dotenv_attempt("locate", Path(found).resolve())
+            return ""
+        return found
 
     def _guarded_load_dotenv(dotenv_path=None, stream=None, *args, **kwargs):
-        if stream is not None:
-            return original(dotenv_path, stream, *args, **kwargs)
-        if dotenv_path is not None:
-            resolved = Path(dotenv_path).resolve()
-            if not _is_inside(resolved, REPO_ROOT):
-                return original(dotenv_path, stream, *args, **kwargs)
-        # Implicit discovery or a repository .env file: load nothing.
-        return False
+        if dotenv_path is None and stream is None:
+            # Implicit discovery: never load anything during tests.
+            return False
+        return original_load(dotenv_path, stream, *args, **kwargs)
 
+    dotenv.main.DotEnv._get_stream = _guarded_get_stream
+    dotenv.find_dotenv = _guarded_find_dotenv
+    dotenv.main.find_dotenv = _guarded_find_dotenv
     dotenv.load_dotenv = _guarded_load_dotenv
     dotenv.main.load_dotenv = _guarded_load_dotenv
 
@@ -250,6 +293,40 @@ def suppress_telethon_warnings():
     yield
 
 
+class IsolationGuard:
+    """Read-only view on the isolation guard's records (see ``isolation_guard``)."""
+
+    repo_root = REPO_ROOT
+    credential_env_vars = tuple(name for name in _CREDENTIAL_ENV_VARS)
+
+    @property
+    def violations(self) -> List[str]:
+        """All isolation violations recorded so far."""
+        return list(_isolation_violations)
+
+    @property
+    def dotenv_violations(self) -> List[str]:
+        """Blocked attempts to locate or read a repository ``.env`` file."""
+        return list(_dotenv_violations)
+
+    def forget(self, messages: List[str]) -> None:
+        """Drop expected entries (used by tests of the guard itself)."""
+        for message in messages:
+            _dotenv_violations.remove(message)
+            _isolation_violations.remove(message)
+
+    @staticmethod
+    def set_credential_env_vars() -> List[str]:
+        """Names (never values) of credential variables present in ``os.environ``."""
+        return [name for name in _CREDENTIAL_ENV_VARS if name in os.environ]
+
+
+@pytest.fixture
+def isolation_guard() -> IsolationGuard:
+    """Access the session's isolation-guard records without exposing env values."""
+    return IsolationGuard()
+
+
 @pytest.fixture(autouse=True)
 def _restore_environ():
     """Undo os.environ changes made by a test (e.g. ``os.environ.setdefault``)."""
@@ -332,6 +409,11 @@ def pytest_configure(config):
     (_session_dir / "data").mkdir()
     shutil.copyfile(TEST_CONFIG_FILE, _session_dir / "config" / "config.toml")
     os.chdir(_session_dir)
+
+    # Never load .env files during tests, whichever code path asks for them
+    # (also inherited by any subprocess). Tests of load_env_files() itself
+    # remove the variable with monkeypatch and use tmp .env files.
+    os.environ["POSTPARSE_NO_DOTENV"] = "1"
 
     # Live runs may use API keys exported in the shell (never from config/.env).
     if not config.getoption("--run-live"):

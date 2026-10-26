@@ -164,6 +164,36 @@ class ClassificationRepo:
         rows = self.conn.execute("SELECT * FROM taxonomies ORDER BY name").fetchall()
         return [Taxonomy.from_row(row) for row in rows]
 
+    def taxonomy_stats(self) -> dict[int, dict[str, int]]:
+        """Return per-taxonomy counters.
+
+        Returns:
+            ``{taxonomy_id: {"runs": n, "ok": n, "no_labels": n, "error": n,
+            "classified_items": n}}`` where ``classified_items`` counts items with
+            a current (ok/no_labels) result. Taxonomies without runs are omitted.
+        """
+        stats: dict[int, dict[str, int]] = {}
+        for row in self.conn.execute(
+            "SELECT taxonomy_id, count(*) FROM classification_runs GROUP BY taxonomy_id"
+        ).fetchall():
+            stats.setdefault(row[0], {"runs": 0, "ok": 0, "no_labels": 0, "error": 0,
+                                      "classified_items": 0})["runs"] = row[1]
+        for row in self.conn.execute(
+            "SELECT taxonomy_id, status, count(*) FROM classification_results "
+            "GROUP BY taxonomy_id, status"
+        ).fetchall():
+            entry = stats.setdefault(row[0], {"runs": 0, "ok": 0, "no_labels": 0, "error": 0,
+                                              "classified_items": 0})
+            entry[row[1]] = row[2]
+        for row in self.conn.execute(
+            "SELECT taxonomy_id, count(DISTINCT item_id) FROM v_current_classification "
+            "GROUP BY taxonomy_id"
+        ).fetchall():
+            entry = stats.setdefault(row[0], {"runs": 0, "ok": 0, "no_labels": 0, "error": 0,
+                                              "classified_items": 0})
+            entry["classified_items"] = row[1]
+        return stats
+
     # -- runs ----------------------------------------------------------------
 
     def create_run(

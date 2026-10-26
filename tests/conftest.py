@@ -272,6 +272,16 @@ def _no_real_redis(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _clear_llm_caches():
+    """Forget discovered/built LLM models so provider configs never leak between tests."""
+    from postparse.llm.client import clear_model_cache
+
+    clear_model_cache()
+    yield
+    clear_model_cache()
+
+
+@pytest.fixture(autouse=True)
 def _clear_cached_config():
     """Reset lru-cached config singletons so each test sees a fresh config."""
     from postparse.core.utils import config as config_module
@@ -319,6 +329,12 @@ def pytest_configure(config):
     sqlite3.dbapi2.connect = _guarded_sqlite_connect
     _install_dotenv_guard()
     _install_config_guard()
+
+    # Real LLM requests are never allowed in the suite; tests use pydantic-ai's
+    # TestModel / FunctionModel (live tests re-enable requests explicitly).
+    import pydantic_ai.models
+
+    pydantic_ai.models.ALLOW_MODEL_REQUESTS = bool(config.getoption("--run-live"))
 
 
 def pytest_unconfigure(config):

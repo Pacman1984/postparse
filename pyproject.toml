@@ -10,7 +10,7 @@ authors = [
 ]
 description = "A package for parsing and analyzing data"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
@@ -42,6 +42,8 @@ dependencies = [
     "lxml>=5.0.0,<6.0.0",
     "pydantic-settings>=2.4,<3",
     "tzdata>=2024.1",
+    "pydantic-ai-slim[anthropic,openai]>=2.61.0,<3",
+    "openai>=3.37.0,<4",
 ]
 
 [project.scripts]

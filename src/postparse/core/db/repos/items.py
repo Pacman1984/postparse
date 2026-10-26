@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 
 from postparse.core.db.models import (
     InstagramDetail,
@@ -243,3 +243,14 @@ class ItemsRepo:
                 (item_id, text),
             )
         SearchRepo(self.conn).refresh([item_id])
+
+    def legacy_expanded_texts(self, item_ids: Sequence[int]) -> dict[int, str]:
+        """Return the v1 expanded texts of several items (items without one are omitted)."""
+        if not item_ids:
+            return {}
+        rows = self.conn.execute(
+            "SELECT item_id, text FROM legacy_expanded_text "
+            "WHERE item_id IN (SELECT value FROM json_each(?))",
+            (json.dumps(list(item_ids)),),
+        ).fetchall()
+        return {int(row[0]): row[1] for row in rows}

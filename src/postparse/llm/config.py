@@ -1,7 +1,7 @@
 """Configuration models for LLM providers using Pydantic."""
 
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -20,7 +20,19 @@ class ProviderConfig(BaseModel):
         max_retries: Maximum number of retry attempts.
         temperature: Sampling temperature (0.0-2.0).
         max_tokens: Maximum tokens in response.
-        custom_params: Provider-specific parameters.
+        custom_params: Provider-specific parameters (sent as extra request body
+            fields to OpenAI-compatible servers).
+        api_type: Client protocol: ``openai`` (OpenAI and every OpenAI-compatible
+            server such as llama.cpp, LM Studio, Ollama, vLLM) or ``anthropic``.
+            ``None`` derives it from ``name``.
+        output_mode: Structured-output strategy: ``native`` (JSON schema via
+            ``response_format``; llama.cpp turns it into a grammar), ``tool``
+            (forced tool call) or ``prompted`` (schema in the prompt). ``None``
+            picks ``native`` for self-hosted endpoints and ``tool`` for cloud APIs.
+        max_concurrency: Maximum parallel requests. ``None`` means 1 for
+            self-hosted endpoints (one llama.cpp slot) and 4 for cloud APIs.
+        discover_model: Ask the server which model it serves (``/v1/models`` or
+            Ollama ``/api/ps``). ``None`` enables it for self-hosted endpoints.
 
     Examples:
         ```python
@@ -50,6 +62,18 @@ class ProviderConfig(BaseModel):
     temperature: float = Field(default=0.7, description="Sampling temperature")
     max_tokens: Optional[int] = Field(default=None, description="Maximum tokens in response")
     custom_params: Dict[str, Any] = Field(default_factory=dict, description="Provider-specific parameters")
+    api_type: Optional[Literal["openai", "anthropic"]] = Field(
+        default=None, description="Client protocol (derived from name when unset)"
+    )
+    output_mode: Optional[Literal["native", "tool", "prompted"]] = Field(
+        default=None, description="Structured output strategy (auto when unset)"
+    )
+    max_concurrency: Optional[int] = Field(
+        default=None, ge=1, description="Maximum parallel requests (auto when unset)"
+    )
+    discover_model: Optional[bool] = Field(
+        default=None, description="Discover the served model (auto when unset)"
+    )
 
     @field_validator("temperature")
     @classmethod

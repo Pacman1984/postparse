@@ -1,8 +1,9 @@
 """Discover the model currently served by local LLM endpoints."""
 
+import ipaddress
 import logging
 from typing import List, Optional
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
@@ -11,18 +12,46 @@ from postparse.llm.config import ProviderConfig
 logger = logging.getLogger(__name__)
 
 
+_PRIVATE_SUFFIXES = (".local", ".lan", ".home", ".internal", ".localhost", ".test")
+
+
+def is_self_hosted_url(url: Optional[str]) -> bool:
+    """Return True when ``url`` points at a self-hosted server.
+
+    Self-hosted means loopback, a private/link-local IP address, a single-label
+    host name (``http://gpu-box:8080``) or a host under a private suffix such
+    as ``.local`` / ``.lan`` / ``.internal``.
+
+    Args:
+        url: Endpoint URL (may be ``None``).
+
+    Returns:
+        True for self-hosted endpoints, False for public hosts or no URL.
+    """
+    if not url:
+        return False
+    host = (urlparse(url).hostname or "").lower()
+    if not host:
+        return False
+    if host == "localhost" or host.endswith(_PRIVATE_SUFFIXES):
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return "." not in host
+    return address.is_loopback or address.is_private or address.is_link_local
+
+
 def is_local_provider(config: ProviderConfig) -> bool:
-    """Return True when the provider points at a local endpoint.
+    """Return True when the provider points at a self-hosted endpoint.
 
     Args:
         config: Provider configuration.
 
     Returns:
-        True for localhost/127.0.0.1 endpoints.
+        True for localhost, private-network and LAN endpoints.
     """
-    if not config.api_base:
-        return False
-    return "localhost" in config.api_base or "127.0.0.1" in config.api_base
+    return is_self_hosted_url(config.api_base)
 
 
 def is_ollama_provider(config: ProviderConfig) -> bool:
@@ -183,7 +212,10 @@ def discover_served_model(
     Returns:
         Served model name/id, or None for cloud providers or failed discovery.
     """
-    if not is_local_provider(config):
+    enabled = config.discover_model
+    if enabled is None:
+        enabled = is_local_provider(config)
+    if not enabled or not config.api_base:
         return None
 
     if is_ollama_provider(config):

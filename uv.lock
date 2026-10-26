@@ -942,14 +942,14 @@ wheels = [
 
 [[package]]
 name = "instaloader"
-version = "4.15.2"
+version = "4.15.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "requests" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d3/14/6630c6564fbe3c0768bb2b15d79e2262f77a317067c1620f7b1c55f47cbc/instaloader-4.15.2.tar.gz", hash = "sha256:a4d3f1ef6674b96c471492614848fc3a21fcc87f038f274111a0bd8bfbadb3ca", size = 67367, upload-time = "2026-07-05T19:25:58.594Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e3/4a/410fa17e75bac1bc6f7f82026dd274e8d7de7263e14b93901ff251d41d3b/instaloader-4.15.5.tar.gz", hash = "sha256:fedf65149ab559c1d8cc105929f15695b0e9f54b83a3b8f09f5693d3a13590f8", size = 70924, upload-time = "2026-10-24T14:29:46.217Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/01/53/0aabb2e999888107e527d4510c8e787eb5e17b0c2375debd310d4d3693ee/instaloader-4.15.2-py3-none-any.whl", hash = "sha256:62ecc6fad0a9efcbe8b6b2b15217646196870efe93bcc6bec7a5dee25bfa1895", size = 69264, upload-time = "2026-07-05T19:25:57.414Z" },
+    { url = "https://files.pythonhosted.org/packages/8c/9c/1da1540520cd7663ab04987a4c8753cb62fdb45dcfe630e708395e95f4e9/instaloader-4.15.5-py3-none-any.whl", hash = "sha256:34f59fb28d9cf4377a9c20d2f63ea31d25c480a64dc2ca97cc227f0cc93f1269", size = 71993, upload-time = "2026-10-24T14:29:45.151Z" },
 ]
 
 [[package]]
@@ -2115,7 +2115,7 @@ requires-dist = [
     { name = "ftfy", marker = "extra == 'migrate'", specifier = ">=6.2" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27.0" },
-    { name = "instaloader", specifier = ">=4.15.2" },
+    { name = "instaloader", specifier = ">=4.15.5" },
     { name = "ipywidgets", marker = "extra == 'notebooks'" },
     { name = "isort", marker = "extra == 'all'", specifier = ">=5.12.0" },
     { name = "isort", marker = "extra == 'dev'", specifier = ">=5.12.0" },
@@ -2156,7 +2156,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6.0" },
     { name = "scikit-learn", marker = "extra == 'notebooks'" },
     { name = "scipy", marker = "extra == 'notebooks'" },
-    { name = "telethon", specifier = ">=1.32.0" },
+    { name = "telethon", specifier = ">=1.45,<2" },
     { name = "tenacity", specifier = ">=8.2,<10" },
     { name = "toml" },
     { name = "tqdm" },
@@ -3060,15 +3060,15 @@ wheels = [
 
 [[package]]
 name = "telethon"
-version = "1.42.0"
+version = "1.45.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pyaes" },
     { name = "rsa" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8c/10/8c8c9476bfce767a856d8aaf9eae8ea1869df4e970da16f1c5b638fd1b0c/telethon-1.42.0.tar.gz", hash = "sha256:032e95511261d5ead719f75494c6c85ece2ce71816b54f3c65d6ccc371d6994d", size = 672734, upload-time = "2025-11-05T19:15:19.849Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d5/07/b23b6cc73cd994763fbd641d196904f56cc966035eda841275b5689c6e5f/telethon-1.45.0.tar.gz", hash = "sha256:4cb7ae269b8ab9dad9fc490b859f0bc2f885121e990f5b20407b1faa0db2a1d9", size = 728057, upload-time = "2026-09-10T14:28:04.739Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e4/e4/8ce0ff55251381966a7c3f88bd5b34abda79b225a8e7fb51ddef3b849c94/telethon-1.42.0-py3-none-any.whl", hash = "sha256:cf361c94586bcacd6d0fc8959a2bce509d1bb37007fe6476a80c4fb4a2decc29", size = 748466, upload-time = "2025-11-05T19:15:18.241Z" },
+    { url = "https://files.pythonhosted.org/packages/92/ac/241c09e6905215f225d8088438ceb1f32cc4b4865f3f49068cb402debfd7/telethon-1.45.0-py3-none-any.whl", hash = "sha256:339e24c83aedc9f12cbe389264627edc49779e4289c535aa90aafc4ce62f7972", size = 804098, upload-time = "2026-09-10T14:28:03.115Z" },
 ]
 
 [[package]]

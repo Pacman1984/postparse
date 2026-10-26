@@ -1,659 +1,192 @@
-"""
-Unit tests for CLI extract commands.
+"""Tests of the ``extract`` CLI commands (ExtractionService with fake collectors)."""
 
-This module tests data extraction commands for Telegram and Instagram,
-including credential validation and extraction logic.
-"""
+from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
+from instaloader.exceptions import LoginException, TooManyRequestsException
 
 from postparse.cli.main import cli
-
-
-class TestExtractTelegram:
-    """Test extract telegram command."""
-
-    def test_extract_telegram_requires_credentials(self) -> None:
-        """
-        Test that extract telegram validates API credentials.
-
-        Verifies proper error handling when required credentials are missing.
-        """
-        runner = CliRunner()
-
-        with patch("postparse.cli.extract.validate_credentials") as mock_validate:
-            # Simulate missing credentials
-            mock_validate.return_value = ["api_id", "api_hash"]
-
-            result = runner.invoke(
-                cli,
-                ["extract", "telegram", "--api-id", "", "--api-hash", ""],
-            )
-
-            # Should handle missing credentials
-            assert result.exit_code != 0 or "missing" in result.output.lower()
-
-    def test_extract_telegram_with_valid_credentials(self) -> None:
-        """Test extract telegram with valid credentials and successful extraction."""
-        runner = CliRunner()
-
-        with patch("postparse.cli.extract.load_config") as mock_load:
-            with patch("postparse.cli.extract.get_database") as mock_get_db:
-                with patch("postparse.services.parsers.telegram.telegram_parser.TelegramParser") as mock_parser_class:
-                    with patch("postparse.cli.extract.run_async") as mock_run_async:
-                        mock_config = MagicMock()
-                        mock_load.return_value = mock_config
-
-                        mock_db = MagicMock()
-                        mock_get_db.return_value = mock_db
-
-                        # Mock parser with async context manager
-                        mock_parser = MagicMock()
-                        mock_parser.__aenter__ = AsyncMock(return_value=mock_parser)
-                        mock_parser.__aexit__ = AsyncMock(return_value=None)
-                        mock_parser.save_messages_to_db = AsyncMock(return_value=10)
-                        mock_parser_class.return_value = mock_parser
-
-                        # Mock async result
-                        mock_run_async.return_value = 10
-
-                        result = runner.invoke(
-                            cli,
-                            [
-                                "extract",
-                                "telegram",
-                                "--api-id",
-                                "12345",
-                                "--api-hash",
-                                "abc123",
-                            ],
-                        )
-
-                        assert result.exit_code == 0
-                        # Should show extraction summary
-                        assert "10" in result.output or "saved" in result.output.lower()
-
-    def test_extract_telegram_with_limit(self) -> None:
-        """Test extract telegram with message limit."""
-        runner = CliRunner()
-
-        with patch("postparse.cli.extract.load_config") as mock_load:
-            with patch("postparse.cli.extract.get_database") as mock_get_db:
-                with patch("postparse.services.parsers.telegram.telegram_parser.TelegramParser") as mock_parser_class:
-                    with patch("postparse.cli.extract.run_async") as mock_run_async:
-                        mock_config = MagicMock()
-                        mock_load.return_value = mock_config
-
-                        mock_db = MagicMock()
-                        mock_get_db.return_value = mock_db
-
-                        mock_parser = MagicMock()
-                        mock_parser.__aenter__ = AsyncMock(return_value=mock_parser)
-                        mock_parser.__aexit__ = AsyncMock(return_value=None)
-                        mock_parser.save_messages_to_db = AsyncMock(return_value=5)
-                        mock_parser_class.return_value = mock_parser
-
-                        mock_run_async.return_value = 5
-
-                        result = runner.invoke(
-                            cli,
-                            [
-                                "extract",
-                                "telegram",
-                                "--api-id",
-                                "12345",
-                                "--api-hash",
-                                "abc123",
-                                "--limit",
-                                "5",
-                            ],
-                        )
-
-                        assert result.exit_code == 0
-
-    def test_extract_telegram_with_force_flag(self) -> None:
-        """Test extract telegram with --force flag for re-fetching."""
-        runner = CliRunner()
-
-        with patch("postparse.cli.extract.load_config") as mock_load:
-            with patch("postparse.cli.extract.get_database") as mock_get_db:
-                with patch("postparse.services.parsers.telegram.telegram_parser.TelegramParser") as mock_parser_class:
-                    with patch("postparse.cli.extract.run_async") as mock_run_async:
-                        mock_config = MagicMock()
-                        mock_load.return_value = mock_config
-
-                        mock_db = MagicMock()
-                        mock_get_db.return_value = mock_db
-
-                        mock_parser = MagicMock()
-                        mock_parser.__aenter__ = AsyncMock(return_value=mock_parser)
-                        mock_parser.__aexit__ = AsyncMock(return_value=None)
-                        mock_parser.save_messages_to_db = AsyncMock(return_value=20)
-                        mock_parser_class.return_value = mock_parser
-
-                        mock_run_async.return_value = 20
-
-                        result = runner.invoke(
-                            cli,
-                            [
-                                "extract",
-                                "telegram",
-                                "--api-id",
-                                "12345",
-                                "--api-hash",
-                                "abc123",
-                                "--force",
-                            ],
-                        )
-
-                        assert result.exit_code == 0
-
-    def test_extract_telegram_handles_connection_error(self) -> None:
-        """Test that extract telegram handles connection errors gracefully."""
-        runner = CliRunner()
-
-        with patch("postparse.cli.extract.load_config") as mock_load:
-            with patch("postparse.cli.extract.get_database") as mock_get_db:
-                with patch("postparse.services.parsers.telegram.telegram_parser.TelegramParser") as mock_parser:
-                    mock_config = MagicMock()
-                    mock_load.return_value = mock_config
-
-                    mock_db = MagicMock()
-                    mock_get_db.return_value = mock_db
-
-                    mock_parser.side_effect = Exception("Connection failed")
-
-                    result = runner.invoke(
-                        cli,
-                        [
-                            "extract",
-                            "telegram",
-                            "--api-id",
-                            "12345",
-                            "--api-hash",
-                            "abc123",
-                        ],
-                    )
-
-                    assert result.exit_code != 0
-                    assert "error" in result.output.lower() or "failed" in result.output.lower()
-
-    def test_extract_telegram_uses_env_vars(self) -> None:
-        """Test that extract telegram uses environment variables for credentials."""
-        runner = CliRunner()
-
-        with patch("postparse.cli.extract.load_config") as mock_load:
-            with patch("postparse.cli.extract.get_database") as mock_get_db:
-                with patch("postparse.services.parsers.telegram.telegram_parser.TelegramParser") as mock_parser_class:
-                    with patch("postparse.cli.extract.run_async") as mock_run_async:
-                        mock_config = MagicMock()
-                        mock_load.return_value = mock_config
-
-                        mock_db = MagicMock()
-                        mock_get_db.return_value = mock_db
-
-                        mock_parser = MagicMock()
-                        mock_parser.__aenter__ = AsyncMock(return_value=mock_parser)
-                        mock_parser.__aexit__ = AsyncMock(return_value=None)
-                        mock_parser.save_messages_to_db = AsyncMock(return_value=5)
-                        mock_parser_class.return_value = mock_parser
-
-                        mock_run_async.return_value = 5
-
-                        # Set env vars
-                        result = runner.invoke(
-                            cli,
-                            ["extract", "telegram"],
-                            env={
-                                "TELEGRAM_API_ID": "12345",
-                                "TELEGRAM_API_HASH": "abc123",
-                            },
-                        )
-
-                        assert result.exit_code == 0
-
-
-class TestExtractInstagram:
-    """Test extract instagram command."""
-
-    def test_extract_instagram_requires_credentials(self) -> None:
-        """Test that extract instagram validates username and password."""
-        runner = CliRunner()
-
-        with patch("postparse.cli.extract.validate_credentials") as mock_validate:
-            # Simulate missing credentials
-            mock_validate.return_value = ["username", "password"]
-
-            result = runner.invoke(
-                cli,
-                ["extract", "instagram", "--username", "", "--password", ""],
-            )
-
-            # Should handle missing credentials
-            assert result.exit_code != 0 or "missing" in result.output.lower()
-
-    def test_extract_instagram_with_valid_credentials(self) -> None:
-        """Test extract instagram with valid credentials."""
-        runner = CliRunner()
-
-        with patch("postparse.cli.extract.load_config") as mock_load:
-            with patch("postparse.cli.extract.get_database") as mock_get_db:
-                with patch("postparse.services.parsers.instagram.instagram_parser.InstaloaderParser") as mock_parser_class:
-                    mock_config = MagicMock()
-                    mock_load.return_value = mock_config
-
-                    mock_db = MagicMock()
-                    mock_get_db.return_value = mock_db
-
-                    mock_parser = MagicMock()
-                    mock_parser.save_posts_to_db.return_value = 15
-                    mock_parser_class.return_value = mock_parser
-
-                    result = runner.invoke(
-                        cli,
-                        [
-                            "extract",
-                            "instagram",
-                            "--username",
-                            "testuser",
-                            "--password",
-                            "testpass",
-                        ],
-                    )
-
-                    assert result.exit_code == 0
-                    # Should show extraction summary
-                    assert "15" in result.output or "saved" in result.output.lower()
-
-    def test_extract_instagram_with_limit(self) -> None:
-        """Test extract instagram with post limit."""
-        runner = CliRunner()
-
-        with patch("postparse.cli.extract.load_config") as mock_load:
-            with patch("postparse.cli.extract.get_database") as mock_get_db:
-                with patch("postparse.services.parsers.instagram.instagram_parser.InstaloaderParser") as mock_parser_class:
-                    mock_config = MagicMock()
-                    mock_load.return_value = mock_config
-
-                    mock_db = MagicMock()
-                    mock_get_db.return_value = mock_db
-
-                    mock_parser = MagicMock()
-                    mock_parser.save_posts_to_db.return_value = 10
-                    mock_parser_class.return_value = mock_parser
-
-                    result = runner.invoke(
-                        cli,
-                        [
-                            "extract",
-                            "instagram",
-                            "--username",
-                            "testuser",
-                            "--password",
-                            "testpass",
-                            "--limit",
-                            "10",
-                        ],
-                    )
-
-                    assert result.exit_code == 0
-
-    def test_extract_instagram_with_force_flag(self) -> None:
-        """Test extract instagram with --force flag."""
-        runner = CliRunner()
-
-        with patch("postparse.cli.extract.load_config") as mock_load:
-            with patch("postparse.cli.extract.get_database") as mock_get_db:
-                with patch("postparse.services.parsers.instagram.instagram_parser.InstaloaderParser") as mock_parser_class:
-                    mock_config = MagicMock()
-                    mock_load.return_value = mock_config
-
-                    mock_db = MagicMock()
-                    mock_get_db.return_value = mock_db
-
-                    mock_parser = MagicMock()
-                    mock_parser.save_posts_to_db.return_value = 25
-                    mock_parser_class.return_value = mock_parser
-
-                    result = runner.invoke(
-                        cli,
-                        [
-                            "extract",
-                            "instagram",
-                            "--username",
-                            "testuser",
-                            "--password",
-                            "testpass",
-                            "--force",
-                        ],
-                    )
-
-                    assert result.exit_code == 0
-
-    def test_extract_instagram_handles_login_error(self) -> None:
-        """Test that extract instagram handles login errors."""
-        runner = CliRunner()
-
-        with patch("postparse.cli.extract.load_config") as mock_load:
-            with patch("postparse.cli.extract.get_database") as mock_get_db:
-                with patch("postparse.services.parsers.instagram.instagram_parser.InstaloaderParser") as mock_parser:
-                    mock_config = MagicMock()
-                    mock_load.return_value = mock_config
-
-                    mock_db = MagicMock()
-                    mock_get_db.return_value = mock_db
-
-                    mock_parser.side_effect = Exception("Login failed")
-
-                    result = runner.invoke(
-                        cli,
-                        [
-                            "extract",
-                            "instagram",
-                            "--username",
-                            "testuser",
-                            "--password",
-                            "wrongpass",
-                        ],
-                    )
-
-                    assert result.exit_code != 0
-
-    def test_extract_instagram_uses_env_vars(self) -> None:
-        """Test that extract instagram uses environment variables."""
-        runner = CliRunner()
-
-        with patch("postparse.cli.extract.load_config") as mock_load:
-            with patch("postparse.cli.extract.get_database") as mock_get_db:
-                with patch("postparse.services.parsers.instagram.instagram_parser.InstaloaderParser") as mock_parser_class:
-                    mock_config = MagicMock()
-                    mock_load.return_value = mock_config
-
-                    mock_db = MagicMock()
-                    mock_get_db.return_value = mock_db
-
-                    mock_parser = MagicMock()
-                    mock_parser.save_posts_to_db.return_value = 8
-                    mock_parser_class.return_value = mock_parser
-
-                    result = runner.invoke(
-                        cli,
-                        ["extract", "instagram"],
-                        env={
-                            "INSTAGRAM_USERNAME": "testuser",
-                            "INSTAGRAM_PASSWORD": "testpass",
-                        },
-                    )
-
-                    assert result.exit_code == 0
-
-
-class TestExtractAll:
-    """Test extract all command."""
-
-    def test_extract_all_with_no_credentials_shows_warning(self) -> None:
-        """
-        Test that extract all shows warnings when no credentials are set.
-
-        Verifies that the command handles missing credentials gracefully
-        and provides helpful guidance.
-        """
-        runner = CliRunner()
-
-        # Run without any credentials
-        result = runner.invoke(
-            cli,
-            ["extract", "all"],
-            env={
-                "TELEGRAM_API_ID": "",
-                "TELEGRAM_API_HASH": "",
-                "INSTAGRAM_USERNAME": "",
-                "INSTAGRAM_PASSWORD": "",
-            },
+from postparse.config import Settings
+from postparse.core.db import Database
+from postparse.services.extraction import ExtractionService
+from tests.unit.collectors.fakes import (
+    FakeLoader,
+    FakeTelegramClient,
+    Feed,
+    SleepRecorder,
+    client_factory,
+    ig_node,
+    ig_post,
+    loader_factory,
+    no_sleep,
+    tg_text,
+)
+
+SECRETS = {
+    "TELEGRAM_API_ID": "424242",
+    "TELEGRAM_API_HASH": "tg-hash-secret",
+    "TELEGRAM_PHONE": "+4915550000",
+    "INSTAGRAM_USERNAME": "me",
+    "INSTAGRAM_PASSWORD": "ig-pass-secret",
+}
+
+
+@pytest.fixture
+def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Patch the CLI's service factory; returns a dict to configure the fakes."""
+    monkeypatch.chdir(tmp_path)
+    settings = Settings(data_dir=tmp_path / "data")
+    state: dict = {
+        "client": FakeTelegramClient([tg_text(1, "a"), tg_text(2, "b")]),
+        "loader": FakeLoader(),
+        "feed": Feed([ig_post(ig_node("p1")), ig_post(ig_node("p2"))]),
+        "db_paths": [],
+    }
+
+    def build(ctx, db_path):
+        path = Path(db_path) if db_path else settings.db_path
+        state["db_paths"].append(path)
+        return ExtractionService(
+            Database.open(path), settings,
+            telegram_overrides={"client_factory": client_factory(state["client"]),
+                                "sleep": no_sleep},
+            instagram_overrides={"loader_factory": loader_factory(state["loader"]),
+                                 "saved_posts": state["feed"], "sleep": SleepRecorder()},
         )
 
-        # Should complete but show warnings
-        output_lower = result.output.lower()
-        assert "skipping" in output_lower or "no credentials" in output_lower
-
-    def test_extract_all_with_telegram_credentials_only(self) -> None:
-        """Test extract all with only Telegram credentials."""
-        runner = CliRunner()
-
-        with patch("postparse.cli.extract.load_config") as mock_load:
-            with patch("postparse.cli.extract.get_database") as mock_get_db:
-                with patch("postparse.services.parsers.telegram.telegram_parser.TelegramParser") as mock_parser_class:
-                    with patch("postparse.cli.extract.run_async") as mock_run_async:
-                        mock_config = MagicMock()
-                        mock_load.return_value = mock_config
-
-                        mock_db = MagicMock()
-                        mock_get_db.return_value = mock_db
-
-                        mock_parser = MagicMock()
-                        mock_parser.__aenter__ = AsyncMock(return_value=mock_parser)
-                        mock_parser.__aexit__ = AsyncMock(return_value=None)
-                        mock_parser.save_messages_to_db = AsyncMock(return_value=10)
-                        mock_parser_class.return_value = mock_parser
-
-                        mock_run_async.return_value = 10
-
-                        result = runner.invoke(
-                            cli,
-                            ["extract", "all"],
-                            env={
-                                "TELEGRAM_API_ID": "12345",
-                                "TELEGRAM_API_HASH": "abc123",
-                                "INSTAGRAM_USERNAME": "",
-                                "INSTAGRAM_PASSWORD": "",
-                            },
-                        )
-
-                        assert result.exit_code == 0
-                        output_lower = result.output.lower()
-                        # Should show Instagram skipped
-                        assert "skipping instagram" in output_lower
-
-    def test_extract_all_with_instagram_credentials_only(self) -> None:
-        """Test extract all with only Instagram credentials."""
-        runner = CliRunner()
-
-        with patch("postparse.cli.extract.load_config") as mock_load:
-            with patch("postparse.cli.extract.get_database") as mock_get_db:
-                with patch("postparse.services.parsers.instagram.instagram_parser.InstaloaderParser") as mock_parser_class:
-                    mock_config = MagicMock()
-                    mock_load.return_value = mock_config
-
-                    mock_db = MagicMock()
-                    mock_get_db.return_value = mock_db
-
-                    mock_parser = MagicMock()
-                    mock_parser.save_posts_to_db.return_value = 15
-                    mock_parser_class.return_value = mock_parser
-
-                    result = runner.invoke(
-                        cli,
-                        ["extract", "all"],
-                        env={
-                            "TELEGRAM_API_ID": "",
-                            "TELEGRAM_API_HASH": "",
-                            "INSTAGRAM_USERNAME": "testuser",
-                            "INSTAGRAM_PASSWORD": "testpass",
-                        },
-                    )
-
-                    assert result.exit_code == 0
-                    output_lower = result.output.lower()
-                    # Should show Telegram skipped
-                    assert "skipping telegram" in output_lower
-
-    def test_extract_all_with_both_credentials(self) -> None:
-        """Test extract all with both Telegram and Instagram credentials."""
-        runner = CliRunner()
-
-        with patch("postparse.cli.extract.load_config") as mock_load:
-            with patch("postparse.cli.extract.get_database") as mock_get_db:
-                with patch("postparse.services.parsers.telegram.telegram_parser.TelegramParser") as mock_tg_parser_class:
-                    with patch("postparse.services.parsers.instagram.instagram_parser.InstaloaderParser") as mock_ig_parser_class:
-                        with patch("postparse.cli.extract.run_async") as mock_run_async:
-                            mock_config = MagicMock()
-                            mock_load.return_value = mock_config
-
-                            mock_db = MagicMock()
-                            mock_get_db.return_value = mock_db
-
-                            # Mock Telegram parser
-                            mock_tg_parser = MagicMock()
-                            mock_tg_parser.__aenter__ = AsyncMock(
-                                return_value=mock_tg_parser
-                            )
-                            mock_tg_parser.__aexit__ = AsyncMock(return_value=None)
-                            mock_tg_parser.save_messages_to_db = AsyncMock(
-                                return_value=10
-                            )
-                            mock_tg_parser_class.return_value = mock_tg_parser
-
-                            # Mock Instagram parser
-                            mock_ig_parser = MagicMock()
-                            mock_ig_parser.save_posts_to_db.return_value = 15
-                            mock_ig_parser_class.return_value = mock_ig_parser
-
-                            mock_run_async.return_value = 10
-
-                            result = runner.invoke(
-                                cli,
-                                ["extract", "all"],
-                                env={
-                                    "TELEGRAM_API_ID": "12345",
-                                    "TELEGRAM_API_HASH": "abc123",
-                                    "INSTAGRAM_USERNAME": "testuser",
-                                    "INSTAGRAM_PASSWORD": "testpass",
-                                },
-                            )
-
-                            assert result.exit_code == 0
-                            output_lower = result.output.lower()
-                            # Should show success for both
-                            assert "completed" in output_lower
-
-    def test_extract_all_with_limit_option(self) -> None:
-        """Test extract all with --limit option."""
-        runner = CliRunner()
-
-        with patch("postparse.cli.extract.load_config") as mock_load:
-            with patch("postparse.cli.extract.get_database") as mock_get_db:
-                with patch("postparse.services.parsers.instagram.instagram_parser.InstaloaderParser") as mock_parser_class:
-                    mock_config = MagicMock()
-                    mock_load.return_value = mock_config
-
-                    mock_db = MagicMock()
-                    mock_get_db.return_value = mock_db
-
-                    mock_parser = MagicMock()
-                    mock_parser.save_posts_to_db.return_value = 5
-                    mock_parser_class.return_value = mock_parser
-
-                    result = runner.invoke(
-                        cli,
-                        ["extract", "all", "--limit", "5"],
-                        env={
-                            "TELEGRAM_API_ID": "",
-                            "TELEGRAM_API_HASH": "",
-                            "INSTAGRAM_USERNAME": "testuser",
-                            "INSTAGRAM_PASSWORD": "testpass",
-                        },
-                    )
-
-                    assert result.exit_code == 0
-
-    def test_extract_all_with_force_option(self) -> None:
-        """Test extract all with --force option."""
-        runner = CliRunner()
-
-        with patch("postparse.cli.extract.load_config") as mock_load:
-            with patch("postparse.cli.extract.get_database") as mock_get_db:
-                with patch("postparse.services.parsers.instagram.instagram_parser.InstaloaderParser") as mock_parser_class:
-                    mock_config = MagicMock()
-                    mock_load.return_value = mock_config
-
-                    mock_db = MagicMock()
-                    mock_get_db.return_value = mock_db
-
-                    mock_parser = MagicMock()
-                    mock_parser.save_posts_to_db.return_value = 20
-                    mock_parser_class.return_value = mock_parser
-
-                    result = runner.invoke(
-                        cli,
-                        ["extract", "all", "--force"],
-                        env={
-                            "TELEGRAM_API_ID": "",
-                            "TELEGRAM_API_HASH": "",
-                            "INSTAGRAM_USERNAME": "testuser",
-                            "INSTAGRAM_PASSWORD": "testpass",
-                        },
-                    )
-
-                    assert result.exit_code == 0
-
-    def test_extract_default_invokes_all(self) -> None:
-        """Test that 'extract' without subcommand invokes 'extract all'."""
-        runner = CliRunner()
-
-        # Run extract without subcommand
-        result = runner.invoke(
-            cli,
-            ["extract"],
-            env={
-                "TELEGRAM_API_ID": "",
-                "TELEGRAM_API_HASH": "",
-                "INSTAGRAM_USERNAME": "",
-                "INSTAGRAM_PASSWORD": "",
-            },
-        )
-
-        # Should show the "all platforms" header
-        assert "all platforms" in result.output.lower()
+    monkeypatch.setattr("postparse.cli.extract._build_service", build)
+    return state
 
 
-class TestExtractHelp:
-    """Test extract command help output."""
+def invoke(args: list[str], env_vars: dict[str, str] | None = None):
+    return CliRunner().invoke(cli, ["extract", *args], env=env_vars or {})
 
-    def test_extract_help_displays_subcommands(self) -> None:
-        """Test that extract --help shows available subcommands."""
-        runner = CliRunner()
-        result = runner.invoke(cli, ["extract", "--help"])
 
-        assert result.exit_code == 0
-        output_lower = result.output.lower()
-        assert "telegram" in output_lower
-        assert "instagram" in output_lower
-        assert "all" in output_lower
+def assert_no_secrets(output: str) -> None:
+    for name in ("TELEGRAM_API_HASH", "TELEGRAM_PHONE", "INSTAGRAM_PASSWORD"):
+        assert SECRETS[name] not in output
 
-    def test_extract_telegram_help(self) -> None:
-        """Test extract telegram --help displays help text."""
-        runner = CliRunner()
-        result = runner.invoke(cli, ["extract", "telegram", "--help"])
 
-        assert result.exit_code == 0
-        output_lower = result.output.lower()
-        assert "telegram" in output_lower
-        assert "api-id" in output_lower or "api_id" in output_lower
-        assert "limit" in output_lower
-        assert "force" in output_lower
+def test_telegram_success(env) -> None:
+    result = invoke(["telegram", "--limit", "5"], SECRETS)
+    assert result.exit_code == 0, result.output
+    assert "Telegram extraction" in result.output
+    assert "completed" in result.output
+    assert env["client"].iter_calls[0]["limit"] == 5
+    assert_no_secrets(result.output)
 
-    def test_extract_instagram_help(self) -> None:
-        """Test extract instagram --help displays help text."""
-        runner = CliRunner()
-        result = runner.invoke(cli, ["extract", "instagram", "--help"])
 
-        assert result.exit_code == 0
-        output_lower = result.output.lower()
-        assert "instagram" in output_lower
-        assert "username" in output_lower
-        assert "password" in output_lower
-        assert "limit" in output_lower
+def test_telegram_full_and_force_alias(env) -> None:
+    invoke(["telegram"], SECRETS)
+    invoke(["telegram", "--force"], SECRETS)
+    assert [c["min_id"] for c in env["client"].iter_calls] == [0, 0]
+    invoke(["telegram"], SECRETS)
+    assert env["client"].iter_calls[-1]["min_id"] == 2
 
+
+def test_telegram_auth_required_exit_2(env) -> None:
+    env["client"] = FakeTelegramClient(authorized=False)
+    result = invoke(["telegram", "--no-interactive"], SECRETS)
+    assert result.exit_code == 2, result.output
+    assert "login required" in result.output.lower()
+    assert_no_secrets(result.output)
+
+
+def test_telegram_missing_credentials_exit_2(env) -> None:
+    result = invoke(["telegram"], {})
+    assert result.exit_code == 2
+    assert "TELEGRAM_API_ID" in result.output
+
+
+def test_telegram_unexpected_error_exit_1(env) -> None:
+    env["client"] = FakeTelegramClient([tg_text(1)], fail_after=0)
+    result = invoke(["telegram"], SECRETS)
+    assert result.exit_code == 1
+    assert "connection lost" in result.output
+
+
+def test_custom_db_option(env, tmp_path: Path) -> None:
+    target = tmp_path / "other.db"
+    result = invoke(["telegram", "--db", str(target)], SECRETS)
+    assert result.exit_code == 0, result.output
+    assert env["db_paths"] == [target]
+    assert target.exists()
+
+
+def test_instagram_success(env) -> None:
+    result = invoke(["instagram", "--stop-after-known", "5"], SECRETS)
+    assert result.exit_code == 0, result.output
+    assert "Instagram extraction" in result.output
+    assert "Known (skipped)" in result.output
+    assert_no_secrets(result.output)
+
+
+def test_instagram_rate_limited_exit_3(env) -> None:
+    env["feed"] = Feed([ig_post(ig_node(c)) for c in "abc"], fail_at=2,
+                       error=TooManyRequestsException("429"))
+    result = invoke(["instagram"], SECRETS)
+    assert result.exit_code == 3, result.output
+    assert "rate limit" in result.output.lower()
+    assert "kept" in result.output
+
+
+def test_instagram_checkpoint_exit_2(env) -> None:
+    env["loader"] = FakeLoader(login_error=LoginException("Checkpoint required"))
+    result = invoke(["instagram"], SECRETS)
+    assert result.exit_code == 2
+    assert "Instagram app" in result.output
+    assert_no_secrets(result.output)
+
+
+def test_instagram_force_walks_everything(env) -> None:
+    invoke(["instagram"], SECRETS)
+    feed = Feed([ig_post(ig_node("p1")), ig_post(ig_node("p2"))])
+    env["feed"] = feed
+    result = invoke(["instagram", "--force"], SECRETS)
+    assert result.exit_code == 0
+    assert feed.consumed == 2
+    assert "Updated" in result.output
+
+
+def test_all_without_credentials(env) -> None:
+    result = invoke(["all"], {})
+    assert result.exit_code == 0
+    assert "Skipping Telegram" in result.output and "Skipping Instagram" in result.output
+    assert "nothing extracted" in result.output
+
+
+def test_default_invokes_all(env) -> None:
+    result = invoke([], {})
+    assert "Skipping Telegram" in result.output
+
+
+def test_all_runs_both_and_uses_highest_exit_code(env) -> None:
+    env["loader"] = FakeLoader(login_error=TooManyRequestsException("429"))
+    env["client"] = FakeTelegramClient(authorized=False)
+    result = invoke(["all", "--no-interactive"], SECRETS)
+    assert result.exit_code == 3, result.output
+    assert "Telegram extraction" in result.output and "Instagram extraction" in result.output
+
+
+def test_all_success(env) -> None:
+    result = invoke(["all"], SECRETS)
+    assert result.exit_code == 0, result.output
+    assert "2 platform(s)" in result.output
+
+
+@pytest.mark.parametrize("command", ["telegram", "instagram", "all"])
+def test_help(command: str) -> None:
+    result = CliRunner().invoke(cli, ["extract", command, "--help"])
+    assert result.exit_code == 0
+    assert "--limit" in result.output
+    assert "--transcribe" not in result.output
+
+
+def test_help_lists_new_options() -> None:
+    tg = CliRunner().invoke(cli, ["extract", "telegram", "--help"]).output
+    ig = CliRunner().invoke(cli, ["extract", "instagram", "--help"]).output
+    assert "--full" in tg and "--session" in tg and "--db" in tg
+    assert "--stop-after-known" in ig and "--refresh-dates" in ig and "--force" in ig

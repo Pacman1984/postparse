@@ -7,11 +7,13 @@ import sqlite3
 from collections.abc import Iterable, Sequence
 
 from postparse.core.db.models import (
+    InstagramDateStatus,
     InstagramDetail,
     Item,
     ItemUpsert,
     Source,
     TelegramDetail,
+    TimestampValue,
 )
 from postparse.core.db.repos.links import LinksRepo
 from postparse.core.db.repos.media import MediaRepo
@@ -123,8 +125,8 @@ class ItemsRepo:
         self.conn.execute(
             """
             INSERT INTO instagram_posts (item_id, shortcode, owner_id, typename, likes,
-                                         comments, saved_feed_rank)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                                         comments, saved_feed_rank, date_status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (item_id) DO UPDATE SET
                 shortcode = excluded.shortcode,
                 owner_id = coalesce(excluded.owner_id, instagram_posts.owner_id),
@@ -132,10 +134,11 @@ class ItemsRepo:
                 likes = coalesce(excluded.likes, instagram_posts.likes),
                 comments = coalesce(excluded.comments, instagram_posts.comments),
                 saved_feed_rank = coalesce(excluded.saved_feed_rank,
-                                           instagram_posts.saved_feed_rank)
+                                           instagram_posts.saved_feed_rank),
+                date_status = coalesce(excluded.date_status, instagram_posts.date_status)
             """,
             (item_id, d.shortcode, d.owner_id, d.typename, d.likes, d.comments,
-             d.saved_feed_rank),
+             d.saved_feed_rank, d.date_status),
         )
 
     def _upsert_telegram(self, item_id: int, d: TelegramDetail) -> None:
@@ -195,8 +198,8 @@ class ItemsRepo:
     def instagram_detail(self, item_id: int) -> InstagramDetail | None:
         """Return the Instagram detail row of an item."""
         row = self.conn.execute(
-            "SELECT shortcode, owner_id, typename, likes, comments, saved_feed_rank "
-            "FROM instagram_posts WHERE item_id = ?",
+            "SELECT shortcode, owner_id, typename, likes, comments, saved_feed_rank, "
+            "date_status FROM instagram_posts WHERE item_id = ?",
             (item_id,),
         ).fetchone()
         return InstagramDetail(*row) if row else None
@@ -231,6 +234,44 @@ class ItemsRepo:
             (json.dumps(codes),),
         ).fetchall()
         return {row[0] for row in rows}
+
+    def instagram_unverified_dates(self, limit: int | None = None) -> list[tuple[int, str]]:
+        """Return ``(item_id, shortcode)`` of Instagram items with an unverified date.
+
+        These are rows whose ``date_status`` is ``NULL`` (typically migrated
+        from schema v1), oldest item first.
+
+        Args:
+            limit: Maximum rows (``None``: all).
+        """
+        sql = (
+            "SELECT item_id, shortcode FROM instagram_posts WHERE date_status IS NULL "
+            "ORDER BY item_id"
+        )
+        params: tuple[int, ...] = ()
+        if limit is not None:
+            sql += " LIMIT ?"
+            params = (limit,)
+        return [(int(r[0]), r[1]) for r in self.conn.execute(sql, params).fetchall()]
+
+    def set_instagram_date(
+        self, item_id: int, created_at: TimestampValue | None, status: InstagramDateStatus
+    ) -> None:
+        """Record the outcome of an Instagram date check.
+
+        Args:
+            item_id: Item id.
+            created_at: Confirmed publication time (``None`` keeps the stored value).
+            status: New ``date_status``.
+        """
+        if created_at is not None:
+            self.conn.execute(
+                "UPDATE items SET created_at = ?, updated_at = ? WHERE id = ?",
+                (to_db_ts(created_at), utcnow_ts(), item_id),
+            )
+        self.conn.execute(
+            "UPDATE instagram_posts SET date_status = ? WHERE item_id = ?", (status, item_id)
+        )
 
     def set_legacy_expanded_text(self, item_id: int, text: str | None) -> None:
         """Store (or clear with ``None``) the v1 expanded text and refresh search."""

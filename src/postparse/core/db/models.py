@@ -48,6 +48,8 @@ RunStatus = Literal["running", "done", "failed", "legacy"]
 ResultStatus = Literal["ok", "no_labels", "error"]
 FetchStatus = Literal["ok", "error", "skipped"]
 PendingScope = Literal["default", "backfill", "reprocess"]
+#: Provenance of an Instagram ``created_at`` (``None``: unverified v1 value).
+InstagramDateStatus = Literal["verified", "unavailable"]
 
 TimestampValue = datetime | str
 
@@ -69,7 +71,13 @@ def _json(value: str | None) -> Any:
 
 @dataclass(frozen=True, slots=True)
 class InstagramDetail:
-    """Instagram-specific fields of an item (``instagram_posts`` row)."""
+    """Instagram-specific fields of an item (``instagram_posts`` row).
+
+    ``date_status`` records whether ``items.created_at`` was confirmed from
+    instaloader's ``date_utc`` (``verified``), could not be confirmed because
+    the post is gone (``unavailable``) or is still the unverified v1 value
+    (``None``).
+    """
 
     shortcode: str
     owner_id: int | None = None
@@ -77,6 +85,7 @@ class InstagramDetail:
     likes: int | None = None
     comments: int | None = None
     saved_feed_rank: int | None = None
+    date_status: InstagramDateStatus | None = None
 
 
 @dataclass(frozen=True, slots=True)

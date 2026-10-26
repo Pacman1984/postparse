@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -146,3 +147,21 @@ def test_transaction_rolls_back_on_error(db: Database) -> None:
         raise RuntimeError("boom")
     with db.read() as conn:
         assert conn.execute("SELECT count(*) FROM items").fetchone()[0] == 0
+
+
+def test_0002_adds_instagram_date_status(tmp_path: Path) -> None:
+    conn = connect(tmp_path / "v2.db")
+    try:
+        migrate(conn)
+        columns = {r[1] for r in conn.execute("PRAGMA table_info(instagram_posts)")}
+        assert "date_status" in columns
+        conn.execute(
+            "INSERT INTO items (source, external_id, kind) VALUES ('instagram', 'x', 'image')"
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO instagram_posts (item_id, shortcode, date_status) "
+                "VALUES (1, 'x', 'bad')"
+            )
+    finally:
+        conn.close()

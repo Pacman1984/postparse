@@ -17,7 +17,9 @@ def test_migrate_creates_and_is_idempotent(tmp_path: Path) -> None:
     runner = CliRunner()
     first = runner.invoke(cli, ["db", "migrate", "--db", str(path)])
     assert first.exit_code == 0, first.output
-    assert "Applied 1 migration" in first.output
+    from postparse.core.db import latest_version
+
+    assert f"Applied {latest_version()} migration" in first.output
     assert path.exists()
     second = runner.invoke(cli, ["db", "migrate", "--db", str(path)])
     assert second.exit_code == 0

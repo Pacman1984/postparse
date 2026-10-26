@@ -45,6 +45,7 @@ from .fakes import (
     IG_USER_ID,
     IG_USER_INFO,
     LEGACY_LOGIN_HASH,
+    LOGGED_OUT_403,
     SESSION_COOKIES,
     THROTTLED_401,
     FakeIgContext,
@@ -73,14 +74,21 @@ def make(
     loader: FakeLoader | None = None,
     creds: InstagramCredentials = CREDS,
     interactive: bool = True,
+    allow_password_login: bool = True,
     sleep: SleepRecorder | None = None,
     **kwargs,
 ) -> InstagramCollector:
+    """A collector on fakes; by default as `check instagram --login` builds it.
+
+    Extract runs (``allow_password_login=False``, the collector default) are
+    tested explicitly below.
+    """
     return InstagramCollector(
         db,
         settings,
         creds,
         interactive=interactive,
+        allow_password_login=allow_password_login,
         loader_factory=loader_factory(loader or FakeLoader()),
         saved_posts=feed or Feed([]),
         sleep=sleep or SleepRecorder(),
@@ -965,7 +973,7 @@ def test_verified_session_is_reported(db: Database, settings: Settings) -> None:
 @pytest.mark.parametrize(
     ("setup", "why"),
     [
-        ("logged_out", "session not logged in"),
+        ("logged_out", "session logged out: login_required"),
         ("no_file", "no session file"),
     ],
 )
@@ -978,7 +986,7 @@ def test_password_login_is_reported(db: Database, settings: Settings, setup: str
     collector.login()
     assert loader.logins == ["me"]
     assert [(e.phase, e.message) for e in events] == [
-        ("login", f"Logging in to Instagram with the password ({why})")
+        ("login", f"No usable Instagram session ({why}); logging in with the password now")
     ]
     assert all("pw-secret" not in (e.message or "") for e in events)
 
@@ -1200,9 +1208,36 @@ def test_real_context_login_required_falls_back_to_password(
     monkeypatch.setattr(
         instaloader.Instaloader, "login", lambda self, user, passwd: logins.append(user)
     )
-    collector = _real_collector(db, settings)
+    collector = _real_collector(db, settings, allow_password_login=True)
     collector.login()
     assert logins == ["me"] and collector.logged_in
+
+
+def test_real_context_login_required_never_logs_in_by_default(
+    db: Database, settings: Settings, http, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _real_session_file(settings)
+    before = path.read_bytes()
+    http(
+        (
+            403,
+            {"message": "login_required", "status": "fail"},
+            {"Set-Cookie": "sessionid=leaked-sid; Path=/"},
+        )
+    )
+    monkeypatch.setattr(
+        instaloader.Instaloader,
+        "login",
+        lambda self, user, passwd: pytest.fail("no password login"),
+    )
+    collector = _real_collector(db, settings)
+    with pytest.raises(InstagramAuthRequired) as info:
+        collector.login()
+    message = str(info.value)
+    assert "No password login was attempted (session logged out: login_required)" in message
+    assert "`postparse check instagram --login`" in message
+    assert "https://" not in message and "leaked-sid" not in message
+    assert path.read_bytes() == before and not collector.logged_in
 
 
 @pytest.mark.parametrize("feed_api", ["web", "iphone"])
@@ -1218,3 +1253,260 @@ def test_real_context_feed_fail_status_is_exactly_one_request(
     assert len(fake.calls) == 2  # session check + one feed request, no retries
     assert collector.stats.stopped_reason == "feed_unavailable"
     assert collector.loader.context.max_connection_attempts == 3
+
+
+# ---------------------------------------------------------------------------
+# No automatic password login (extract runs, re-fetches, API jobs)
+# ---------------------------------------------------------------------------
+
+
+def _broken_session_file(loader: FakeLoader) -> FakeLoader:
+    def broken(username: str, filename: str) -> None:
+        raise EOFError("Ran out of input")
+
+    loader.load_session_from_file = broken  # type: ignore[method-assign]
+    return loader
+
+
+#: ``(setup, loader factory, reason in the message)`` of sessions that cannot be used.
+UNUSABLE_SESSIONS = [
+    ("no_file", lambda: FakeLoader(session_user="me"), "no session file"),
+    (
+        "file",
+        lambda: _broken_session_file(FakeLoader(session_user="me")),
+        "session file unreadable",
+    ),
+    ("file", lambda: FakeLoader(session_user=None), "session logged out: login_required"),
+    (
+        "file",
+        lambda: FakeLoader(check_error=LoginRequiredException("Redirected to login page.")),
+        "session logged out: redirected to login page",
+    ),
+    (
+        "file",
+        lambda: FakeLoader(session_cookies={"csrftoken": "x"}),
+        "session logged out: the session file has no login cookies",
+    ),
+    (
+        "file",
+        lambda: FakeLoader(session_user="someone_else"),
+        "session logged out: the session belongs to another account",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "creds", [CREDS, InstagramCredentials("me", None)], ids=["password", "no-password"]
+)
+@pytest.mark.parametrize(
+    ("setup", "make_loader", "why"),
+    UNUSABLE_SESSIONS,
+    ids=["no-file", "unreadable", "login-required", "login-redirect", "no-cookies", "other-user"],
+)
+def test_extract_never_logs_in_with_the_password(
+    db: Database,
+    settings: Settings,
+    setup: str,
+    make_loader: Any,
+    why: str,
+    creds: InstagramCredentials,
+) -> None:
+    path = _existing_session(settings) if setup == "file" else _session(settings)
+    loader = make_loader()
+    events: list = []
+    collector = InstagramCollector(
+        db,
+        settings,
+        creds,
+        loader_factory=loader_factory(loader),
+        saved_posts=Feed([]),
+        sleep=SleepRecorder(),
+        prompt=lambda _: pytest.fail("must not prompt"),
+        progress=events.append,
+    )
+    assert collector.allow_password_login is False  # the default
+
+    with pytest.raises(InstagramAuthRequired) as info, collector:
+        pytest.fail("must not enter")
+
+    message = str(info.value)
+    assert message.startswith(f"No password login was attempted ({why}); automatic password ")
+    assert "trigger Instagram checkpoints" in message
+    assert "run `postparse check instagram --login` in a terminal" in message
+    assert "2FA code" in message and "then retry" in message
+    assert loader.logins == [] and loader.two_factor_codes == [] and loader.saved == []
+    assert events == []  # no "logging in with the password" line
+    assert not collector.logged_in
+    if setup == "file":
+        assert path.read_text() == "original-session"
+    else:
+        assert not path.exists()
+    assert "pw-secret" not in message
+
+
+# ---------------------------------------------------------------------------
+# Instagram's reason in messages (sanitized)
+# ---------------------------------------------------------------------------
+
+#: A login redirect whose location carries a query string with cookie-like values.
+REDIRECT_WITH_QUERY = (
+    'Query to https://i.instagram.com/api/v1/users/4242/info/ responded with "302 Found" '
+    "redirect to https://www.instagram.com/accounts/login/?next=%2Fapi%2F&sessionid=leaked-sid"
+    "&csrftoken=leaked-csrf#frag"
+)
+
+
+@pytest.mark.parametrize(
+    ("text", "reason"),
+    [
+        ('403 Forbidden - "fail" status, message "login_required"', "login_required"),
+        ('400 Bad Request - "fail" status, message "checkpoint_required"', "checkpoint_required"),
+        ('400 Bad Request - "fail" status, message "challenge_required"', "challenge_required"),
+        ('400 Bad Request - "fail" status, message "feedback_required"', "feedback_required"),
+        (
+            'Query to https://i.instagram.com/x/ responded with "400 Bad Request": '
+            '{"message": "challenge_required", "status": "fail", "checkpoint_url": '
+            '"https://i.instagram.com/challenge/?token=leaked-token"}',
+            "challenge_required",
+        ),
+        (REDIRECT_WITH_QUERY, "redirect to https://www.instagram.com/accounts/login/"),
+        ("Redirected to login page. Use --login or --load-cookies.", "redirected to login page"),
+    ],
+    ids=[
+        "login_required",
+        "checkpoint_required",
+        "challenge_required",
+        "feedback_required",
+        "json-body",
+        "redirect",
+        "login-redirect",
+    ],
+)
+def test_instagram_reason_is_short_and_sanitized(text: str, reason: str) -> None:
+    from postparse.collectors.instagram.collector import _instagram_message
+
+    full = (
+        f"JSON Query to {IG_USER_INFO}: {text} when accessing "
+        "https://i.instagram.com/x?sessionid=leaked-sid"
+    )
+    result = _instagram_message(full)
+    assert result == reason
+    for leak in ("leaked", "sessionid", "csrftoken", "token=", "?", "#"):
+        assert leak not in result
+
+
+def test_instagram_reason_redacts_secrets_and_is_truncated() -> None:
+    from postparse.collectors.instagram.collector import MAX_REASON_LENGTH, _instagram_message
+
+    reason = _instagram_message("odd answer sessionid=leaked-sid; csrftoken=leaked " + "x" * 500)
+    assert "leaked" not in reason and "sessionid=<redacted>" in reason
+    assert len(reason) <= MAX_REASON_LENGTH
+
+
+def test_checkpoint_on_session_check_shows_the_reason(db: Database, settings: Settings) -> None:
+    from instaloader.exceptions import ConnectionException
+
+    _existing_session(settings)
+    loader = FakeLoader(
+        check_error=ConnectionException(
+            f'JSON Query to {IG_USER_INFO}: 400 Bad Request - "fail" status, message '
+            f'"checkpoint_required" when accessing https://i.instagram.com/{IG_USER_INFO}'
+            "?sessionid=leaked-sid"
+        )
+    )
+    with pytest.raises(InstagramAuthRequired) as info:
+        make(db, settings, loader=loader, allow_password_login=False).login()
+    message = str(info.value)
+    assert "(Instagram: checkpoint_required)" in message
+    assert "leaked-sid" not in message and "https://" not in message
+    assert loader.logins == []
+
+
+def test_login_redirect_during_feed_shows_the_redirect_without_query(
+    db: Database, settings: Settings
+) -> None:
+    collector, loader = _feed_collector(db, settings)
+    loader.context.web_responses[IG_SAVED_FEED] = AbortDownloadException(REDIRECT_WITH_QUERY)
+    with pytest.raises(InstagramAuthRequired) as info, collector:
+        collector.collect_saved()
+    message = str(info.value)
+    assert "(Instagram: redirect to https://www.instagram.com/accounts/login/)" in message
+    assert "`postparse check instagram --login`" in message
+    for leak in ("leaked", "next=", "?", "#frag"):
+        assert leak not in message
+    assert collector.stats.stopped_reason == "auth_required"
+    assert loader.logins == []
+
+
+def test_throttled_session_check_message_has_no_url(db: Database, settings: Settings) -> None:
+    _existing_session(settings)
+    loader = FakeLoader(check_error=ig_error(THROTTLED_401))
+    with pytest.raises(InstagramSessionCheckFailed) as info:
+        make(db, settings, loader=loader).login()
+    message = str(info.value)
+    assert "(Please wait a few minutes before you try again.)" in message
+    assert "https://" not in message and IG_USER_INFO not in message
+    assert loader.logins == []
+
+
+# ---------------------------------------------------------------------------
+# "429" only as an HTTP status, never inside URLs
+# ---------------------------------------------------------------------------
+
+
+def _feed_fail_with_cursor(cursor: str) -> Exception:
+    from instaloader.exceptions import ConnectionException
+
+    return ConnectionException(
+        f'JSON Query to {IG_SAVED_FEED}: 200 OK - "fail" status, message "We\'re sorry, but '
+        f'something went wrong." when accessing https://www.instagram.com/{IG_SAVED_FEED}'
+        f"?count=50&max_id={cursor}"
+    )
+
+
+@pytest.mark.parametrize("cursor", ["3429876543210", "429", "QVFD429-x_429"])
+def test_429_inside_the_url_is_not_a_rate_limit(
+    db: Database, settings: Settings, cursor: str
+) -> None:
+    collector, loader = _feed_collector(db, settings)
+    pages = saved_feed_pages(saved_page([ig_iphone_media("a")], next_max_id=cursor))
+    loader.context.web_responses[IG_SAVED_FEED] = lambda params: (
+        _feed_fail_with_cursor(cursor) if params.get("max_id") else pages(params)
+    )
+    with pytest.raises(InstagramFeedUnavailable) as info, collector:
+        collector.collect_saved()
+    assert "something went wrong" in str(info.value) and "max_id" not in str(info.value)
+    assert collector.stats.stopped_reason == "feed_unavailable"
+    assert count(db) == 1
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        TooManyRequestsException("429 Too Many Requests when accessing https://x/?max_id=1"),
+        ig_error("429 Too Many Requests", IG_SAVED_FEED),
+        ig_error('429 - "fail" status, message "slow down"', IG_SAVED_FEED),
+        ig_error(THROTTLED_401, IG_SAVED_FEED),
+    ],
+    ids=["exception", "status-429", "status-429-bare", "401-please-wait"],
+)
+def test_real_rate_limits_are_still_detected(
+    db: Database, settings: Settings, error: Exception
+) -> None:
+    collector, loader = _feed_collector(db, settings)
+    loader.context.web_responses[IG_SAVED_FEED] = error
+    with pytest.raises(InstagramRateLimited) as info, collector:
+        collector.collect_saved()
+    assert not isinstance(info.value, InstagramFeedUnavailable)
+    assert collector.stats.stopped_reason == "rate_limited"
+    assert "https://" not in str(info.value)
+
+
+def test_session_check_ids_in_the_path_are_not_a_throttle() -> None:
+    """A user id containing 429 does not turn "login_required" into a throttle."""
+    from postparse.collectors.instagram.collector import _session_check_verdict
+
+    exc = ig_error(LOGGED_OUT_403, "api/v1/users/14290/info/")
+    assert "429" in str(exc)
+    assert _session_check_verdict(exc) == "logged_out"
+    assert _session_check_verdict(ig_error("429 Too Many Requests")) == "failed"

@@ -3,7 +3,8 @@
 Thin adapters over :class:`postparse.services.extraction.ExtractionService`.
 Credentials come from the environment (``config/.env`` is loaded by the CLI):
 ``TELEGRAM_API_ID``, ``TELEGRAM_API_HASH``, ``TELEGRAM_PHONE`` and
-``INSTAGRAM_USERNAME``, ``INSTAGRAM_PASSWORD``.
+``INSTAGRAM_USERNAME`` (Instagram uses the saved session; the password is only
+used by ``postparse check instagram --login``).
 
 Exit codes: 0 success, 1 unexpected error, 2 login required, 3 rate limited
 or Instagram refused the saved feed (retry later; nothing stored is lost).
@@ -28,6 +29,7 @@ from typing import TYPE_CHECKING, Any
 
 import rich_click as click
 from click.exceptions import Exit as ClickExit
+from rich.markup import escape
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
@@ -93,7 +95,9 @@ class _ProgressView:
 
     def __call__(self, event: ProgressEvent) -> None:
         if event.phase in _SESSION_PHASES:
-            # Session outcome: one visible line (a password login always shows as a warning).
+            # Session outcome: one visible line. Extract runs never log in with the
+            # password; a "login" event (only possible with allow_password_login)
+            # would still show as a warning.
             self.stop()
             if event.phase == "login":
                 print_warning(event.message or "Logging in to Instagram with the password")
@@ -170,14 +174,14 @@ def _print_report(report: ExtractionReport, title: str) -> None:
 def _exit_code(report: ExtractionReport) -> int:
     """Map a report to the command's exit code (and print the reason)."""
     if report.stopped_reason == "auth_required":
-        print_error(report.error or "Login required.")
+        print_error(escape(report.error or "Login required."))
         return EXIT_AUTH
     if report.stopped_reason == "rate_limited":
-        print_warning(report.error or "Rate limited; retry later.")
+        print_warning(escape(report.error or "Rate limited; retry later."))
         print_info("Everything committed before the limit was hit has been kept.")
         return EXIT_RATE_LIMITED
     if report.stopped_reason == "feed_unavailable":
-        print_warning(report.error or "Instagram refused the saved feed; retry later.")
+        print_warning(escape(report.error or "Instagram refused the saved feed; retry later."))
         print_info("Everything committed before the feed was refused has been kept.")
         return EXIT_RATE_LIMITED
     print_success(f"{report.source.capitalize()} extraction completed.")
@@ -461,8 +465,10 @@ def instagram(
 ) -> None:
     """Collect saved Instagram posts (newest first, stops at known posts).
 
-    Credentials: INSTAGRAM_USERNAME and INSTAGRAM_PASSWORD from the environment
-    or config/.env (the password is only needed when the session is invalid).
+    Uses the saved session of INSTAGRAM_USERNAME (environment or config/.env)
+    and never logs in with the password: without a usable session it stops
+    with exit code 2. Log in with `postparse check instagram --login` in a
+    terminal (the only command that uses INSTAGRAM_PASSWORD), then retry.
 
     Examples:
         postparse extract instagram
@@ -473,7 +479,8 @@ def instagram(
 
     Note:
         New posts are throttled (several seconds each). If Instagram asks for a
-        confirmation, confirm the login in the Instagram app and retry.
+        confirmation, confirm the login in the Instagram app, run
+        `postparse check instagram --login` and retry.
     """
     code = _instagram(
         ctx,
@@ -548,7 +555,10 @@ def all_platforms(
             interactive=interactive,
         )
     else:
-        print_warning("Skipping Instagram (set INSTAGRAM_USERNAME and INSTAGRAM_PASSWORD).")
+        print_warning(
+            "Skipping Instagram (set INSTAGRAM_USERNAME and log in once with "
+            "`postparse check instagram --login`)."
+        )
     console.print()
     if not codes:
         print_warning("No platform configured; nothing extracted.")

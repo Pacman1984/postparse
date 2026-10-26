@@ -38,6 +38,7 @@ from postparse.cli.utils import (
     config_path_from_ctx,
     get_console,
     print_error,
+    print_info,
     print_success,
     print_warning,
     resolve_db_path,
@@ -293,7 +294,8 @@ def instagram_status(
         result.hints.append("Verify the login with `postparse check instagram --login`")
     elif has_password:
         result.worsen("warn")
-        result.summary = "no session file; the next extract logs in with the password"
+        result.summary = "no session file; extract never logs in with the password"
+        result.hints.append("Log in once with `postparse check instagram --login` (in a terminal)")
     else:
         result.worsen("fail")
         result.summary = "no session file and INSTAGRAM_PASSWORD not set"
@@ -304,10 +306,28 @@ def instagram_status(
     return result
 
 
+def _print_session_event(event: Any) -> None:
+    """Print the session outcome of ``--login`` (a password login as a warning)."""
+    if event.phase == "login":
+        print_warning(
+            escape(
+                f"{event.message}. This is the only command that logs in with the password; "
+                "Instagram may ask for a 2FA code or a confirmation in the Instagram app."
+            )
+        )
+    elif event.phase == "session" and event.message:
+        print_info(escape(event.message))
+
+
 def _make_instagram_collector(
     settings: Settings, credentials: Any, config: Any, session: str | None
 ) -> Any:
-    """Create the Instagram collector used by ``--login`` (tests replace this)."""
+    """Create the Instagram collector used by ``--login`` (tests replace this).
+
+    The only collector created with ``allow_password_login=True``: an
+    interactive, explicitly requested login. Extract runs, transcription
+    re-fetches and API jobs never log in with the password.
+    """
     from postparse.collectors.instagram import InstagramCollector, InstagramOptions
     from postparse.core.db import Database
 
@@ -319,13 +339,20 @@ def _make_instagram_collector(
         InstagramOptions.from_config(config),
         interactive=True,
         session=session,
+        allow_password_login=True,
+        progress=_print_session_event,
     )
 
 
 def instagram_login(
     settings: Settings, config: Any, username: str | None, session: str | None
 ) -> CheckResult:
-    """Load the Instagram session (or log in) and save it."""
+    """Verify the saved Instagram session, or log in with the password, and save it.
+
+    The password login (with a 2FA prompt if needed) only happens here, and
+    only when there is no usable session; a throttled session check never
+    leads to one.
+    """
     from postparse.collectors import CollectorError, instagram_credentials
 
     result = CheckResult("instagram login")
@@ -634,7 +661,10 @@ def telegram(ctx: click.Context, session: str | None, login: bool) -> None:
 @click.option(
     "--login",
     is_flag=True,
-    help="Load the session or log in to Instagram (may prompt for a 2FA code)",
+    help=(
+        "Verify the saved session; without a usable one log in with INSTAGRAM_PASSWORD "
+        "(may prompt for a 2FA code). The only command that uses the password."
+    ),
 )
 @click.pass_context
 def instagram(ctx: click.Context, username: str | None, session: str | None, login: bool) -> None:

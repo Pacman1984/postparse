@@ -423,3 +423,31 @@ def test_circuit_breaker_option_from_config() -> None:
     config = SimpleNamespace(get_section=lambda name: {"max_consecutive_refetch_failures": 5})
     assert TranscriptionOptions.from_config(config).max_consecutive_refetch_failures == 5
     assert TranscriptionOptions().max_consecutive_refetch_failures == 3
+
+
+@pytest.mark.parametrize(
+    "overrides", [{}, {"allow_password_login": True}], ids=["default", "forced"]
+)
+def test_refetch_collector_never_logs_in_with_the_password(
+    db: Database, settings: Settings, overrides: dict[str, Any]
+) -> None:
+    from tests.unit.collectors.fakes import FakeLoader, loader_factory
+
+    assert settings.sessions_dir is not None
+    session = settings.sessions_dir / "instagram_me"
+    session.parent.mkdir(parents=True)
+    session.write_text("original-session")
+    loader = FakeLoader(session_user=None)  # logged out
+    svc = TranscriptionService(
+        db,
+        settings,
+        env={"INSTAGRAM_USERNAME": "me", "INSTAGRAM_PASSWORD": "pw"},
+        instagram_overrides={"loader_factory": loader_factory(loader), **overrides},
+        interactive=True,
+    )
+    collector = svc._make_collector()
+    assert collector.allow_password_login is False
+    with pytest.raises(InstagramAuthRequired, match="No password login was attempted"):
+        collector.login()
+    assert loader.logins == [] and loader.two_factor_codes == [] and loader.saved == []
+    assert session.read_text() == "original-session"

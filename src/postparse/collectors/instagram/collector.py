@@ -15,8 +15,10 @@ pending-transcription media row is created (with the video URL only when the
 feed item already carries it).
 
 The saved session is verified with a single request to the private user-info
-endpoint (no legacy GraphQL ``query_hash``). Only a definitive "not logged in"
-answer falls back to the password login; a throttled or failed check raises
+endpoint (no legacy GraphQL ``query_hash``). There is no automatic password
+login: without a usable session :class:`InstagramAuthRequired` names the reason
+and points to the interactive ``postparse check instagram --login`` (the only
+caller that sets ``allow_password_login``). A throttled or failed check raises
 :class:`InstagramSessionCheckFailed` and leaves the session file alone. A feed
 page that Instagram answers with a ``"fail"`` status is not retried: it raises
 :class:`InstagramFeedUnavailable` (only network errors are retried).
@@ -29,6 +31,7 @@ Example:
 from __future__ import annotations
 
 import logging
+import re
 import time
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
@@ -36,6 +39,7 @@ from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 from typing import Any, Literal, cast
+from urllib.parse import urlsplit
 
 from postparse.collectors.base import (
     AuthRequired,
@@ -362,18 +366,91 @@ def _feed_error(exc: BaseException, feed_api: FeedApi) -> BaseException:
     translated = translate_error(exc)
     if translated is not exc:
         return translated
-    text = str(exc).lower()
+    text = _marker_text(str(exc))
     if type(exc).__name__ == "ConnectionException" and any(m in text for m in _FEED_FAIL_MARKERS):
         return InstagramFeedUnavailable(feed_api, _instagram_message(str(exc)))
     return exc
 
 
-def _instagram_message(text: str) -> str:
-    """Instagram's message from an instaloader error text (without the URL)."""
-    marker = 'message "'
-    if marker in text:
-        return text.split(marker, 1)[1].split('"', 1)[0]
+#: Longest Instagram reason quoted in messages (characters).
+MAX_REASON_LENGTH = 200
+_URL_RE = re.compile(r"https?://[^\s\"'<>]+", re.IGNORECASE)
+#: instaloader's request prefix (``JSON Query to <path>: ``); the path carries ids.
+_QUERY_PREFIX_RE = re.compile(r"^\s*JSON Query to \S+:\s*", re.IGNORECASE)
+#: ``message "..."`` (instaloader) or ``"message": "..."`` (JSON body of a fatal status).
+_MESSAGE_RES = (
+    re.compile(r'message "([^"]*)"'),
+    re.compile(r'"message"\s*:\s*"([^"]*)"'),
+)
+_REDIRECT_RE = re.compile(r"redirect(?:ed)? to (https?://[^\s\"'<>]+)", re.IGNORECASE)
+#: ``name=value`` pairs that must never be shown (cookies, tokens, passwords).
+_SECRET_RE = re.compile(
+    r"(?i)\b(sessionid|csrftoken|ds_user_id|mid|ig_did|rur|shbid|shbts|"
+    r"[\w-]*token[\w-]*|[\w-]*passw\w*|enc_password|cookie|authorization)\s*[=:]\s*[^\s;,&\"']+"
+)
+#: HTTP status 429 as a word (applied to the text without URLs and request paths).
+_HTTP_429_RE = re.compile(r"(?<![\w./=&?-])429(?![\w./=&?-])")
+
+
+def _strip_url(url: str) -> str:
+    """``scheme://host/path`` of ``url`` (query string and fragment removed)."""
+    parts = urlsplit(url)
+    return f"{parts.scheme}://{parts.netloc}{parts.path}"
+
+
+def _error_head(text: str) -> str:
+    """The error text before instaloader's `` when accessing <url>`` tail."""
     return text.split(" when accessing ", 1)[0]
+
+
+def _marker_text(text: str) -> str:
+    """Lower-case error text for marker checks.
+
+    The request URL (`` when accessing ...``) is dropped and other URLs are
+    reduced to ``scheme://host/path``, so cursor ids, user ids and query
+    parameters cannot match a marker.
+    """
+    return _URL_RE.sub(lambda m: _strip_url(m.group(0)), _error_head(text)).lower()
+
+
+def _is_http_429(text: str) -> bool:
+    """True if the error text reports HTTP 429 (never matched inside URLs or paths)."""
+    head = _QUERY_PREFIX_RE.sub("", _URL_RE.sub(" ", _error_head(text)))
+    return bool(_HTTP_429_RE.search(head))
+
+
+def _instagram_message(text: str) -> str:
+    """Instagram's short reason from an instaloader error text (sanitized).
+
+    Returns the ``message "..."`` part (e.g. ``checkpoint_required``,
+    ``login_required``), for a login redirect the redirect target as
+    ``scheme://host/path``, otherwise the error text without the request URL.
+    Query strings, fragments and ``name=value`` secrets (cookies, tokens,
+    passwords) are removed; the result is at most :data:`MAX_REASON_LENGTH`
+    characters.
+    """
+    reason: str | None = None
+    for pattern in _MESSAGE_RES:
+        match = pattern.search(text)
+        if match and match.group(1).strip():
+            reason = match.group(1).strip()
+            break
+    if reason is None:
+        redirect = _REDIRECT_RE.search(text)
+        if redirect:
+            reason = f"redirect to {_strip_url(redirect.group(1))}"
+        elif "redirected to login page" in text.lower():
+            reason = "redirected to login page"
+        else:
+            head = _error_head(text)
+            head = head.split(": {", 1)[0]  # no JSON response body
+            reason = _QUERY_PREFIX_RE.sub("", head).strip()
+    reason = _URL_RE.sub(lambda m: _strip_url(m.group(0)), reason)
+    reason = _SECRET_RE.sub(lambda m: f"{m.group(1)}=<redacted>", reason)
+    reason = " ".join(reason.split())
+    if len(reason) > MAX_REASON_LENGTH:
+        reason = reason[: MAX_REASON_LENGTH - 1].rstrip() + "…"
+    return reason
 
 
 class _WebFeed:
@@ -670,27 +747,42 @@ _CHALLENGE_MARKERS = (
     "feedback_required",
     "login_required",
     "redirected to login page",
+    "instagram.com/accounts/login",
 )
-_RATE_MARKERS = ("429", "too many requests", "please wait a few minutes", "rate limit")
-#: Session-check answers that are throttles (checked first; no bare "429": URLs carry ids).
+#: Throttle answers (an HTTP 429 status is detected separately, see :func:`_is_http_429`).
+_RATE_MARKERS = ("too many requests", "please wait a few minutes", "rate limit")
+#: Session-check answers that are throttles (checked first; markers never match URL text).
 _THROTTLE_MARKERS = ("too many requests", "please wait a few minutes", "rate limit", "401 ")
 #: Session-check answers that positively mean "this session is not logged in".
-_LOGGED_OUT_MARKERS = ("login_required", "redirected to login page", "require_login")
+_LOGGED_OUT_MARKERS = (
+    "login_required",
+    "redirected to login page",
+    "require_login",
+    "instagram.com/accounts/login",
+)
 #: Session-check answers that need the user (a password login would not help).
 _USER_ACTION_MARKERS = ("checkpoint", "challenge", "feedback_required")
 
 
 def translate_error(exc: BaseException) -> BaseException:
-    """Map instaloader exceptions to collector errors (others are returned as-is)."""
+    """Map instaloader exceptions to collector errors (others are returned as-is).
+
+    Markers are matched only against the error text without the request URL
+    (see :func:`_marker_text`), so ids in URLs (``max_id=...3429...``) cannot
+    turn a refusal into a rate limit. The collector errors carry Instagram's
+    sanitized reason (:func:`_instagram_message`).
+    """
     if isinstance(exc, CollectorError):
         return exc
     name = type(exc).__name__
-    text = str(exc).lower()
+    raw = str(exc)
+    text = _marker_text(raw)
+    reason = _instagram_message(raw) if raw else None
     if name == "TooManyRequestsException" or (
         name in ("ConnectionException", "QueryReturnedBadRequestException")
-        and any(marker in text for marker in _RATE_MARKERS)
+        and (_is_http_429(raw) or any(marker in text for marker in _RATE_MARKERS))
     ):
-        return InstagramRateLimited(str(exc) or None)
+        return InstagramRateLimited(reason)
     if name == "TwoFactorAuthRequiredException":
         return InstagramAuthRequired("Two-factor code required.")
     if name == "BadCredentialsException":
@@ -705,7 +797,10 @@ def translate_error(exc: BaseException) -> BaseException:
         )
         and any(marker in text for marker in _CHALLENGE_MARKERS)
     ):
-        return InstagramAuthRequired("Instagram requires a confirmation or a new login.")
+        return InstagramAuthRequired(
+            "Instagram requires a confirmation or a new login"
+            + (f" (Instagram: {reason})." if reason else ".")
+        )
     return exc
 
 
@@ -719,8 +814,12 @@ def _session_check_verdict(exc: BaseException) -> str:
     name = type(exc).__name__
     if name == "LoginRequiredException":
         return "logged_out"
-    text = str(exc).lower()
-    if name == "TooManyRequestsException" or any(m in text for m in _THROTTLE_MARKERS):
+    text = _marker_text(str(exc))
+    if (
+        name == "TooManyRequestsException"
+        or _is_http_429(str(exc))
+        or any(m in text for m in _THROTTLE_MARKERS)
+    ):
         return "failed"
     if any(marker in text for marker in _USER_ACTION_MARKERS):
         return "user_action"
@@ -746,8 +845,13 @@ def _session_cookies(loader: Any) -> dict[str, Any]:
 class InstagramCollector:
     """Collect saved Instagram posts into the schema v2 database.
 
-    Use as a context manager: entering loads/validates the session (logging in
-    if needed), leaving saves the session.
+    Use as a context manager: entering loads/validates the session, leaving
+    saves the session.
+
+    A password login is never automatic: scripted password logins are what
+    makes Instagram ask for checkpoints. Without a usable session the collector
+    raises :class:`InstagramAuthRequired` unless ``allow_password_login`` is set,
+    which only the interactive ``postparse check instagram --login`` does.
 
     Args:
         db: Target database.
@@ -757,6 +861,9 @@ class InstagramCollector:
         interactive: Allow prompting for a two-factor code; otherwise a 2FA
             challenge raises :class:`InstagramAuthRequired`.
         session: ``--session`` override (file path).
+        allow_password_login: Fall back to the password login when there is
+            no usable session (only for the interactive
+            ``postparse check instagram --login``; default ``False``).
         loader_factory: Creates the instaloader instance (tests pass a fake).
         saved_posts: Returns the saved-post iterator for a loader (default:
             :func:`iter_saved_feed` with ``options.feed_api``).
@@ -765,7 +872,8 @@ class InstagramCollector:
         sleep: Sleep function (tests pass a no-op).
         progress: Receives the session outcome while logging in (phase
             ``session``: saved session verified; phase ``login``: password
-            login about to start); no secrets in the messages.
+            login about to start, only with ``allow_password_login``); no
+            secrets in the messages.
     """
 
     def __init__(
@@ -777,6 +885,7 @@ class InstagramCollector:
         *,
         interactive: bool = True,
         session: str | Path | None = None,
+        allow_password_login: bool = False,
         loader_factory: LoaderFactory | None = None,
         saved_posts: SavedPostsFn | None = None,
         post_from_shortcode: PostFromShortcode | None = None,
@@ -789,6 +898,7 @@ class InstagramCollector:
         self.credentials = credentials
         self.options = options or InstagramOptions()
         self.interactive = interactive
+        self.allow_password_login = allow_password_login
         self.load_path, self.save_path = resolve_session_path(
             settings, credentials.username, session
         )
@@ -820,16 +930,19 @@ class InstagramCollector:
         self.save_session()
 
     def login(self) -> None:
-        """Load the saved session or log in.
+        """Load and verify the saved session.
 
-        The password login (when ``INSTAGRAM_PASSWORD`` is set) is only tried
-        when there is no session file or the session check positively shows
-        that the session is not logged in (see :meth:`_check_session`).
+        Without a usable session (no file, unreadable file, or the session
+        check positively shows that it is not logged in) a password login is
+        only tried when ``allow_password_login`` is set and
+        ``INSTAGRAM_PASSWORD`` is configured; otherwise
+        :class:`InstagramAuthRequired` names the reason and the way to log in.
 
         Raises:
-            InstagramAuthRequired: No valid session and the login failed or
-                needs user interaction that is not allowed; or Instagram asks
-                for a confirmation (checkpoint).
+            InstagramAuthRequired: No usable session and no password login
+                allowed (or possible), the login failed or needs user
+                interaction that is not allowed, or Instagram asks for a
+                confirmation (checkpoint).
             InstagramSessionCheckFailed: The session check was throttled or
                 failed; no password login was attempted.
             InstagramRateLimited: Instagram rate-limited the login.
@@ -838,31 +951,41 @@ class InstagramCollector:
         username = self.credentials.username
         if self.load_path.exists():
             logger.info("Loading Instagram session from %s", self.load_path)
-            valid = False
+            logged_out: str | None
             try:
                 self.loader.load_session_from_file(username, str(self.load_path))
             except Exception as exc:
                 logger.warning("Instagram session file could not be read: %s", type(exc).__name__)
-                why = "session file unreadable"
+                logged_out = "session file unreadable"
             else:
-                valid = self._check_session()
-                why = "session not logged in"
-            if valid:
+                logged_out = self._check_session()
+            if logged_out is None:
                 self.logged_in = True
                 logger.info("Instagram session is valid")
                 self._session_event("session", "Instagram session verified (no password login)")
                 return
-            logger.info("Instagram session is not logged in")
+            why = logged_out
+            logger.info("Instagram session is not usable (%s)", why)
         else:
             logger.info("No Instagram session file at %s", self.load_path)
             why = "no session file"
+        if not self.allow_password_login:
+            raise InstagramAuthRequired(
+                f"No password login was attempted ({why}); automatic password logins "
+                "are disabled because they trigger Instagram checkpoints."
+            )
         if not self.credentials.password:
-            raise InstagramAuthRequired("No valid session and INSTAGRAM_PASSWORD is not set.")
-        logger.info("Falling back to the Instagram password login")
-        self._session_event("login", f"Logging in to Instagram with the password ({why})")
+            raise InstagramAuthRequired(
+                f"No valid session ({why}) and INSTAGRAM_PASSWORD is not set."
+            )
+        logger.info("Falling back to the Instagram password login (%s)", why)
+        self._session_event(
+            "login",
+            f"No usable Instagram session ({why}); logging in with the password now",
+        )
         self._password_login()
 
-    def _check_session(self) -> bool:
+    def _check_session(self) -> str | None:
         """Verify the loaded session with at most one request.
 
         The ``sessionid`` / ``ds_user_id`` cookies are checked locally first
@@ -874,8 +997,9 @@ class InstagramCollector:
         "not logged in".
 
         Returns:
-            ``True`` if the session is usable, ``False`` if it is positively
-            not logged in (or belongs to another account).
+            ``None`` if the session is usable, otherwise why it is positively
+            not logged in (e.g. ``session logged out: login_required``,
+            Instagram's sanitized reason).
 
         Raises:
             InstagramAuthRequired: Instagram asks for a confirmation.
@@ -885,7 +1009,7 @@ class InstagramCollector:
         user_id = str(cookies.get("ds_user_id") or "")
         if not cookies.get("sessionid") or not user_id.isdigit():
             logger.info("Instagram session file has no login cookies")
-            return False
+            return "session logged out: the session file has no login cookies"
         context = self.loader.context
         context.user_id = int(user_id)  # sent as ig-intended-user-id by get_iphone_json
         attempts = context.max_connection_attempts
@@ -894,30 +1018,30 @@ class InstagramCollector:
             data = context.get_iphone_json(USER_INFO_PATH.format(user_id=user_id), {})
         except Exception as exc:
             verdict = _session_check_verdict(exc)
+            reason = _instagram_message(str(exc)) or type(exc).__name__
             if verdict == "logged_out":
-                logger.info("Instagram session check: not logged in (%s)", type(exc).__name__)
-                return False
+                logger.info("Instagram session check: not logged in (%s)", reason)
+                return f"session logged out: {reason}"
             if verdict == "user_action":
-                logger.warning("Instagram session check: confirmation required")
+                logger.warning("Instagram session check: confirmation required (%s)", reason)
                 raise InstagramAuthRequired(
-                    "Instagram asks for a confirmation of the saved session."
+                    f"Instagram asks for a confirmation of the saved session (Instagram: {reason})."
                 ) from exc
             logger.warning(
-                "Instagram session check failed (%s); no password login attempted",
-                type(exc).__name__,
+                "Instagram session check failed (%s); no password login attempted", reason
             )
-            raise InstagramSessionCheckFailed(str(exc) or type(exc).__name__) from exc
+            raise InstagramSessionCheckFailed(reason) from exc
         finally:
             context.max_connection_attempts = attempts
         user = data.get("user") if isinstance(data, dict) else None
         current = user.get("username") if isinstance(user, dict) else None
         if not isinstance(current, str) or not current:
             logger.warning("Instagram session check returned no username; using the session")
-            return True
+            return None
         if current.lower() != self.credentials.username.lower():
             logger.info("Instagram session belongs to another account")
-            return False
-        return True
+            return "session logged out: the session belongs to another account"
+        return None
 
     def _password_login(self) -> None:
         """Log in with the password (and a 2FA code when interactive)."""

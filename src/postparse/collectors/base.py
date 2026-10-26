@@ -85,12 +85,16 @@ class TelegramAuthRequired(AuthRequired):
 
 
 class InstagramAuthRequired(AuthRequired):
-    """Instagram session is invalid and no automatic login was possible."""
+    """Instagram session is invalid and no automatic login was possible.
+
+    Collection never logs in with the password; the message points to the
+    interactive ``postparse check instagram --login``.
+    """
 
     def __init__(self, detail: str | None = None) -> None:
         message = (
-            "Instagram login required. If Instagram asks for a confirmation, confirm the "
-            "login in the Instagram app, then retry `postparse extract instagram` in a terminal."
+            "Instagram login required: run `postparse check instagram --login` in a terminal "
+            "(it may ask for a 2FA code or a confirmation in the Instagram app), then retry."
         )
         super().__init__(f"{detail} {message}" if detail else message)
 

@@ -6,7 +6,32 @@ All notable changes to PostParse are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **No automatic Instagram password login**: `extract instagram` (also with
+  `--transcribe`), `transcribe run` re-fetches and all API jobs never log in
+  with `INSTAGRAM_PASSWORD`. Without a usable session (no session file,
+  unreadable file, session logged out) they raise `InstagramAuthRequired`
+  (exit code 2, `error_code: auth_required`) that names the reason and says to
+  run `postparse check instagram --login` in a terminal; the session file is
+  not touched. `InstagramCollector` has a new `allow_password_login` argument
+  (default `False`) that only `check instagram --login` sets; it prints a
+  warning before the password login. A scripted password login after a
+  session check had made Instagram flag the account (confirmation request /
+  login redirect on the first feed page).
+
 ### Fixed
+
+- **Instagram's reason in messages**: logged-out sessions, confirmations,
+  feed refusals and rate limits quote Instagram's sanitized short reason
+  (`message "..."`, e.g. `checkpoint_required`, or a login redirect as
+  `scheme://host/path`); query strings, cookies, tokens and response bodies
+  are never included (at most 200 characters). A failed session check no
+  longer quotes the request URL.
+- **No false "429" rate limits**: rate-limit markers are no longer matched
+  inside URLs or request paths (cursor and user ids such as `max_id=...3429...`);
+  an HTTP 429 / `TooManyRequestsException` is still a rate limit. A feed
+  refusal with such a cursor is reported as `feed_unavailable`.
 
 - **Instagram session check**: the saved session is no longer verified with
   instaloader's `test_login()` (legacy GraphQL `query_hash` d6f4427…, which
@@ -16,8 +41,8 @@ All notable changes to PostParse are documented here. The format follows
   connection attempt). A throttled or failed check raises the new
   `InstagramSessionCheckFailed` (a subclass of `InstagramRateLimited`, exit
   code 3) and **never falls back to a password login**; the session file is
-  left untouched. The password login is only used when the session is
-  positively logged out.
+  left untouched. A password login (now only `check instagram --login`, see
+  above) is only used when the session is positively logged out.
 - **Instagram saved feed**: collected through the private API
   (`api/v1/feed/saved/posts/`, paginated with `max_id`) instead of
   `Profile.own_profile().get_saved_posts()`, which use legacy GraphQL
@@ -42,8 +67,8 @@ All notable changes to PostParse are documented here. The format follows
   was lost and which `instagram.feed_api` to try; report `stopped_reason` and
   job `error_code` `feed_unavailable`.
 - **Instagram session outcome is shown**: `extract instagram` prints
-  "Instagram session verified (no password login)" or a warning before a
-  password login (with the reason); API jobs get the same progress message.
+  "Instagram session verified (no password login)"; API jobs get the same
+  progress message.
 
 ## [0.2.0] - 2026-10-26
 

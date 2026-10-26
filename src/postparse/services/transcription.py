@@ -248,7 +248,8 @@ class TranscriptionService:
             instagram_credentials(self.env),
             InstagramOptions.from_config(self.config),
             interactive=self.interactive,
-            **self.instagram_overrides,
+            # Re-fetches never log in with the password (see `check instagram --login`).
+            **{**self.instagram_overrides, "allow_password_login": False},
         )
 
     def _fetcher(self, refetch: bool) -> Any:

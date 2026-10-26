@@ -114,7 +114,7 @@ postparse check instagram --login
 |---|---|---|---|
 | `--username` | TEXT |  | Instagram username (default: INSTAGRAM_USERNAME) |
 | `--session` | TEXT |  | Session file (default: &lt;sessions_dir&gt;/instagram_&lt;username&gt;) |
-| `--login` | flag |  | Load the session or log in to Instagram (may prompt for a 2FA code) |
+| `--login` | flag |  | Verify the saved session; without a usable one log in with INSTAGRAM_PASSWORD (may prompt for a 2FA code). The only command that uses the password. |
 
 ### `postparse check llm`
 
@@ -634,8 +634,10 @@ Usage: postparse extract instagram [OPTIONS]
 
 Collect saved Instagram posts (newest first, stops at known posts).
 
-Credentials: INSTAGRAM_USERNAME and INSTAGRAM_PASSWORD from the environment
-or config/.env (the password is only needed when the session is invalid).
+Uses the saved session of INSTAGRAM_USERNAME (environment or config/.env)
+and never logs in with the password: without a usable session it stops
+with exit code 2. Log in with `postparse check instagram --login` in a
+terminal (the only command that uses INSTAGRAM_PASSWORD), then retry.
 
 **Examples:**
 
@@ -651,7 +653,8 @@ postparse extract instagram --transcribe
 
 ```text
 New posts are throttled (several seconds each). If Instagram asks for a
-confirmation, confirm the login in the Instagram app and retry.
+confirmation, confirm the login in the Instagram app, run
+`postparse check instagram --login` and retry.
 ```
 
 | Option | Type | Default | Description |

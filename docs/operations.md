@@ -177,30 +177,50 @@ postparse db reindex
 * Exit code 3 / FloodWait: Telegram asked to wait longer than
   `telegram.flood_sleep_threshold`; retry later.
 
-### Instagram: checkpoint, 2FA, soft block
+### Instagram: logging in, checkpoint, 2FA, soft block
 
-* **2FA**: interactive runs prompt for the code; non-interactive runs exit with
-  code 2. Run `postparse extract instagram` in a terminal.
+* **Logging in**: run `postparse check instagram --login` in a terminal. It
+  verifies the saved session (`data/sessions/instagram_<username>`) and, only
+  if there is none or Instagram says it is logged out, logs in with
+  `INSTAGRAM_PASSWORD`. It prints a warning before that password login and may
+  ask for a 2FA code or a confirmation in the Instagram app. It is the
+  **only** command that ever uses the password.
+* **Extract never uses the password**: `extract instagram` (also with
+  `--transcribe`), `transcribe run` re-fetches and all API jobs only use the
+  saved session. Without a usable one (no session file, unreadable file,
+  session logged out) they stop with exit code 2 / `error_code:
+  auth_required` and a message like "No password login was attempted
+  (session logged out: login_required); automatic password logins are
+  disabled because they trigger Instagram checkpoints. Instagram login
+  required: run `postparse check instagram --login` in a terminal ..., then
+  retry." Repeated scripted password logins are what makes Instagram ask for
+  checkpoints, so there is no switch to turn them back on.
+* **Instagram's reason**: logged-out sessions, confirmations, feed refusals
+  and rate limits quote Instagram's own short reason, e.g. `(Instagram:
+  checkpoint_required)`, `login_required`, `challenge_required`,
+  `feedback_required`, or for a login redirect the target as
+  `https://host/path`. Query strings, cookies, tokens and response bodies are
+  never shown (at most 200 characters).
+* **2FA**: `check instagram --login` prompts for the code in the terminal.
 * **Checkpoint / "confirm it was you"**: confirm the login in the Instagram app,
-  then retry. If the saved session keeps failing, delete
-  `data/sessions/instagram_<username>` and log in again (needs
-  `INSTAGRAM_PASSWORD`).
+  then run `postparse check instagram --login` and retry the extract. Do not
+  delete the session file just because a run failed.
 * **"Instagram did not confirm the saved session"**: exit code 3. The session
   check (one request to `i.instagram.com/api/v1/users/<id>/info/`, a single
   attempt) was throttled (401 "Please wait a few minutes", 429) or Instagram
   was unreachable. This says nothing about the session itself, so **no password
   login is attempted** and the session file is left untouched; nothing was
-  collected or lost. Wait a few hours and retry. A password login (with
-  `INSTAGRAM_PASSWORD`) only happens when the check positively says the session
-  is logged out (login redirect, `login_required`, session of another account,
-  no `sessionid` cookie) or when there is no session file. Repeated scripted
-  password logins are what triggers checkpoints, so do not delete a session
+  collected or lost. Wait a few hours and retry. Even `check instagram
+  --login` only logs in with the password when the check positively says the
+  session is logged out (login redirect, `login_required`, session of another
+  account, no `sessionid` cookie) or when there is no session file; a
+  throttled check never leads to a password login. Do not delete a session
   file just because of this message.
 * **Session outcome on the console**: every `extract instagram` run prints
-  either "Instagram session verified (no password login)" or a warning
-  "Logging in to Instagram with the password (...)" with the reason (no
-  session file, session not logged in, session file unreadable). A password
-  login is never silent.
+  "Instagram session verified (no password login)" or stops with exit code 2
+  and the reason. `check instagram --login` prints the warning "No usable
+  Instagram session (<reason>); logging in with the password now ..." before
+  a password login, so it is never silent.
 * **"Instagram refused the saved feed ... something went wrong"**: exit code 3
   (`stopped_reason` / job `error_code` `feed_unavailable`). The session check
   passed, so the session is fine and no password login is attempted; Instagram

@@ -30,7 +30,12 @@ IG_ENV = {"INSTAGRAM_USERNAME": "me", "INSTAGRAM_PASSWORD": "pw"}
 @pytest.fixture
 def settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Settings:
     monkeypatch.chdir(tmp_path)
-    return Settings(data_dir=tmp_path / "data")
+    settings = Settings(data_dir=tmp_path / "data")
+    assert settings.sessions_dir is not None
+    session = settings.sessions_dir / "instagram_me"  # a verified saved session
+    session.parent.mkdir(parents=True)
+    session.write_text("original-session")
+    return settings
 
 
 @pytest.fixture
@@ -48,7 +53,7 @@ def service(db, settings, env, client=None, feed=None, loader=None, **ig) -> Ext
             "sleep": no_sleep,
         },
         instagram_overrides={
-            "loader_factory": loader_factory(loader or FakeLoader()),
+            "loader_factory": loader_factory(loader or FakeLoader(session_user="me")),
             "saved_posts": feed or Feed([]),
             "sleep": SleepRecorder(),
             **ig,
@@ -141,3 +146,46 @@ def test_instagram_missing_username(db: Database, settings: Settings) -> None:
     report = service(db, settings, {}).instagram()
     assert report.stopped_reason == "auth_required"
     assert "INSTAGRAM_USERNAME" in report.error
+
+
+# -- no automatic password login (CLI extract and API jobs) -------------------------
+
+
+@pytest.mark.parametrize(
+    "overrides", [{}, {"allow_password_login": True}], ids=["default", "forced"]
+)
+def test_instagram_never_logs_in_with_the_password(
+    db: Database, settings: Settings, overrides: dict
+) -> None:
+    loader = FakeLoader(session_user=None)  # the saved session is logged out
+    report = service(db, settings, IG_ENV, loader=loader, **overrides).instagram()
+
+    assert report.stopped_reason == "auth_required" and not report.ok
+    assert "No password login was attempted (session logged out: login_required)" in report.error
+    assert "`postparse check instagram --login`" in report.error
+    assert loader.logins == [] and loader.two_factor_codes == [] and loader.saved == []
+    assert (settings.sessions_dir / "instagram_me").read_text() == "original-session"
+
+
+def test_api_instagram_job_never_logs_in_with_the_password(
+    db: Database, settings: Settings
+) -> None:
+    import asyncio
+
+    from postparse.api.jobs.kinds import instagram_extract_job, with_credentials
+
+    (settings.sessions_dir / "instagram_me").unlink()
+    loader = FakeLoader(session_user="me")
+    shared = service(db, settings, {}, loader=loader)
+    job = instagram_extract_job(
+        with_credentials(shared, {"INSTAGRAM_USERNAME": "me", "INSTAGRAM_PASSWORD": "pw"}),
+        limit=None,
+        stop_after_known=20,
+        username="me",
+    )
+    report = asyncio.run(job(lambda *args: None))
+
+    assert report.stopped_reason == "auth_required"
+    assert "No password login was attempted (no session file)" in report.error
+    assert loader.logins == [] and loader.saved == []
+    assert not (settings.sessions_dir / "instagram_me").exists()

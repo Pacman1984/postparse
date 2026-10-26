@@ -244,7 +244,9 @@ class ExtractionService:
                 InstagramOptions.from_config(self.config),
                 interactive=interactive,
                 session=session,
-                **{"progress": progress, **self.instagram_overrides},
+                # Collection never logs in with the password (Instagram checkpoints);
+                # only `postparse check instagram --login` does, interactively.
+                **{"progress": progress, **self.instagram_overrides, "allow_password_login": False},
             )
             with collector:
                 collector.collect_saved(

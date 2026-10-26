@@ -79,7 +79,7 @@ provider only.
 | Variable | Purpose |
 |---|---|
 | `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_PHONE` | Telegram API credentials (phone optional, used for the first login) |
-| `INSTAGRAM_USERNAME`, `INSTAGRAM_PASSWORD` | Instagram login (password optional while the session file is valid) |
+| `INSTAGRAM_USERNAME`, `INSTAGRAM_PASSWORD` | Instagram account; the password is only used by `postparse check instagram --login` (extract and API jobs use the saved session) |
 | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` | LLM providers; the transcription API backend reads the variable named by `transcription.api.api_key_env` (default `OPENAI_API_KEY`) |
 | `JWT_SECRET_KEY` | API authentication secret (fallback when `api.auth.secret_key` is not set) |
 | `POSTPARSE_DATA_DIR`, `POSTPARSE_DB_PATH`, `POSTPARSE_SESSIONS_DIR`, `POSTPARSE_DOWNLOADS_DIR`, `POSTPARSE_TMP_DIR` | override the corresponding `[paths]` / `[database]` values |

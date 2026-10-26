@@ -193,6 +193,79 @@ def test_check_instagram_login(
     assert result.exit_code == code, result.output
 
 
+@pytest.fixture
+def ig_login(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """``check instagram --login`` with the real collector on a fake instaloader."""
+    from postparse.collectors.instagram import collector as collector_mod
+    from tests.unit.collectors.fakes import FakeLoader
+
+    monkeypatch.chdir(tmp_path)
+    settings = Settings(data_dir=tmp_path / "data")
+    assert settings.sessions_dir is not None
+    session = settings.sessions_dir / "instagram_me"
+    session.parent.mkdir(parents=True)
+    session.write_text("original-session")
+    monkeypatch.setattr(check_mod, "_settings", lambda ctx: settings)
+    monkeypatch.setattr(check_mod, "_config", lambda ctx: None)
+    state: dict[str, Any] = {"session": session, "loader": FakeLoader(session_user="me")}
+    monkeypatch.setattr(collector_mod, "_default_loader_factory", lambda options: state["loader"])
+
+    def invoke() -> Any:
+        return CliRunner().invoke(
+            cli,
+            ["check", "instagram", "--login"],
+            env={"INSTAGRAM_USERNAME": "me", "INSTAGRAM_PASSWORD": "pw-secret"},
+        )
+
+    state["invoke"] = invoke
+    return state
+
+
+@pytest.mark.parametrize("setup", ["logged_out", "no_file"])
+def test_check_instagram_login_is_the_only_password_login(ig_login, setup: str) -> None:
+    from tests.unit.collectors.fakes import FakeLoader
+
+    loader = FakeLoader(session_user=None)
+    ig_login["loader"] = loader
+    if setup == "no_file":
+        ig_login["session"].unlink()
+
+    result = ig_login["invoke"]()
+
+    assert result.exit_code == 0, result.output
+    text = " ".join(result.output.split())
+    why = "session logged out: login_required" if setup == "logged_out" else "no session file"
+    assert f"No usable Instagram session ({why}); logging in with the password now" in text
+    assert "only command that logs in with the password" in text
+    assert loader.logins == ["me"]
+    assert loader.saved and ig_login["session"].read_text() == "fake-session"
+    assert "pw-secret" not in result.output
+
+
+def test_check_instagram_login_with_a_valid_session_uses_no_password(ig_login) -> None:
+    result = ig_login["invoke"]()
+    assert result.exit_code == 0, result.output
+    assert "Instagram session verified (no password login)" in result.output
+    assert ig_login["loader"].logins == []
+
+
+def test_check_instagram_login_never_logs_in_on_a_throttled_check(ig_login) -> None:
+    from tests.unit.collectors.fakes import THROTTLED_401, FakeLoader, ig_error
+
+    loader = FakeLoader(check_error=ig_error(THROTTLED_401))
+    ig_login["loader"] = loader
+
+    result = ig_login["invoke"]()
+
+    assert result.exit_code == 1, result.output
+    text = " ".join(result.output.split())
+    assert "No password login was attempted" in text
+    assert "Please wait a few minutes" in text and "https://" not in text
+    assert "logging in with the password" not in text
+    assert loader.logins == [] and loader.saved == []
+    assert ig_login["session"].read_text() == "original-session"
+
+
 # -- transcription --------------------------------------------------------------------
 
 

@@ -21,8 +21,9 @@ class InstagramExtractRequest(BaseModel):
 
     Attributes:
         username: Instagram account username.
-        password: Account password (optional when a valid session file exists;
-            falls back to ``INSTAGRAM_PASSWORD``).
+        password: Accepted for compatibility but never used for a login: jobs
+            only use the saved session (log in with
+            ``postparse check instagram --login``).
         access_token: API access token (for Platform API method).
         limit: Maximum number of posts to extract.
         force_update: Walk the whole saved feed and update known posts.

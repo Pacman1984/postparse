@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
-from instaloader.exceptions import LoginException, TooManyRequestsException
+from instaloader.exceptions import AbortDownloadException, TooManyRequestsException
 
 from postparse.cli.main import cli
 from postparse.collectors.base import InstagramFeedUnavailable
@@ -45,9 +45,14 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Patch the CLI's service factory; returns a dict to configure the fakes."""
     monkeypatch.chdir(tmp_path)
     settings = Settings(data_dir=tmp_path / "data")
+    assert settings.sessions_dir is not None
+    session = settings.sessions_dir / "instagram_me"
+    session.parent.mkdir(parents=True, exist_ok=True)
+    session.write_text("original-session")
     state: dict = {
         "client": FakeTelegramClient([tg_text(1, "a"), tg_text(2, "b")]),
-        "loader": FakeLoader(),
+        "loader": FakeLoader(session_user="me"),
+        "session": session,
         "feed": Feed([ig_post(ig_node("p1")), ig_post(ig_node("p2"))]),
         "db_paths": [],
     }
@@ -146,10 +151,8 @@ def test_instagram_rate_limited_exit_3(env) -> None:
     assert "kept" in result.output
 
 
-def test_instagram_throttled_session_check_exit_3(env, tmp_path: Path) -> None:
-    session = Settings(data_dir=tmp_path / "data").sessions_dir / "instagram_me"
-    session.parent.mkdir(parents=True)
-    session.write_text("original-session")
+def test_instagram_throttled_session_check_exit_3(env) -> None:
+    session = env["session"]
     env["loader"] = FakeLoader(check_error=ig_error(THROTTLED_401))
 
     result = invoke(["instagram"], SECRETS)
@@ -187,11 +190,8 @@ def test_instagram_feed_refused_exit_3_keeps_progress(env, tmp_path: Path) -> No
     assert_no_secrets(result.output)
 
 
-def test_instagram_feed_fail_status_from_the_web_feed_exit_3(env, tmp_path: Path) -> None:
+def test_instagram_feed_fail_status_from_the_web_feed_exit_3(env) -> None:
     """The real feed iterator against the fake context: one request, typed error."""
-    session = Settings(data_dir=tmp_path / "data").sessions_dir / "instagram_me"
-    session.parent.mkdir(parents=True)
-    session.write_text("original-session")
     loader = FakeLoader(session_user="me")
     loader.context.web_responses[IG_SAVED_FEED] = ig_error(FEED_FAIL, IG_SAVED_FEED)
     env["loader"] = loader
@@ -208,11 +208,7 @@ def test_instagram_feed_fail_status_from_the_web_feed_exit_3(env, tmp_path: Path
     assert loader.logins == []
 
 
-def test_instagram_prints_verified_session(env, tmp_path: Path) -> None:
-    session = Settings(data_dir=tmp_path / "data").sessions_dir / "instagram_me"
-    session.parent.mkdir(parents=True)
-    session.write_text("original-session")
-    env["loader"] = FakeLoader(session_user="me")
+def test_instagram_prints_verified_session(env) -> None:
     result = invoke(["instagram"], SECRETS)
     assert result.exit_code == 0, result.output
     assert "Instagram session verified (no password login)" in result.output
@@ -220,13 +216,101 @@ def test_instagram_prints_verified_session(env, tmp_path: Path) -> None:
     assert_no_secrets(result.output)
 
 
-def test_instagram_prints_password_login(env) -> None:
-    result = invoke(["instagram"], SECRETS)  # no session file
-    assert result.exit_code == 0, result.output
+def _unreadable(loader: FakeLoader) -> FakeLoader:
+    def broken(username: str, filename: str) -> None:
+        raise EOFError("Ran out of input")
+
+    loader.load_session_from_file = broken  # type: ignore[method-assign]
+    return loader
+
+
+#: ``(setup, loader factory, reason in the message)`` of a session that cannot be used.
+UNUSABLE_SESSIONS = [
+    ("no_file", lambda: FakeLoader(session_user="me"), "no session file"),
+    ("unreadable", lambda: _unreadable(FakeLoader(session_user="me")), "session file unreadable"),
+    ("logged_out", lambda: FakeLoader(session_user=None), "session logged out: login_required"),
+    (
+        "login_redirect",
+        lambda: FakeLoader(
+            check_error=AbortDownloadException(
+                "Redirected to login page. You've been logged out, please wait some time, "
+                "recreate the session and try again"
+            )
+        ),
+        "session logged out: redirected to login page",
+    ),
+]
+
+
+@pytest.mark.parametrize("password", ["ig-pass-secret", None], ids=["password", "no-password"])
+@pytest.mark.parametrize(
+    ("setup", "make_loader", "why"),
+    UNUSABLE_SESSIONS,
+    ids=[case[0] for case in UNUSABLE_SESSIONS],
+)
+def test_instagram_never_logs_in_with_the_password_exit_2(
+    env, setup: str, make_loader, why: str, password: str | None
+) -> None:
+    session: Path = env["session"]
+    if setup == "no_file":
+        session.unlink()
+    loader = make_loader()
+    env["loader"] = loader
+    secrets = {k: v for k, v in SECRETS.items() if k != "INSTAGRAM_PASSWORD"}
+    if password is not None:
+        secrets["INSTAGRAM_PASSWORD"] = password
+
+    result = invoke(["instagram"], secrets)
+
+    assert result.exit_code == 2, result.output
     text = " ".join(result.output.split())
-    assert "Logging in to Instagram with the password (no session file)" in text
-    assert "session verified" not in text
+    assert f"No password login was attempted ({why})" in text
+    assert "automatic password logins are disabled" in text
+    assert "`postparse check instagram --login`" in text
+    assert "Logging in" not in text and "logging in with the password" not in text
+    assert loader.logins == [] and loader.two_factor_codes == []
+    assert loader.saved == []  # the session file is never written
+    assert session.exists() is (setup != "no_file")
+    if setup != "no_file":
+        assert session.read_text() == "original-session"
     assert_no_secrets(result.output)
+
+
+def test_instagram_checkpoint_on_session_check_exit_2(env) -> None:
+    loader = FakeLoader(
+        check_error=AbortDownloadException(
+            'Query to https://i.instagram.com/api/v1/users/4242/info/ responded with "400 Bad '
+            'Request": {"message": "challenge_required", "status": "fail"}'
+        )
+    )
+    env["loader"] = loader
+    result = invoke(["instagram"], SECRETS)
+    assert result.exit_code == 2, result.output
+    text = " ".join(result.output.split())
+    assert "(Instagram: challenge_required)" in text
+    assert "`postparse check instagram --login`" in text and "Instagram app" in text
+    assert loader.logins == [] and loader.saved == []
+
+
+def test_instagram_checkpoint_during_feed_exit_2_shows_the_reason(env) -> None:
+    from instaloader.exceptions import ConnectionException
+
+    env["feed"] = Feed(
+        [ig_post(ig_node("a"))],
+        fail_at=0,
+        error=ConnectionException(
+            f'JSON Query to {IG_SAVED_FEED}: 400 Bad Request - "fail" status, message '
+            f'"checkpoint_required" when accessing https://www.instagram.com/{IG_SAVED_FEED}'
+            "?count=50&max_id=QVFC3429&sessionid=leaked-sid"
+        ),
+    )
+    result = invoke(["instagram"], SECRETS)
+    assert result.exit_code == 2, result.output
+    text = " ".join(result.output.split())
+    assert "(Instagram: checkpoint_required)" in text
+    assert "`postparse check instagram --login`" in text
+    assert "leaked-sid" not in text and "max_id" not in text
+    assert env["loader"].logins == []
 
 
 def test_instagram_invalid_feed_api_is_a_clear_error(env, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -240,14 +324,6 @@ def test_instagram_invalid_feed_api_is_a_clear_error(env, monkeypatch: pytest.Mo
     assert result.exit_code == 1
     assert "instagram.feed_api must be one of 'web', 'iphone'" in " ".join(result.output.split())
     assert env["loader"].logins == []
-
-
-def test_instagram_checkpoint_exit_2(env) -> None:
-    env["loader"] = FakeLoader(login_error=LoginException("Checkpoint required"))
-    result = invoke(["instagram"], SECRETS)
-    assert result.exit_code == 2
-    assert "Instagram app" in result.output
-    assert_no_secrets(result.output)
 
 
 def test_instagram_force_walks_everything(env) -> None:
@@ -273,7 +349,7 @@ def test_default_invokes_all(env) -> None:
 
 
 def test_all_runs_both_and_uses_highest_exit_code(env) -> None:
-    env["loader"] = FakeLoader(login_error=TooManyRequestsException("429"))
+    env["loader"] = FakeLoader(check_error=TooManyRequestsException("429 Too Many Requests"))
     env["client"] = FakeTelegramClient(authorized=False)
     result = invoke(["all", "--no-interactive"], SECRETS)
     assert result.exit_code == 3, result.output

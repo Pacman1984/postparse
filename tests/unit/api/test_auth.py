@@ -5,11 +5,11 @@ from __future__ import annotations
 import time
 from typing import Any
 
+import jwt
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.testclient import TestClient
-from jose import jwt
 
 from postparse.api.dependencies import (
     extract_bearer_token,

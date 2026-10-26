@@ -17,9 +17,9 @@ import os
 from collections.abc import Callable
 from typing import Any
 
+import jwt
 from fastapi import Depends, HTTPException, WebSocket, WebSocketException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jose import JWTError, jwt
 
 from postparse.api.deps import (
     ApiServices,
@@ -121,7 +121,7 @@ def validate_jwt_token(token: str, config: Any) -> dict[str, Any]:
     algorithm = config.get("api.auth.algorithm", "HS256") if config is not None else "HS256"
     try:
         return jwt.decode(token, secret_key, algorithms=[algorithm])
-    except JWTError as exc:
+    except jwt.InvalidTokenError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Invalid authentication token: {exc}",

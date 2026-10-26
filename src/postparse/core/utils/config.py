@@ -4,7 +4,7 @@ This module provides utilities for loading and managing application configuratio
 from TOML files, with support for environment variable overrides and default values.
 """
 import os
-import toml
+import tomllib
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
 from functools import lru_cache
@@ -82,9 +82,9 @@ class ConfigManager:
             ValueError: If configuration file is invalid
         """
         try:
-            with open(self._config_path, 'r', encoding='utf-8') as f:
-                return toml.load(f)
-        except toml.TomlDecodeError as e:
+            with open(self._config_path, 'rb') as f:
+                return tomllib.load(f)
+        except tomllib.TOMLDecodeError as e:
             raise ValueError(f"Invalid TOML configuration file: {e}")
         except Exception as e:
             raise ValueError(f"Error loading configuration file: {e}")

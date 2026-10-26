@@ -17,16 +17,14 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "toml",
     "tqdm",
     "python-dotenv",
     "instaloader>=4.15.5",
     "telethon>=1.45,<2",
-    "nest-asyncio>=1.5.0",
     "pydantic>=2.7.4,<3.0.0",
     "fastapi>=0.115.0,<1.0.0",
     "uvicorn[standard]>=0.32.0,<1.0.0",
-    "python-jose[cryptography]>=3.3.0,<4.0.0",
+    "PyJWT>=2.8,<3",
     "python-multipart>=0.0.9,<1.0.0",
     "websockets>=12.0,<13.0.0",
     "redis>=5.0.0,<6.0.0",
@@ -40,7 +38,6 @@ dependencies = [
     "tzdata>=2024.1",
     "pydantic-ai-slim[anthropic,openai]>=2.61.0,<3",
     "openai>=3.37.0,<4",
-    "tenacity>=8.2,<10",
     # Audio probing/extraction for video transcription (bundles FFmpeg; no system ffmpeg).
     "av>=14",
     # Link enrichment: article extraction, documents, YouTube transcripts.

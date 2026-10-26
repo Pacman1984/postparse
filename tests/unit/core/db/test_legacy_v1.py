@@ -11,7 +11,6 @@ import pytest
 from click.testing import CliRunner
 
 from postparse.cli.main import cli
-from postparse.core.data.database import SocialMediaDatabase
 from postparse.core.db import Database, legacy_v1
 from postparse.core.db.legacy_v1 import (
     LEGACY_FETCHER,
@@ -26,6 +25,7 @@ from postparse.services.query import QueryService
 GOOD_TEXT = "Café schön"
 MOJIBAKE = GOOD_TEXT.encode("utf-8").decode("latin-1")  # 'CafÃ© schÃ¶n'
 CHAT = 999
+V1_SCHEMA = Path(__file__).resolve().parents[3] / "fixtures" / "v1_schema.sql"
 
 
 def _touch(root: Path, rel: str, payload: bytes = b"x") -> Path:
@@ -37,8 +37,8 @@ def _touch(root: Path, rel: str, payload: bytes = b"x") -> Path:
 
 def _build_v1(path: Path, downloads: Path) -> None:
     """Create a small v1 database with the real v1 DDL and edge cases."""
-    SocialMediaDatabase(str(path))  # creates the v1 tables
     conn = sqlite3.connect(path)
+    conn.executescript(V1_SCHEMA.read_text(encoding="utf-8"))  # the real v1 DDL
     ig = [
         # id, shortcode, caption, is_video, typename, created_at (naive local), fetched_at
         (1, "AAA", "Pasta #Rezept https://example.com/a", 1, "GraphVideo",

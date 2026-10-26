@@ -344,7 +344,8 @@ class ClassificationService:
     """Classify database items into taxonomies and persist the results.
 
     Args:
-        db: Schema v2 database.
+        db: Schema v2 database (``None`` allows only ad-hoc :meth:`classify_text`
+            and configured taxonomies; runs need a database).
         settings: Application settings (kept for future use, e.g. paths).
         llm_config: LLM providers; loaded from ``config`` when omitted.
         config: ``ConfigManager`` for taxonomies, providers and options.
@@ -358,7 +359,7 @@ class ClassificationService:
 
     def __init__(
         self,
-        db: Database,
+        db: Database | None,
         settings: Settings | None = None,
         llm_config: LLMConfig | None = None,
         *,
@@ -431,8 +432,10 @@ class ClassificationService:
         """
         if name in self.taxonomies:
             return self.taxonomies[name]
-        with self.db.read() as conn:
-            stored = ClassificationRepo(conn).get_taxonomy(name)
+        stored = None
+        if self.db is not None:
+            with self.db.read() as conn:
+                stored = ClassificationRepo(conn).get_taxonomy(name)
         if stored is None:
             known = ", ".join(sorted(self.taxonomies)) or "none"
             raise KeyError(f"Unknown taxonomy '{name}' (configured: {known})")
@@ -440,10 +443,13 @@ class ClassificationService:
 
     def list_taxonomies(self) -> list[TaxonomyInfo]:
         """Return configured and stored taxonomies with versions and result counts."""
-        with self.db.read() as conn:
-            repo = ClassificationRepo(conn)
-            stored = {tx.name: tx for tx in repo.list_taxonomies()}
-            stats = repo.taxonomy_stats()
+        stored: dict[str, Any] = {}
+        stats: dict[int, dict[str, int]] = {}
+        if self.db is not None:
+            with self.db.read() as conn:
+                repo = ClassificationRepo(conn)
+                stored = {tx.name: tx for tx in repo.list_taxonomies()}
+                stats = repo.taxonomy_stats()
         infos: list[TaxonomyInfo] = []
         for name in [*self.taxonomies, *sorted(set(stored) - set(self.taxonomies))]:
             spec = self.taxonomies.get(name)
@@ -614,12 +620,15 @@ class ClassificationService:
             raise ValueError(f"Unknown scope: {scope!r}")
         if limit is not None and limit < 1:
             raise ValueError("limit must be >= 1")
+        if self.db is None:
+            raise ValueError("classify_pending needs a database")
+        db = self.db
         started = time.perf_counter()
         spec = self.taxonomy_spec(taxonomy_name)
         effective = self._effective_filter(spec, filters)
         classifier = self.classifier_for(spec, provider)
 
-        with self.db.transaction() as conn:
+        with db.transaction() as conn:
             repo = ClassificationRepo(conn)
             taxonomy = repo.ensure_taxonomy(
                 spec.name, spec.mode, spec.db_labels(), is_legacy=spec.is_legacy
@@ -686,7 +695,7 @@ class ClassificationService:
                 if limit is not None and scheduled >= limit:
                     break
                 chunk = candidates[offset : offset + self.chunk_size]
-                with self.db.read() as conn:
+                with db.read() as conn:
                     composed_inputs = compose_inputs(conn, chunk, self.max_input_chars)
                 work: list[ComposedInput] = []
                 for item_id in chunk:
@@ -717,7 +726,7 @@ class ClassificationService:
             final_status = "failed"
             raise
         finally:
-            with self.db.transaction() as conn:
+            with db.transaction() as conn:
                 ClassificationRepo(conn).finish_run(run_id, status=final_status)
             report.status = final_status
             report.duration_s = time.perf_counter() - started
@@ -745,6 +754,7 @@ class ClassificationService:
             "requests": outcome.requests,
         }
         status: ProgressStatus
+        assert self.db is not None
         with self.db.transaction() as conn:
             repo = ClassificationRepo(conn)
             try:

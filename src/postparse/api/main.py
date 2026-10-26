@@ -146,13 +146,26 @@ async def lifespan(app: FastAPI):
         _ = SocialMediaDatabase(db_path)
         logger.info("Database initialized successfully")
 
-        # Warm up classifiers (load models into memory)
+        # Warm up the default classifier (discovers the served model once).
+        # Never fails startup: the LLM server may simply not be running yet.
         logger.info("Warming up classifiers...")
-        from postparse.api.dependencies import _get_cached_recipe_llm_classifier
-        # Call cached helper function with provider name (cache key)
+        from postparse.api.dependencies import RECIPE_SPEC, get_cached_classifier
+
         try:
-            llm_classifier = _get_cached_recipe_llm_classifier(default_provider)
-            logger.info(f"Classifier warmed up successfully (provider: {default_provider})")
+            warm = await asyncio.wait_for(
+                asyncio.to_thread(
+                    get_cached_classifier,
+                    RECIPE_SPEC,
+                    None,
+                    getattr(config, "config_path", None),
+                ),
+                timeout=15,
+            )
+            logger.info(
+                "Classifier warmed up (provider: %s, model: %s)",
+                warm.provider_name,
+                warm.model_name,
+            )
         except Exception as e:
             logger.warning(f"Failed to warm up classifier: {e}")
             logger.warning("Classifier will be initialized on first request")

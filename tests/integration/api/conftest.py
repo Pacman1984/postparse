@@ -16,7 +16,6 @@ from fastapi.testclient import TestClient
 from postparse.api.main import app
 from postparse.api.services.job_manager import JobManager
 from postparse.core.data.database import SocialMediaDatabase
-from postparse.services.analysis.classifiers.llm import RecipeLLMClassifier
 from postparse.api.services.cache_manager import CacheManager
 from postparse.core.utils.config import ConfigManager
 
@@ -280,37 +279,21 @@ def mock_db_with_sample_data() -> SocialMediaDatabase:
 @pytest.fixture
 def mock_classifier():
     """
-    Create mock RecipeLLMClassifier with deterministic responses.
-    
+    Classifier factory backed by a deterministic keyword FunctionModel.
+
     Returns:
-        Mock RecipeLLMClassifier that returns predefined results.
-    
+        ``(spec, provider_name) -> TaxonomyClassifier`` factory (override for
+        ``get_classifier_factory``).
+
     Example:
-        def test_classification(mock_classifier):
-            result = mock_classifier.predict("Recipe for pasta")
-            assert result["label"] == "recipe"
+        def test_classification(client_with_overrides):
+            response = client_with_overrides.post("/api/v1/classify/recipe",
+                                                  json={"text": "Recipe for pasta"})
+            assert response.json()["label"] == "recipe"
     """
-    classifier = Mock(spec=RecipeLLMClassifier)
-    
-    def predict(text: str):
-        # Simple heuristic: if text contains recipe keywords, classify as recipe
-        recipe_keywords = ["recipe", "ingredients", "instructions", "cook", "bake"]
-        is_recipe = any(keyword in text.lower() for keyword in recipe_keywords)
-        
-        return {
-            "label": "recipe" if is_recipe else "not_recipe",
-            "confidence": 0.95 if is_recipe else 0.90,
-            "details": {
-                "has_ingredients": is_recipe,
-                "has_instructions": is_recipe
-            } if is_recipe else None,
-            "processing_time": 0.1,
-            "classifier_used": "RecipeLLMClassifier",
-            "provider": "ollama"
-        }
-    
-    classifier.predict.side_effect = predict
-    return classifier
+    from tests.fake_llm import fake_classifier_factory
+
+    return fake_classifier_factory()
 
 
 @pytest.fixture
@@ -362,13 +345,13 @@ def client_with_overrides(mock_db_with_sample_data, mock_classifier, mock_cache_
             assert response.status_code == 200
     """
     from postparse.api.dependencies import (
-        get_db, 
-        get_recipe_llm_classifier,
+        get_db,
+        get_classifier_factory,
         get_cache_manager
     )
-    
+
     app.dependency_overrides[get_db] = lambda: mock_db_with_sample_data
-    app.dependency_overrides[get_recipe_llm_classifier] = lambda: mock_classifier
+    app.dependency_overrides[get_classifier_factory] = lambda: mock_classifier
     app.dependency_overrides[get_cache_manager] = lambda: mock_cache_manager
     
     client = TestClient(app)

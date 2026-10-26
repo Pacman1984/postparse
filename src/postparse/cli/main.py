@@ -162,7 +162,7 @@ def show_welcome():
     examples.add_row("📊 View Stats:", "postparse stats")
     examples.add_row("🔍 Check New:", "postparse check all")
     examples.add_row("📥 Extract:", "postparse extract all")
-    examples.add_row("🏷️  Classify:", "postparse classify db --source posts")
+    examples.add_row("🏷️  Classify:", "postparse classify run --taxonomy topics")
     examples.add_row("🔎 Search:", "postparse search posts --hashtag recipe")
     examples.add_row("⚡ Serve API:", "postparse serve")
     

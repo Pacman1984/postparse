@@ -272,13 +272,32 @@ def _no_real_redis(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_model_discovery(request, monkeypatch):
+    """Skip served-model discovery when building LLM models (unless the test is live).
+
+    Discovery would try ``GET <api_base>/models``; on Windows a refused
+    connection takes ~2 s, which the API lifespan warm-up would pay per test.
+    Tests of discovery itself call ``postparse.llm.model_discovery`` directly or
+    patch ``postparse.llm.client.resolve_provider_model`` themselves.
+    """
+    if "live" not in request.keywords:
+        monkeypatch.setattr(
+            "postparse.llm.client.resolve_provider_model", lambda cfg, timeout=5.0: cfg
+        )
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _clear_llm_caches():
     """Forget discovered/built LLM models so provider configs never leak between tests."""
+    from postparse.api.dependencies import clear_classifier_cache
     from postparse.llm.client import clear_model_cache
 
     clear_model_cache()
+    clear_classifier_cache()
     yield
     clear_model_cache()
+    clear_classifier_cache()
 
 
 @pytest.fixture(autouse=True)

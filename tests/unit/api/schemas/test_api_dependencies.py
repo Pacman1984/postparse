@@ -12,13 +12,13 @@ from fastapi import HTTPException
 from postparse.api.dependencies import (
     get_config,
     get_db,
-    get_recipe_llm_classifier,
+    get_classifier_factory,
     get_current_user,
     get_optional_auth,
 )
 from postparse.core.utils.config import ConfigManager
 from postparse.core.data.database import SocialMediaDatabase
-from postparse.services.analysis.classifiers.llm import RecipeLLMClassifier
+from postparse.classification import TaxonomySpec
 
 
 class TestGetConfig:
@@ -53,22 +53,30 @@ class TestGetDb:
                 pass
 
 
-class TestGetRecipeLlmClassifier:
-    """Test classifier dependency."""
+class TestGetClassifierFactory:
+    """Test the classifier factory dependency."""
 
-    @patch('postparse.api.dependencies.RecipeLLMClassifier')
-    def test_get_classifier_returns_cached_instance(self, mock_classifier):
-        """Test that classifier is cached."""
-        mock_classifier.return_value = Mock(spec=RecipeLLMClassifier)
-        mock_config = Mock(get=Mock(return_value="ollama"))
-        
-        # First call
-        classifier1 = get_recipe_llm_classifier(mock_config)
-        # Second call
-        classifier2 = get_recipe_llm_classifier(mock_config)
-        
-        # Should return same instance
+    def test_factory_caches_per_spec_and_provider(self, monkeypatch):
+        """The factory returns cached classifiers keyed by spec hash and provider."""
+        monkeypatch.setattr(
+            "postparse.llm.client.resolve_provider_model", lambda cfg: cfg
+        )
+        factory = get_classifier_factory(ConfigManager())
+        spec = TaxonomySpec.adhoc(["a", "b"], mode="single")
+
+        classifier1 = factory(spec, None)
+        classifier2 = factory(TaxonomySpec.adhoc(["a", "b"], mode="single"), None)
+        other = factory(TaxonomySpec.adhoc(["a", "b"], mode="multi"), None)
+
         assert classifier1 is classifier2
+        assert other is not classifier1
+        assert classifier1.provider_name == "lm_studio"
+
+    def test_factory_rejects_unknown_provider(self):
+        """Unknown providers raise ValueError (mapped to HTTP 400 by the router)."""
+        factory = get_classifier_factory(ConfigManager())
+        with pytest.raises(ValueError, match="not found"):
+            factory(TaxonomySpec.adhoc(["a", "b"]), "nope")
 
 
 class TestGetCurrentUser:

@@ -3,7 +3,7 @@ FastAPI dependency injection functions for PostParse API.
 
 This module provides reusable dependencies for:
 - Database connections with proper lifecycle management
-- Classifier instances (cached for performance)
+- Taxonomy classifiers (cached per taxonomy spec hash and provider)
 - JWT authentication (optional, configurable)
 - Configuration management
 
@@ -14,6 +14,8 @@ Example:
 """
 
 import os
+import threading
+from collections.abc import Callable
 from functools import lru_cache
 from typing import Any, Dict, Generator, Optional
 
@@ -21,15 +23,11 @@ from fastapi import Depends, HTTPException, WebSocket, WebSocketException, statu
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 
+from postparse.classification import TaxonomyClassifier, TaxonomySpec, load_taxonomies
 from postparse.core.data.database import SocialMediaDatabase
-from postparse.services.analysis.classifiers.llm import RecipeLLMClassifier
-from postparse.services.analysis.classifiers.multi_class import (
-    MultiClassLLMClassifier,
-)
-from postparse.services.analysis.classifiers.multi_label import (
-    MultiLabelLLMClassifier,
-)
 from postparse.core.utils.config import ConfigManager
+from postparse.llm.client import select_provider
+from postparse.llm.config import LLMConfig
 from postparse.api.services.job_manager import JobManager
 from postparse.api.services.websocket_manager import WebSocketManager
 from postparse.api.services.cache_manager import CacheManager
@@ -172,122 +170,85 @@ def get_db(config: ConfigManager = Depends(get_config)) -> Generator[SocialMedia
         pass
 
 
-@lru_cache(maxsize=8)
-def _get_cached_recipe_llm_classifier(provider_name: str) -> RecipeLLMClassifier:
+#: Ad-hoc taxonomy behind the legacy ``/classify/recipe`` endpoints.
+RECIPE_SPEC = TaxonomySpec.adhoc(
+    {
+        "recipe": "Cooking instructions, ingredients or a dish to prepare (food or drinks)",
+        "not_recipe": "Anything else",
+    },
+    mode="single",
+    name="recipe",
+)
+
+#: ``(spec, provider_name) -> TaxonomyClassifier``; override in tests.
+ClassifierFactory = Callable[[TaxonomySpec, Optional[str]], TaxonomyClassifier]
+
+_classifier_lock = threading.Lock()
+_classifier_cache: Dict[tuple, TaxonomyClassifier] = {}
+
+
+def get_cached_classifier(
+    spec: TaxonomySpec,
+    provider_name: Optional[str] = None,
+    config_path: Optional[str] = None,
+) -> TaxonomyClassifier:
     """
-    Get cached RecipeLLMClassifier instance (internal helper).
+    Return a classifier cached per (spec hash, provider, config file).
 
-    The LLM classifier is cached to avoid re-initialization on every request.
-    Caching is keyed by provider_name to ensure stability across ConfigManager instances.
-
-    This is a non-FastAPI cached helper that should not be called directly
-    in route handlers. Use get_recipe_llm_classifier instead.
+    Building a classifier discovers the served model of self-hosted providers
+    once; later requests reuse the instance.
 
     Args:
-        provider_name: Name of the LLM provider (e.g., "ollama", "openai").
+        spec: Taxonomy (configured or ad hoc).
+        provider_name: Provider from ``[llm.providers]``; None for the default.
+        config_path: Config file the providers are read from.
 
     Returns:
-        RecipeLLMClassifier: Cached LLM classifier instance for the specified provider.
+        TaxonomyClassifier: Cached classifier.
+
+    Raises:
+        ValueError: If the provider is unknown or the LLM config is invalid.
     """
-    return RecipeLLMClassifier(provider_name=provider_name)
+    key = (spec.spec_sha256, (provider_name or "").lower() or None, config_path)
+    with _classifier_lock:
+        cached = _classifier_cache.get(key)
+    if cached is not None:
+        return cached
+    config = ConfigManager(config_path) if config_path else get_config()
+    llm_config = LLMConfig.from_config_manager(config)
+    classifier = TaxonomyClassifier.from_provider(spec, select_provider(llm_config, provider_name))
+    with _classifier_lock:
+        return _classifier_cache.setdefault(key, classifier)
 
 
-def get_recipe_llm_classifier(config: ConfigManager = Depends(get_config)) -> RecipeLLMClassifier:
+def clear_classifier_cache() -> None:
+    """Forget cached classifiers (after config changes and in tests)."""
+    with _classifier_lock:
+        _classifier_cache.clear()
+
+
+def get_classifier_factory(config: ConfigManager = Depends(get_config)) -> ClassifierFactory:
     """
-    FastAPI dependency for RecipeLLMClassifier.
-
-    Returns a cached LLM classifier instance. The caching is handled by
-    _get_cached_recipe_llm_classifier with provider_name as the cache key
-    to ensure consistent caching across different ConfigManager instances.
-
-    Args:
-        config: ConfigManager instance (injected dependency).
-
-    Returns:
-        RecipeLLMClassifier: Cached LLM classifier instance.
+    FastAPI dependency returning a classifier factory bound to the active config.
 
     Example:
-        @app.post("/classify/llm")
-        def classify_llm(
-            text: str,
-            classifier: RecipeLLMClassifier = Depends(get_recipe_llm_classifier)
-        ):
-            return classifier.predict(text)
+        @router.post("/classify/multi")
+        async def classify(factory: ClassifierFactory = Depends(get_classifier_factory)):
+            classifier = factory(TaxonomySpec.adhoc(["a", "b"], mode="single"), None)
     """
-    provider_name = config.get("llm.default_provider", "ollama")
-    return _get_cached_recipe_llm_classifier(provider_name)
+    config_path = getattr(config, "config_path", None)
+
+    def factory(spec: TaxonomySpec, provider_name: Optional[str] = None) -> TaxonomyClassifier:
+        return get_cached_classifier(spec, provider_name, config_path)
+
+    return factory
 
 
-def _normalize_classes_key(classes: Optional[Dict[str, str]]) -> Optional[tuple]:
+def get_taxonomies(config: ConfigManager = Depends(get_config)) -> Dict[str, TaxonomySpec]:
     """
-    Normalize a classes dictionary into a stable, hashable cache key.
-
-    Args:
-        classes: Mapping of class name to description, or None to use config defaults.
-
-    Returns:
-        Tuple of sorted (name, description) pairs, or None when classes is None.
-
-    Example:
-        >>> _normalize_classes_key({"b": "B", "a": "A"})
-        (('a', 'A'), ('b', 'B'))
+    FastAPI dependency returning the configured taxonomies (``topics`` fallback included).
     """
-    if classes is None:
-        return None
-    # Sort by class name to ensure order-independent cache keys
-    return tuple(sorted(classes.items(), key=lambda item: item[0]))
-
-
-@lru_cache(maxsize=8)
-def _get_cached_multi_class_llm_classifier(
-    provider_name: Optional[str],
-    classes_key: Optional[tuple],
-    config_path: Optional[str],
-) -> MultiClassLLMClassifier:
-    """
-    Get cached MultiClassLLMClassifier instance keyed by provider, classes, and config path.
-
-    Caching avoids re-initializing ChatLiteLLM and rebuilding prompts on every request.
-
-    Args:
-        provider_name: LLM provider name (e.g., 'openai', 'ollama'); None for default.
-        classes_key: Stable, hashable key produced by _normalize_classes_key, or None.
-        config_path: Configuration file path influencing provider/classes resolution.
-
-    Returns:
-        MultiClassLLMClassifier: Cached classifier instance.
-    """
-    classes: Optional[Dict[str, str]] = dict(classes_key) if classes_key is not None else None
-    return MultiClassLLMClassifier(
-        classes=classes,
-        provider_name=provider_name,
-        config_path=config_path,
-    )
-
-
-@lru_cache(maxsize=8)
-def _get_cached_multi_label_llm_classifier(
-    provider_name: Optional[str],
-    classes_key: Optional[tuple],
-    config_path: Optional[str],
-) -> MultiLabelLLMClassifier:
-    """
-    Get cached MultiLabelLLMClassifier instance keyed by provider, classes, and config path.
-
-    Args:
-        provider_name: LLM provider name (e.g., 'openai', 'ollama'); None for default.
-        classes_key: Stable, hashable key produced by _normalize_classes_key, or None.
-        config_path: Configuration file path influencing provider/classes resolution.
-
-    Returns:
-        MultiLabelLLMClassifier: Cached classifier instance.
-    """
-    classes: Optional[Dict[str, str]] = dict(classes_key) if classes_key is not None else None
-    return MultiLabelLLMClassifier(
-        classes=classes,
-        provider_name=provider_name,
-        config_path=config_path,
-    )
+    return load_taxonomies(config)
 
 
 async def get_current_user(

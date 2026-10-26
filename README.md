@@ -108,7 +108,7 @@ postparse check telegram
 postparse extract telegram --api-id $TELEGRAM_API_ID --api-hash $TELEGRAM_API_HASH --limit 100
 
 # Classify them
-postparse classify db --source telegram --limit 100
+postparse classify run --taxonomy topics --source telegram --limit 100
 
 # Search for recipes
 postparse search messages --hashtag recipe
@@ -140,7 +140,7 @@ Get help for any command using the `--help` flag:
 
 ```bash
 postparse extract telegram --help
-postparse classify db --help
+postparse classify run --help
 postparse search posts --help
 ```
 
@@ -149,28 +149,21 @@ For CLI details, see **[05-usage/basic](docs/05-usage/basic.md)** and **[06-api/
 ## Quick Example
 
 ```python
-from postparse.services.parsers.telegram.telegram_parser import save_telegram_messages
-from postparse.core.data.database import SocialMediaDatabase
-from postparse.services.analysis.classifiers import RecipeLLMClassifier
+from postparse.services.classification import ClassificationService
 
-# Extract Telegram messages
-count = save_telegram_messages(
-    api_id="your_api_id",
-    api_hash="your_api_hash",
-    phone="+1234567890",
-    limit=100
+# Classify pending database items into the "topics" taxonomy
+# (pydantic-ai; llama.cpp / LM Studio / Ollama / OpenAI / Anthropic)
+service = ClassificationService.from_config("config/config.toml")
+report = service.classify_pending("topics", limit=100)
+print(report.ok, report.no_labels, report.errors)
+
+# Ad-hoc classification without storing anything
+outcome = service.classify_text(
+    "Spaghetti Carbonara: 200 g Guanciale, 4 Eigelb, Pecorino",
+    labels=["recipe", "travel", "tech"],
+    mode="multi",
 )
-
-# Classify content with LangChain + LiteLLM
-db = SocialMediaDatabase()
-classifier = RecipeLLMClassifier()  # Supports Ollama, LM Studio, OpenAI, etc.
-
-messages = db.get_telegram_messages(limit=10)
-for msg in messages:
-    if msg['content']:
-        result = classifier.predict(msg['content'])
-        print(f"Message {msg['message_id']}: {result.label} ({result.confidence:.2f})")
-        print(f"  Details: {result.details}")
+print(outcome.labels, outcome.confidence)
 ```
 
 For more examples, see **[08-examples/recipes](docs/08-examples/recipes.md)**.

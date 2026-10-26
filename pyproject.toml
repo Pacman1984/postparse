@@ -23,10 +23,6 @@ dependencies = [
     "instaloader>=4.15.2",
     "telethon>=1.32.0",
     "nest-asyncio>=1.5.0",
-    "langchain-core>=1.0.0,<2.0.0",
-    # Pinned exactly: a malicious litellm 1.107.0 was published on 2026-10-21.
-    "litellm==1.80.0",
-    "langchain-litellm>=0.3.0,<1.0.0",
     "pydantic>=2.7.4,<3.0.0",
     "fastapi>=0.115.0,<1.0.0",
     "uvicorn[standard]>=0.32.0,<1.0.0",
@@ -44,6 +40,7 @@ dependencies = [
     "tzdata>=2024.1",
     "pydantic-ai-slim[anthropic,openai]>=2.61.0,<3",
     "openai>=3.37.0,<4",
+    "tenacity>=8.2,<10",
 ]
 
 [project.scripts]
@@ -129,11 +126,6 @@ addopts = "--allow-hosts=127.0.0.1,localhost,::1"
 
 # Filter out known harmless warnings from dependencies
 filterwarnings = [
-    # Suppress Pydantic serialization warnings from LiteLLM when using local LLM servers
-    # These occur because LM Studio/Ollama return simplified responses vs full OpenAI API format
-    "ignore:Pydantic serializer warnings:UserWarning",
-    # Suppress asyncio event loop warnings from LiteLLM's internal logging
-    "ignore:There is no current event loop:DeprecationWarning",
     # Suppress Telethon cleanup warnings during test teardown
     "ignore::ResourceWarning",
     "ignore:coroutine.*was never awaited:RuntimeWarning",
@@ -159,3 +151,7 @@ extend-exclude = ["playground", "notebooks", "docs", "instructions", "dist"]
 select = ["E", "F", "W", "I", "B", "UP", "SIM"]
 # Nothing is auto-fixed until the codebase is reformatted deliberately.
 fixable = []
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI dependency markers in parameter defaults are the framework idiom.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Path", "fastapi.Body"]

@@ -148,17 +148,18 @@ class TestClassifyEndpoints:
         default_provider = config.get("llm.default_provider", "lm_studio")
 
         # Simulate an unreachable LLM server instead of making a real request.
-        unavailable = Mock()
-        unavailable.predict.side_effect = ConnectionError("LLM server unreachable")
-        with patch(
-            "postparse.api.routers.classify._get_cached_recipe_llm_classifier",
-            return_value=unavailable,
-        ):
+        from postparse.api.dependencies import get_classifier_factory
+        from tests.fake_llm import FAIL_MARKER, fake_classifier_factory
+
+        app.dependency_overrides[get_classifier_factory] = lambda: fake_classifier_factory()
+        try:
             response = self.client.post("/api/v1/classify/recipe", json={
-                "text": "Boil pasta for 10 minutes",
+                "text": f"Boil pasta for 10 minutes {FAIL_MARKER}",
                 "classifier_type": "llm",
                 "provider_name": default_provider
             })
+        finally:
+            app.dependency_overrides.pop(get_classifier_factory, None)
 
         assert response.status_code == 503
 

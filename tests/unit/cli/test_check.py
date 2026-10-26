@@ -362,7 +362,7 @@ class TestCheckAll:
             with patch("postparse.cli.check.get_database") as mock_get_db:
                 with patch("postparse.core.utils.config.ConfigManager"):
                     with patch("postparse.llm.config.LLMConfig") as mock_llm_cls:
-                        with patch("postparse.llm.provider.LiteLLMProvider") as mock_prov:
+                        with patch("postparse.llm.health.check_provider") as mock_prov:
                             with patch("postparse.cli.check.os.getenv", return_value=None):
                                 mock_config = MagicMock()
                                 mock_config.get.return_value = "data/test.db"
@@ -375,7 +375,7 @@ class TestCheckAll:
 
                                 mock_llm_cls.from_config_manager.return_value = mock_llm_config
                                 mock_provider = MagicMock()
-                                mock_provider.is_available.return_value = True
+                                mock_provider.ok = True
                                 mock_prov.return_value = mock_provider
 
                                 result = runner.invoke(cli, ["check", "all"])
@@ -399,7 +399,7 @@ class TestCheckAll:
             with patch("postparse.cli.check.get_database") as mock_get_db:
                 with patch("postparse.core.utils.config.ConfigManager"):
                     with patch("postparse.llm.config.LLMConfig") as mock_llm_cls:
-                        with patch("postparse.llm.provider.LiteLLMProvider") as mock_prov:
+                        with patch("postparse.llm.health.check_provider") as mock_prov:
                             with patch(
                                 "postparse.services.parsers.telegram.telegram_parser.TelegramParser"
                             ) as mock_tg_parser_class:
@@ -435,7 +435,7 @@ class TestCheckAll:
 
                                         mock_llm_cls.from_config_manager.return_value = mock_llm_config
                                         mock_provider = MagicMock()
-                                        mock_provider.is_available.return_value = True
+                                        mock_provider.ok = True
                                         mock_prov.return_value = mock_provider
 
                                         result = runner.invoke(cli, ["check", "all"])
@@ -455,7 +455,7 @@ class TestCheckAll:
             with patch("postparse.cli.check.get_database") as mock_get_db:
                 with patch("postparse.core.utils.config.ConfigManager"):
                     with patch("postparse.llm.config.LLMConfig") as mock_llm_cls:
-                        with patch("postparse.llm.provider.LiteLLMProvider") as mock_prov:
+                        with patch("postparse.llm.health.check_provider") as mock_prov:
                             with patch("postparse.cli.check.os.getenv", return_value=None):
                                 mock_config = MagicMock()
                                 mock_config.get.return_value = "data/test.db"
@@ -468,7 +468,7 @@ class TestCheckAll:
 
                                 mock_llm_cls.from_config_manager.return_value = mock_llm_config
                                 mock_provider = MagicMock()
-                                mock_provider.is_available.return_value = True
+                                mock_provider.ok = True
                                 mock_prov.return_value = mock_provider
 
                                 result = runner.invoke(cli, ["check"])
@@ -546,11 +546,11 @@ class TestCheckLlm:
 
         with patch("postparse.core.utils.config.ConfigManager") as mock_config_mgr:
             with patch("postparse.llm.config.LLMConfig") as mock_llm_config_class:
-                with patch("postparse.llm.provider.LiteLLMProvider") as mock_provider_class:
+                with patch("postparse.llm.health.check_provider") as mock_provider_class:
                     mock_llm_config_class.from_config_manager.return_value = mock_llm_config
 
                     mock_provider = MagicMock()
-                    mock_provider.is_available.return_value = True
+                    mock_provider.ok = True
                     mock_provider_class.return_value = mock_provider
 
                     result = runner.invoke(cli, ["check", "llm"])
@@ -584,11 +584,11 @@ class TestCheckLlm:
 
         with patch("postparse.core.utils.config.ConfigManager") as mock_config_mgr:
             with patch("postparse.llm.config.LLMConfig") as mock_llm_config_class:
-                with patch("postparse.llm.provider.LiteLLMProvider") as mock_provider_class:
+                with patch("postparse.llm.health.check_provider") as mock_provider_class:
                     mock_llm_config_class.from_config_manager.return_value = mock_llm_config
 
                     mock_provider = MagicMock()
-                    mock_provider.is_available.return_value = False
+                    mock_provider.ok = False
                     mock_provider_class.return_value = mock_provider
 
                     result = runner.invoke(cli, ["check", "llm"])
@@ -625,7 +625,7 @@ class TestCheckLlm:
 
         with patch("postparse.core.utils.config.ConfigManager") as mock_config_mgr:
             with patch("postparse.llm.config.LLMConfig") as mock_llm_config_class:
-                with patch("postparse.llm.provider.LiteLLMProvider") as mock_provider_class:
+                with patch("postparse.llm.health.check_provider") as mock_provider_class:
                     with patch.dict("os.environ", {}, clear=True):
                         mock_llm_config_class.from_config_manager.return_value = mock_llm_config
 
@@ -669,15 +669,15 @@ class TestCheckLlm:
 
         with patch("postparse.core.utils.config.ConfigManager") as mock_config_mgr:
             with patch("postparse.llm.config.LLMConfig") as mock_llm_config_class:
-                with patch("postparse.llm.provider.LiteLLMProvider") as mock_provider_class:
+                with patch("postparse.llm.health.check_provider") as mock_provider_class:
                     mock_llm_config_class.from_config_manager.return_value = mock_llm_config
 
                     # First provider available, second not
                     mock_provider_available = MagicMock()
-                    mock_provider_available.is_available.return_value = True
+                    mock_provider_available.ok = True
 
                     mock_provider_unavailable = MagicMock()
-                    mock_provider_unavailable.is_available.return_value = False
+                    mock_provider_unavailable.ok = False
 
                     mock_provider_class.side_effect = [
                         mock_provider_available,
@@ -710,11 +710,11 @@ class TestCheckLlm:
 
         with patch("postparse.core.utils.config.ConfigManager") as mock_config_mgr:
             with patch("postparse.llm.config.LLMConfig") as mock_llm_config_class:
-                with patch("postparse.llm.provider.LiteLLMProvider") as mock_provider_class:
+                with patch("postparse.llm.health.check_provider") as mock_provider_class:
                     mock_llm_config_class.from_config_manager.return_value = mock_llm_config
 
                     mock_provider = MagicMock()
-                    mock_provider.is_available.return_value = True
+                    mock_provider.ok = True
                     mock_provider_class.return_value = mock_provider
 
                     result = runner.invoke(cli, ["check", "llm", "--verbose"])
@@ -751,11 +751,11 @@ class TestCheckLlm:
 
         with patch("postparse.core.utils.config.ConfigManager") as mock_config_mgr:
             with patch("postparse.llm.config.LLMConfig") as mock_llm_config_class:
-                with patch("postparse.llm.provider.LiteLLMProvider") as mock_provider_class:
+                with patch("postparse.llm.health.check_provider") as mock_provider_class:
                     mock_llm_config_class.from_config_manager.return_value = mock_llm_config
 
                     mock_provider = MagicMock()
-                    mock_provider.is_available.return_value = True
+                    mock_provider.ok = True
                     mock_provider_class.return_value = mock_provider
 
                     result = runner.invoke(cli, ["check", "llm"])
@@ -789,7 +789,7 @@ class TestCheckAllWithLlm:
             with patch("postparse.cli.check.get_database") as mock_get_db:
                 with patch("postparse.core.utils.config.ConfigManager") as mock_config_mgr:
                     with patch("postparse.llm.config.LLMConfig") as mock_llm_config_class:
-                        with patch("postparse.llm.provider.LiteLLMProvider") as mock_provider_class:
+                        with patch("postparse.llm.health.check_provider") as mock_provider_class:
                             with patch("postparse.cli.check.os.getenv", return_value=None):
                                 mock_config = MagicMock()
                                 mock_config.get.return_value = "data/test.db"
@@ -805,7 +805,7 @@ class TestCheckAllWithLlm:
                                 )
 
                                 mock_provider = MagicMock()
-                                mock_provider.is_available.return_value = True
+                                mock_provider.ok = True
                                 mock_provider_class.return_value = mock_provider
 
                                 result = runner.invoke(cli, ["check", "all"])
@@ -840,7 +840,7 @@ class TestCheckAllWithLlm:
             with patch("postparse.cli.check.get_database") as mock_get_db:
                 with patch("postparse.core.utils.config.ConfigManager") as mock_config_mgr:
                     with patch("postparse.llm.config.LLMConfig") as mock_llm_config_class:
-                        with patch("postparse.llm.provider.LiteLLMProvider") as mock_provider_class:
+                        with patch("postparse.llm.health.check_provider") as mock_provider_class:
                             with patch("postparse.cli.check.os.getenv", return_value=None):
                                 mock_config = MagicMock()
                                 mock_config.get.return_value = "data/test.db"
@@ -856,7 +856,7 @@ class TestCheckAllWithLlm:
                                 )
 
                                 mock_provider = MagicMock()
-                                mock_provider.is_available.return_value = False
+                                mock_provider.ok = False
                                 mock_provider_class.return_value = mock_provider
 
                                 result = runner.invoke(cli, ["check", "all"])

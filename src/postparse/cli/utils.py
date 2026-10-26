@@ -395,28 +395,6 @@ def create_progress(*, show_eta: bool = True) -> Progress:
     return Progress(*columns, console=get_console())
 
 
-def create_classify_progress() -> Progress:
-    """Create a progress bar suited for classify-db scanning.
-
-    The bar tracks newly classified items toward ``--limit``. Skipped and
-    empty items are shown in the description because they do not advance
-    the bar.
-
-    Returns:
-        Progress: Configured progress instance for classification runs.
-    """
-    return Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(bar_width=20),
-        TextColumn("{task.completed}/{task.total} new"),
-        TextColumn("elapsed {task.fields[elapsed]}"),
-        TextColumn("avg {task.fields[avg]}"),
-        TextColumn("ETA {task.fields[eta]}"),
-        console=get_console(),
-    )
-
-
 def run_async(coro: Coroutine[Any, Any, T]) -> T:
     """
     Run async function in sync context.

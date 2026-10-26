@@ -15,9 +15,9 @@ class ClassifierType(str, Enum):
     Type of classifier to use.
 
     Values:
-        LLM: RecipeLLMClassifier (LLM-based recipe classification).
-        MULTI_CLASS: MultiClassLLMClassifier (single-label multi-class).
-        MULTI_LABEL: MultiLabelLLMClassifier (multi-label, 0..N labels per item).
+        LLM: recipe / not_recipe classification (generic TaxonomyClassifier).
+        MULTI_CLASS: single-label classification into custom classes.
+        MULTI_LABEL: multi-label classification (0..N labels per item).
     """
 
     LLM = "llm"

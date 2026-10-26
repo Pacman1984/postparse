@@ -17,7 +17,13 @@ from postparse.api.main import app
 from postparse.core.data.database import SocialMediaDatabase
 from postparse.api.services.cache_manager import CacheManager
 from postparse.core.utils.config import ConfigManager
-from postparse.services.analysis.classifiers.base import ClassificationResult
+import json
+
+from pydantic_ai.messages import ModelResponse, TextPart
+from pydantic_ai.models.function import FunctionModel
+
+from postparse.api.dependencies import get_classifier_factory
+from postparse.classification import TaxonomyClassifier
 
 
 @pytest.fixture(scope="module")
@@ -128,106 +134,64 @@ def e2e_classify_client(e2e_classify_database) -> TestClient:
 
 
 @pytest.fixture
-def mock_recipe_classifier():
+def recipe_classifier_factory():
     """
-    Create a mock recipe classifier for E2E tests.
+    Classifier factory whose FunctionModel answers with a keyword heuristic.
 
     Returns:
-        Mock classifier that simulates recipe classification.
+        Factory compatible with ``get_classifier_factory``.
     """
-    classifier = Mock()
+    recipe_keywords = ["recipe", "ingredients", "instructions", "cook", "bake", "blend", "sauce"]
 
-    def predict(text: str) -> ClassificationResult:
-        # Simple heuristic: if text contains recipe keywords, classify as recipe
-        recipe_keywords = [
-            "recipe",
-            "ingredients",
-            "instructions",
-            "cook",
-            "bake",
-            "blend",
-            "sauce",
-        ]
-        is_recipe = any(keyword in text.lower() for keyword in recipe_keywords)
+    def respond(messages, info):
+        prompt = str(messages[0].parts[-1].content).lower()
+        is_recipe = any(keyword in prompt for keyword in recipe_keywords)
+        payload = {
+            "reasoning": "keyword heuristic",
+            "label": "recipe" if is_recipe else "not_recipe",
+            "confidence": 0.95 if is_recipe else 0.85,
+        }
+        return ModelResponse(parts=[TextPart(json.dumps(payload))])
 
-        return ClassificationResult(
-            label="recipe" if is_recipe else "not_recipe",
-            confidence=0.95 if is_recipe else 0.85,
-            details={
-                "is_recipe": is_recipe,
-                "has_ingredients": "ingredients" in text.lower() or ":" in text,
-            }
-            if is_recipe
-            else None,
-        )
+    def factory(spec, provider_name=None):
+        return TaxonomyClassifier(spec, FunctionModel(respond), "native",
+                                  provider_name="fake", model_name="fake-model")
 
-    classifier.predict = Mock(side_effect=predict)
-    return classifier
+    return factory
 
 
 class TestClassifyEndpointE2E:
     """E2E tests for classification endpoint workflow."""
 
     def test_classify_single_text_recipe(
-        self, e2e_classify_client: TestClient, mock_recipe_classifier
+        self, e2e_classify_client: TestClient, recipe_classifier_factory
     ) -> None:
-        """
-        Test classifying a single text as a recipe.
-
-        Verifies complete classification workflow.
-        """
-        with patch(
-            "postparse.api.dependencies.get_recipe_llm_classifier",
-            return_value=lambda: mock_recipe_classifier,
-        ):
-            response = e2e_classify_client.post(
-                "/api/v1/classify",
-                json={
-                    "text": "Here is a recipe: Mix flour, eggs, and sugar. Bake at 350F for 30 minutes.",
-                    "classifier_type": "recipe",
-                },
-            )
-
-        # The endpoint might not exist or have different behavior
-        # Adjust assertions based on actual API
-        if response.status_code == 200:
-            data = response.json()
-            assert "label" in data or "classification" in data
-        else:
-            # Log the status for debugging
-            pytest.skip(
-                f"Classify endpoint returned {response.status_code}: {response.text}"
-            )
+        """Classifying a recipe text runs through the generic classifier."""
+        app.dependency_overrides[get_classifier_factory] = lambda: recipe_classifier_factory
+        response = e2e_classify_client.post(
+            "/api/v1/classify/recipe",
+            json={
+                "text": "Here is a recipe: Mix flour, eggs, and sugar. Bake at 350F for 30 minutes.",
+            },
+        )
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["label"] == "recipe"
+        assert data["confidence"] == pytest.approx(0.95)
+        assert data["details"]["reasoning"] == "keyword heuristic"
+        assert data["classifier_used"] == "llm"
 
     def test_classify_single_text_not_recipe(
-        self, e2e_classify_client: TestClient, mock_recipe_classifier
+        self, e2e_classify_client: TestClient, recipe_classifier_factory
     ) -> None:
-        """
-        Test classifying text that is not a recipe.
-
-        Verifies non-recipe classification.
-        """
-        with patch(
-            "postparse.api.dependencies.get_recipe_llm_classifier",
-            return_value=lambda: mock_recipe_classifier,
-        ):
-            response = e2e_classify_client.post(
-                "/api/v1/classify",
-                json={
-                    "text": "Just bought a new phone. Great camera quality!",
-                    "classifier_type": "recipe",
-                },
-            )
-
-        if response.status_code == 200:
-            data = response.json()
-            # Should be classified as not_recipe
-            if "label" in data:
-                assert data["label"] == "not_recipe"
-        else:
-            pytest.skip(
-                f"Classify endpoint returned {response.status_code}"
-            )
+        """Text that is not a recipe is labelled not_recipe."""
+        app.dependency_overrides[get_classifier_factory] = lambda: recipe_classifier_factory
+        response = e2e_classify_client.post(
+            "/api/v1/classify/recipe",
+            json={"text": "Just bought a new phone. Great camera quality!"},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["label"] == "not_recipe"
 
 
 class TestClassifyDatabaseContentE2E:

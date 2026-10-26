@@ -489,8 +489,8 @@ def _check_llm_providers(
     
     try:
         from postparse.llm.config import LLMConfig
-        from postparse.llm.model_discovery import resolve_provider_model
-        from postparse.llm.provider import LiteLLMProvider
+        from postparse.llm.health import check_provider
+        from postparse.llm.model_discovery import is_self_hosted_url, resolve_provider_model
         from postparse.core.utils.config import ConfigManager
     except ImportError as e:
         if verbose:
@@ -525,11 +525,8 @@ def _check_llm_providers(
             "is_local": False,
         }
 
-        # Determine if this is a local or cloud provider
-        is_local = provider_cfg.api_base is not None and (
-            "localhost" in provider_cfg.api_base or
-            "127.0.0.1" in provider_cfg.api_base
-        )
+        # Determine if this is a self-hosted (localhost / LAN) or cloud provider
+        is_local = is_self_hosted_url(provider_cfg.api_base)
         status_info["is_local"] = is_local
 
         # Check API key status for cloud providers
@@ -559,18 +556,23 @@ def _check_llm_providers(
             print_info(f"Checking {provider_cfg.name}...")
 
         try:
-            provider = LiteLLMProvider(resolved_cfg)
-            is_available = provider.is_available()
+            health = check_provider(resolved_cfg)
 
-            if is_available:
+            if health.ok:
                 status_info["status"] = "available"
                 status_info["status_detail"] = "Ready"
+                if isinstance(health.latency_ms, (int, float)):
+                    status_info["status_detail"] = f"Ready ({health.latency_ms:.0f} ms)"
                 # Track first available provider
                 if ready_provider is None:
                     ready_provider = status_info.copy()
             else:
                 status_info["status"] = "unavailable"
-                if is_local:
+                if health.status == "auth_error":
+                    status_info["status_detail"] = "Authentication failed"
+                elif health.status == "model_not_found":
+                    status_info["status_detail"] = "Model not found"
+                elif is_local:
                     status_info["status_detail"] = "Not running"
                 else:
                     status_info["status_detail"] = "Connection failed"

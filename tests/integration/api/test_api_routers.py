@@ -156,8 +156,7 @@ class TestClassifyEndpoints:
         assert "classifiers" in data
         assert "providers" in data
 
-    @patch('postparse.api.routers.classify.get_recipe_llm_classifier')
-    def test_classify_recipe_endpoint_validation(self, mock_classifier):
+    def test_classify_recipe_endpoint_validation(self):
         """Test classify endpoint request validation."""
         # Invalid request (empty text)
         response = self.client.post("/api/v1/classify/recipe", json={

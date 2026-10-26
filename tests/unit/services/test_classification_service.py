@@ -362,3 +362,13 @@ def test_from_config_uses_settings_db(tmp_path, monkeypatch) -> None:
     assert "topics" in service.taxonomies
     assert service.llm_config is not None
     assert service.provider_config().name == "lm_studio"
+
+
+def test_service_without_database(llm) -> None:
+    service = make_service(None, llm)  # type: ignore[arg-type]
+    assert service.classify_text("tech", "topics").labels == ("tech",)
+    assert [i.name for i in service.list_taxonomies()] == ["topics"]
+    with pytest.raises(KeyError):
+        service.taxonomy_spec("stored_only")
+    with pytest.raises(ValueError, match="needs a database"):
+        service.classify_pending("topics")

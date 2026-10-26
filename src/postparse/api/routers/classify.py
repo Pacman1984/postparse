@@ -1,45 +1,60 @@
 """
 FastAPI router for classification endpoints.
 
-This module provides HTTP endpoints for recipe classification and
-multi-class classification using LLM-based classifiers.
+All endpoints run on the generic :class:`~postparse.classification.TaxonomyClassifier`:
+
+- ``/recipe`` and ``/batch``: ad-hoc single-label taxonomy ``recipe`` / ``not_recipe``
+- ``/multi`` and ``/multi/batch``: ad-hoc single-label taxonomy from the request
+  ``classes`` (default: labels of the configured ``topics`` taxonomy)
+- ``/multilabel`` and ``/multilabel/batch``: the same as multi-label taxonomy
+- ``/classifiers``: configured taxonomies and providers
+
+Nothing is persisted here; database classification runs through
+``postparse classify run`` / :class:`~postparse.services.classification.ClassificationService`.
 """
 
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from collections.abc import Callable, Mapping
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from postparse.llm.config import LLMConfig
-from postparse.services.analysis.classifiers.llm import RecipeLLMClassifier
 from postparse.api.dependencies import (
-    get_recipe_llm_classifier,
-    _get_cached_recipe_llm_classifier,
-    get_optional_auth,
+    RECIPE_SPEC,
+    ClassifierFactory,
+    get_classifier_factory,
     get_config,
-    _get_cached_multi_class_llm_classifier,
-    _get_cached_multi_label_llm_classifier,
-    _normalize_classes_key,
+    get_optional_auth,
+    get_taxonomies,
 )
 from postparse.api.schemas import (
-    ClassifyRequest,
-    ClassifyResponse,
     BatchClassifyRequest,
     BatchClassifyResponse,
-    ClassifierType,
+    ClassifyRequest,
+    ClassifyResponse,
 )
 from postparse.api.schemas.classify import (
-    MultiClassifyRequest,
-    MultiClassifyResponse,
     BatchMultiClassifyRequest,
     BatchMultiClassifyResponse,
-    MultiLabelClassifyRequest,
-    MultiLabelClassifyResponse,
-    LabelScoreResponse,
     BatchMultiLabelClassifyRequest,
     BatchMultiLabelClassifyResponse,
+    LabelScoreResponse,
+    MultiClassifyRequest,
+    MultiClassifyResponse,
+    MultiLabelClassifyRequest,
+    MultiLabelClassifyResponse,
+)
+from postparse.classification import (
+    DEFAULT_TAXONOMY,
+    ClassificationError,
+    ClassificationOutcome,
+    TaxonomyClassifier,
+    TaxonomySpec,
 )
 from postparse.core.utils.config import ConfigManager
+from postparse.llm.client import api_type_for, max_concurrency_for, output_mode_for
+from postparse.llm.config import LLMConfig
 
 logger = logging.getLogger(__name__)
 
@@ -55,108 +70,189 @@ router = APIRouter(
 )
 
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _get_classifier(
+    factory: ClassifierFactory, spec: TaxonomySpec, provider_name: str | None
+) -> TaxonomyClassifier:
+    """Build/fetch a classifier, mapping configuration problems to HTTP 400/503."""
+    try:
+        return factory(spec, provider_name)
+    except ValueError as exc:
+        detail = f"Invalid provider_name '{provider_name}': {exc}" if provider_name else str(exc)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail) from exc
+    except Exception as exc:  # e.g. missing API key for a cloud provider
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"LLM provider unavailable: {exc}",
+        ) from exc
+
+
+async def _classify(classifier: TaxonomyClassifier, text: str, what: str) -> ClassificationOutcome:
+    """Classify one text, mapping failures to HTTP 503."""
+    try:
+        return await classifier.aclassify(text)
+    except ClassificationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"{what} failed: {exc}",
+        ) from exc
+
+
+def _adhoc_spec(
+    classes: dict[str, str] | None,
+    taxonomies: Mapping[str, TaxonomySpec],
+    *,
+    mode: str,
+) -> TaxonomySpec:
+    """Build the ad-hoc spec for multi/multilabel requests.
+
+    Request ``classes`` win; otherwise the labels of the configured default
+    taxonomy (``topics``, derived from ``[[classification.classes]]``) are used.
+
+    Raises:
+        HTTPException: 400 if fewer than two classes are available.
+    """
+    if classes is None:
+        default = taxonomies.get(DEFAULT_TAXONOMY)
+        classes = (
+            {label.name: label.description for label in default.labels} if default else {}
+        )
+    if len(classes) < 2:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "At least 2 classes are required for classification, "
+                f"got {len(classes)}. Pass 'classes' or configure "
+                "[[classification.classes]] / [[classification.taxonomies]]."
+            ),
+        )
+    try:
+        return TaxonomySpec.adhoc(classes, mode=mode, name=f"api_{mode}")  # type: ignore[arg-type]
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+def _details(outcome: ClassificationOutcome, classifier: TaxonomyClassifier) -> dict[str, Any]:
+    """Extra fields returned in the recipe ``details`` dict."""
+    return {
+        "reasoning": outcome.reasoning,
+        "provider": classifier.provider_name,
+        "model": classifier.model_name,
+    }
+
+
+def _recipe_response(
+    outcome: ClassificationOutcome,
+    classifier: TaxonomyClassifier,
+    elapsed: float,
+    index: int | None = None,
+) -> ClassifyResponse:
+    return ClassifyResponse(
+        label=outcome.label or "not_recipe",
+        confidence=outcome.confidence if outcome.confidence is not None else 0.0,
+        details=_details(outcome, classifier),
+        processing_time=elapsed,
+        classifier_used="llm",
+        input_index=index,
+    )
+
+
+def _multi_response(
+    outcome: ClassificationOutcome,
+    classifier: TaxonomyClassifier,
+    elapsed: float,
+    index: int | None = None,
+) -> MultiClassifyResponse:
+    return MultiClassifyResponse(
+        label=outcome.label or "",
+        confidence=outcome.confidence if outcome.confidence is not None else 0.0,
+        reasoning=outcome.reasoning,
+        available_classes=list(classifier.spec.label_names),
+        processing_time=elapsed,
+        classifier_used="multi_class_llm",
+        input_index=index,
+    )
+
+
+def _multilabel_response(
+    outcome: ClassificationOutcome,
+    classifier: TaxonomyClassifier,
+    elapsed: float,
+    index: int | None = None,
+) -> MultiLabelClassifyResponse:
+    return MultiLabelClassifyResponse(
+        labels=[
+            LabelScoreResponse(label=label, confidence=confidence or 0.0)
+            for label, confidence in outcome.label_scores()
+        ],
+        reasoning=outcome.reasoning,
+        available_classes=list(classifier.spec.label_names),
+        processing_time=elapsed,
+        classifier_used="multi_label_llm",
+        input_index=index,
+    )
+
+
+async def _run_batch(
+    classifier: TaxonomyClassifier,
+    texts: list[str],
+    build: Callable[..., Any],
+) -> tuple[list[Any], int]:
+    """Classify a batch with the classifier's concurrency; returns (results, failed)."""
+    outcomes = await classifier.aclassify_many(texts)
+    results: list[Any] = []
+    failed = 0
+    for index, outcome in enumerate(outcomes):
+        if not outcome.succeeded:
+            failed += 1
+            continue
+        results.append(build(outcome, classifier, outcome.latency_s, index))
+    return results, failed
+
+
+# ---------------------------------------------------------------------------
+# Recipe (legacy binary classification)
+# ---------------------------------------------------------------------------
+
+
 @router.post(
     "/recipe",
     response_model=ClassifyResponse,
     summary="Classify text as recipe or non-recipe",
     description="""
-    Classify a single text to determine if it contains a recipe.
-    
-    Currently supports:
-    - **llm**: RecipeLLMClassifier (pure LLM-based classification)
-    
-    Note: A basic rule-based classifier is planned for a future phase.
-    
-    Returns classification label, confidence score, and additional details
-    like cuisine type, difficulty, and meal type.
-    
-    Provider switching is supported: specify `provider_name` in the request
-    to use a different LLM provider (e.g., "openai", "anthropic", "lm_studio").
-    If not specified, uses the default provider from configuration.
+    Classify a single text as `recipe` or `not_recipe` (an ad-hoc single-label
+    taxonomy on the generic LLM classifier).
+
+    `details` contains the model's `reasoning` plus `provider` and `model`.
+
+    Specify `provider_name` to use another configured LLM provider.
     """,
 )
-def classify_recipe(
+async def classify_recipe(
     request: ClassifyRequest,
-    llm_classifier: RecipeLLMClassifier = Depends(get_recipe_llm_classifier),
-    user: Optional[dict] = Depends(get_optional_auth),
+    factory: ClassifierFactory = Depends(get_classifier_factory),
+    user: dict | None = Depends(get_optional_auth),
 ) -> ClassifyResponse:
     """
     Classify single text as recipe or non-recipe.
-    
-    Args:
-        request: Classification request with text and classifier type.
-        llm_classifier: RecipeLLMClassifier instance (injected dependency).
-        user: Optional authenticated user info.
-        
-    Returns:
-        ClassifyResponse with label, confidence, and details.
-        
-    Raises:
-        HTTPException: 400 if provider_name is invalid.
-        HTTPException: 503 if LLM service is unavailable.
-        
+
     Example:
         POST /api/v1/classify/recipe
-        {
-            "text": "Boil pasta for 10 minutes, drain, add tomato sauce and basil",
-            "classifier_type": "llm",
-            "provider_name": "lm_studio"
-        }
-        
+        {"text": "Boil pasta for 10 minutes, drain, add tomato sauce", "provider_name": "lm_studio"}
+
         Response:
-        {
-            "label": "recipe",
-            "confidence": 0.95,
-            "details": {
-                "cuisine_type": "italian",
-                "difficulty": "easy",
-                "meal_type": "dinner",
-                "ingredients_count": 5
-            },
-            "processing_time": 0.234,
-            "classifier_used": "llm"
-        }
+        {"label": "recipe", "confidence": 0.95,
+         "details": {"reasoning": "...", "provider": "lm_studio", "model": "..."},
+         "processing_time": 0.234, "classifier_used": "llm"}
     """
-    start_time = time.time()
-    
-    try:
-        # Use provider-specific classifier if provider_name is provided
-        if request.provider_name:
-            try:
-                classifier = _get_cached_recipe_llm_classifier(request.provider_name)
-            except Exception as e:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid provider_name '{request.provider_name}': {str(e)}",
-                )
-        else:
-            # Use default injected classifier
-            classifier = llm_classifier
-        
-        classifier_name = "llm"
-        
-        # Perform classification
-        result = classifier.predict(request.text)
-        
-        processing_time = time.time() - start_time
-        
-        return ClassifyResponse(
-            label=result.label,
-            confidence=result.confidence,
-            details=result.details or {},
-            processing_time=processing_time,
-            classifier_used=classifier_name,
-        )
-        
-    except HTTPException:
-        # Re-raise HTTP exceptions as-is
-        raise
-    except Exception as e:
-        # Handle LLM provider errors
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Classification failed: {str(e)}",
-        )
+    start = time.perf_counter()
+    classifier = _get_classifier(factory, RECIPE_SPEC, request.provider_name)
+    outcome = await _classify(classifier, request.text, "Classification")
+    return _recipe_response(outcome, classifier, time.perf_counter() - start)
 
 
 @router.post(
@@ -164,101 +260,30 @@ def classify_recipe(
     response_model=BatchClassifyResponse,
     summary="Classify multiple texts in batch",
     description="""
-    Classify multiple texts in a single request for efficiency.
-    
-    Supports up to 100 texts per request. Uses the same classifier types
-    as the single classification endpoint.
-    
-    Provider switching is supported: specify `provider_name` in the request
-    to use a different LLM provider for all texts in the batch.
+    Classify up to 100 texts as `recipe` / `not_recipe`. Failed texts are
+    counted in `failed_count` and left out of `results`.
     """,
 )
-def classify_batch(
+async def classify_batch(
     request: BatchClassifyRequest,
-    llm_classifier: RecipeLLMClassifier = Depends(get_recipe_llm_classifier),
-    user: Optional[dict] = Depends(get_optional_auth),
+    factory: ClassifierFactory = Depends(get_classifier_factory),
+    user: dict | None = Depends(get_optional_auth),
 ) -> BatchClassifyResponse:
-    """
-    Classify multiple texts in batch.
-    
-    Args:
-        request: Batch classification request with list of texts.
-        llm_classifier: RecipeLLMClassifier instance (injected dependency).
-        user: Optional authenticated user info.
-        
-    Returns:
-        BatchClassifyResponse with results for all texts.
-        
-    Raises:
-        HTTPException: 400 if provider_name is invalid.
-        
-    Example:
-        POST /api/v1/classify/batch
-        {
-            "texts": [
-                "Boil pasta for 10 minutes",
-                "Just finished watching a great movie",
-                "Mix flour, eggs, and milk to make pancakes"
-            ],
-            "classifier_type": "llm",
-            "provider_name": "openai"
-        }
-        
-        Response:
-        {
-            "results": [...],
-            "total_processed": 3,
-            "failed_count": 0,
-            "total_processing_time": 0.702
-        }
-    """
-    start_time = time.time()
-    
-    # Use provider-specific classifier if provider_name is provided
-    if request.provider_name:
-        try:
-            classifier = _get_cached_recipe_llm_classifier(request.provider_name)
-        except Exception as e:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid provider_name '{request.provider_name}': {str(e)}",
-            )
-    else:
-        # Use default injected classifier
-        classifier = llm_classifier
-    
-    classifier_name = "llm"
-    
-    results = []
-    failed_count = 0
-    
-    # Process each text
-    for i, text in enumerate(request.texts):
-        try:
-            text_start_time = time.time()
-            result = classifier.predict(text)
-            text_processing_time = time.time() - text_start_time
-            
-            results.append(ClassifyResponse(
-                label=result.label,
-                confidence=result.confidence,
-                details=result.details or {},
-                processing_time=text_processing_time,
-                classifier_used=classifier_name,
-                input_index=i,
-            ))
-        except Exception:
-            # Count failures but continue processing
-            failed_count += 1
-    
-    total_processing_time = time.time() - start_time
-    
+    """Classify multiple texts as recipe or non-recipe."""
+    start = time.perf_counter()
+    classifier = _get_classifier(factory, RECIPE_SPEC, request.provider_name)
+    results, failed = await _run_batch(classifier, request.texts, _recipe_response)
     return BatchClassifyResponse(
         results=results,
         total_processed=len(request.texts),
-        failed_count=failed_count,
-        total_processing_time=total_processing_time,
+        failed_count=failed,
+        total_processing_time=time.perf_counter() - start,
     )
+
+
+# ---------------------------------------------------------------------------
+# Multi-class (single label from custom classes)
+# ---------------------------------------------------------------------------
 
 
 @router.post(
@@ -266,120 +291,31 @@ def classify_batch(
     response_model=MultiClassifyResponse,
     summary="Classify text into custom categories",
     description="""
-    Classify a single text into one of the custom categories using LLM-based multi-class classification.
-    
-    ## Features
-    
-    - **Dynamic Classes**: Define any number of classes (minimum 2)
-    - **Config + Runtime**: Use default classes from config.toml or override with runtime classes
-    - **Provider Flexibility**: Specify which LLM provider to use
-    - **Structured Output**: Returns predicted class, confidence score, and reasoning
-    
-    ## Class Definitions
-    
-    Classes can be defined in two ways:
-    
-    1. **Config-based**: Default classes defined in `config.toml` under `[classification.classes]`
-    2. **Runtime-based**: Pass a `classes` dict in the request to override/extend config classes
-    
-    Each class definition is a dictionary mapping class name to description. The description
-    should explain what content belongs to that class, ideally with examples.
-    
-    ## Provider Switching
-    
-    Specify `provider_name` in the request to use a different LLM provider
-    (e.g., "openai", "anthropic", "ollama", "lm_studio"). If not specified,
-    uses the default provider from configuration.
-    
-    ## Response
-    
-    Returns the predicted class label, confidence score (0.0-1.0), reasoning for the
-    classification, list of available classes, and processing time.
+    Classify a text into exactly one of the given `classes` (dict of class
+    name → description; minimum 2). Without `classes`, the labels of the
+    configured `topics` taxonomy are used. Returns label, confidence,
+    reasoning and the available classes.
     """,
 )
-def classify_multi(
+async def classify_multi(
     request: MultiClassifyRequest,
-    config: ConfigManager = Depends(get_config),
-    user: Optional[dict] = Depends(get_optional_auth),
+    factory: ClassifierFactory = Depends(get_classifier_factory),
+    taxonomies: dict[str, TaxonomySpec] = Depends(get_taxonomies),
+    user: dict | None = Depends(get_optional_auth),
 ) -> MultiClassifyResponse:
     """
     Classify single text into custom categories.
-    
-    Args:
-        request: Multi-class classification request with text and optional classes.
-        config: ConfigManager instance (injected dependency).
-        user: Optional authenticated user info.
-        
-    Returns:
-        MultiClassifyResponse with label, confidence, reasoning, and available classes.
-        
-    Raises:
-        HTTPException: 400 if classes are invalid or provider_name is invalid.
-        HTTPException: 503 if LLM service is unavailable.
-        
+
     Example:
         POST /api/v1/classify/multi
-        {
-            "text": "Check out this new FastAPI library for building APIs!",
-            "classes": {
-                "recipe": "Cooking instructions or ingredients",
-                "python_package": "Python libraries or packages",
-                "movie_review": "Movie or film discussion"
-            },
-            "provider_name": "openai"
-        }
-        
-        Response:
-        {
-            "label": "python_package",
-            "confidence": 0.92,
-            "reasoning": "The text mentions FastAPI library and building APIs",
-            "available_classes": ["recipe", "python_package", "movie_review"],
-            "processing_time": 0.345,
-            "classifier_used": "multi_class_llm"
-        }
+        {"text": "Check out this new FastAPI library!",
+         "classes": {"recipe": "Cooking", "python_package": "Python libraries"}}
     """
-    start_time = time.time()
-    
-    try:
-        # Use cached classifier keyed by (classes, provider, config_path)
-        classes_key = _normalize_classes_key(request.classes)
-        config_path = config.config_path if hasattr(config, "config_path") else None
-        classifier = _get_cached_multi_class_llm_classifier(
-            request.provider_name,
-            classes_key,
-            config_path,
-        )
-        
-        # Perform classification
-        result = classifier.predict(request.text)
-        
-        processing_time = time.time() - start_time
-        
-        return MultiClassifyResponse(
-            label=result.label,
-            confidence=result.confidence,
-            reasoning=result.details.get('reasoning') if result.details else None,
-            available_classes=result.details.get('available_classes', []) if result.details else [],
-            processing_time=processing_time,
-            classifier_used="multi_class_llm",
-        )
-        
-    except ValueError as e:
-        # Handle validation errors (invalid classes, provider not found)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
-    except HTTPException:
-        # Re-raise HTTP exceptions as-is
-        raise
-    except Exception as e:
-        # Handle LLM provider errors
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Multi-class classification failed: {str(e)}",
-        )
+    start = time.perf_counter()
+    spec = _adhoc_spec(request.classes, taxonomies, mode="single")
+    classifier = _get_classifier(factory, spec, request.provider_name)
+    outcome = await _classify(classifier, request.text, "Multi-class classification")
+    return _multi_response(outcome, classifier, time.perf_counter() - start)
 
 
 @router.post(
@@ -387,115 +323,32 @@ def classify_multi(
     response_model=BatchMultiClassifyResponse,
     summary="Classify multiple texts into custom categories",
     description="""
-    Classify multiple texts into custom categories in a single request.
-    
-    This batch endpoint is more efficient than calling the single endpoint multiple times,
-    as it reuses the same classifier instance for all texts.
-    
-    ## Features
-    
-    - **Batch Processing**: Classify up to 100 texts in a single request
-    - **Shared Classifier**: Uses the same classifier instance for efficiency
-    - **Partial Failure Handling**: Continues processing even if individual texts fail
-    - **Aggregate Statistics**: Returns total processed, failed count, and total time
-    
-    ## Usage
-    
-    Same class definition and provider switching options as the single endpoint.
-    Individual failures are counted but don't stop the batch from completing.
+    Batch version of `/multi` for up to 100 texts. Individual failures are
+    counted in `failed_count` and do not stop the batch.
     """,
 )
-def classify_multi_batch(
+async def classify_multi_batch(
     request: BatchMultiClassifyRequest,
-    config: ConfigManager = Depends(get_config),
-    user: Optional[dict] = Depends(get_optional_auth),
+    factory: ClassifierFactory = Depends(get_classifier_factory),
+    taxonomies: dict[str, TaxonomySpec] = Depends(get_taxonomies),
+    user: dict | None = Depends(get_optional_auth),
 ) -> BatchMultiClassifyResponse:
-    """
-    Classify multiple texts into custom categories in batch.
-    
-    Args:
-        request: Batch multi-class classification request with texts and optional classes.
-        config: ConfigManager instance (injected dependency).
-        user: Optional authenticated user info.
-        
-    Returns:
-        BatchMultiClassifyResponse with results for all texts.
-        
-    Raises:
-        HTTPException: 400 if classes are invalid or provider_name is invalid.
-        
-    Example:
-        POST /api/v1/classify/multi/batch
-        {
-            "texts": [
-                "Boil pasta for 10 minutes",
-                "Check out FastAPI library",
-                "Great movie last night"
-            ],
-            "classes": {
-                "recipe": "Cooking instructions",
-                "python_package": "Python libraries",
-                "movie_review": "Movie discussion"
-            }
-        }
-        
-        Response:
-        {
-            "results": [...],
-            "total_processed": 3,
-            "failed_count": 0,
-            "total_processing_time": 1.234
-        }
-    """
-    start_time = time.time()
-    
-    try:
-        # Reuse cached classifier for the batch
-        classes_key = _normalize_classes_key(request.classes)
-        config_path = config.config_path if hasattr(config, "config_path") else None
-        classifier = _get_cached_multi_class_llm_classifier(
-            request.provider_name,
-            classes_key,
-            config_path,
-        )
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
-    
-    results = []
-    failed_count = 0
-    available_classes = classifier.get_class_names()
-    
-    # Process each text
-    for i, text in enumerate(request.texts):
-        try:
-            text_start_time = time.time()
-            result = classifier.predict(text)
-            text_processing_time = time.time() - text_start_time
-            
-            results.append(MultiClassifyResponse(
-                label=result.label,
-                confidence=result.confidence,
-                reasoning=result.details.get('reasoning') if result.details else None,
-                available_classes=result.details.get('available_classes', available_classes) if result.details else available_classes,
-                processing_time=text_processing_time,
-                classifier_used="multi_class_llm",
-                input_index=i,
-            ))
-        except Exception:
-            # Count failures but continue processing
-            failed_count += 1
-    
-    total_processing_time = time.time() - start_time
-    
+    """Classify multiple texts into custom categories."""
+    start = time.perf_counter()
+    spec = _adhoc_spec(request.classes, taxonomies, mode="single")
+    classifier = _get_classifier(factory, spec, request.provider_name)
+    results, failed = await _run_batch(classifier, request.texts, _multi_response)
     return BatchMultiClassifyResponse(
         results=results,
         total_processed=len(request.texts),
-        failed_count=failed_count,
-        total_processing_time=total_processing_time,
+        failed_count=failed,
+        total_processing_time=time.perf_counter() - start,
     )
+
+
+# ---------------------------------------------------------------------------
+# Multi-label (0..N labels from custom classes)
+# ---------------------------------------------------------------------------
 
 
 @router.post(
@@ -504,53 +357,21 @@ def classify_multi_batch(
     summary="Classify text with multiple labels",
     description="Assign ALL matching categories (0..N) to a text.",
 )
-def classify_multilabel(
+async def classify_multilabel(
     request: MultiLabelClassifyRequest,
-    config: ConfigManager = Depends(get_config),
-    user: Optional[dict] = Depends(get_optional_auth),
+    factory: ClassifierFactory = Depends(get_classifier_factory),
+    taxonomies: dict[str, TaxonomySpec] = Depends(get_taxonomies),
+    user: dict | None = Depends(get_optional_auth),
 ) -> MultiLabelClassifyResponse:
     """Classify single text with multi-label assignment.
 
-    Args:
-        request: Multi-label classification request.
-        config: ConfigManager instance (injected).
-        user: Optional authenticated user info.
-
-    Returns:
-        MultiLabelClassifyResponse with list of labels.
+    Each label carries the overall confidence of the answer.
     """
-    start_time = time.time()
-
-    try:
-        classes_key = _normalize_classes_key(request.classes)
-        config_path = config.config_path if hasattr(config, "config_path") else None
-        classifier = _get_cached_multi_label_llm_classifier(
-            request.provider_name,
-            classes_key,
-            config_path,
-        )
-        result = classifier.predict_multilabel(request.text)
-        processing_time = time.time() - start_time
-
-        return MultiLabelClassifyResponse(
-            labels=[
-                LabelScoreResponse(label=ls.label, confidence=ls.confidence)
-                for ls in result.labels
-            ],
-            reasoning=result.reasoning,
-            available_classes=result.available_classes,
-            processing_time=processing_time,
-            classifier_used="multi_label_llm",
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Multi-label classification failed: {e}",
-        )
+    start = time.perf_counter()
+    spec = _adhoc_spec(request.classes, taxonomies, mode="multi")
+    classifier = _get_classifier(factory, spec, request.provider_name)
+    outcome = await _classify(classifier, request.text, "Multi-label classification")
+    return _multilabel_response(outcome, classifier, time.perf_counter() - start)
 
 
 @router.post(
@@ -559,84 +380,53 @@ def classify_multilabel(
     summary="Classify multiple texts with multiple labels",
     description="Batch multi-label classification for up to 100 texts.",
 )
-def classify_multilabel_batch(
+async def classify_multilabel_batch(
     request: BatchMultiLabelClassifyRequest,
-    config: ConfigManager = Depends(get_config),
-    user: Optional[dict] = Depends(get_optional_auth),
+    factory: ClassifierFactory = Depends(get_classifier_factory),
+    taxonomies: dict[str, TaxonomySpec] = Depends(get_taxonomies),
+    user: dict | None = Depends(get_optional_auth),
 ) -> BatchMultiLabelClassifyResponse:
-    """Classify multiple texts with multi-label assignment.
-
-    Args:
-        request: Batch multi-label request.
-        config: ConfigManager instance (injected).
-        user: Optional authenticated user info.
-
-    Returns:
-        BatchMultiLabelClassifyResponse with results for all texts.
-    """
-    start_time = time.time()
-
-    try:
-        classes_key = _normalize_classes_key(request.classes)
-        config_path = config.config_path if hasattr(config, "config_path") else None
-        classifier = _get_cached_multi_label_llm_classifier(
-            request.provider_name,
-            classes_key,
-            config_path,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-
-    results: List[MultiLabelClassifyResponse] = []
-    failed_count = 0
-    available_classes = classifier.get_class_names()
-
-    for i, text_item in enumerate(request.texts):
-        try:
-            t0 = time.time()
-            result = classifier.predict_multilabel(text_item)
-            dt = time.time() - t0
-            results.append(MultiLabelClassifyResponse(
-                labels=[
-                    LabelScoreResponse(label=ls.label, confidence=ls.confidence)
-                    for ls in result.labels
-                ],
-                reasoning=result.reasoning,
-                available_classes=available_classes,
-                processing_time=dt,
-                classifier_used="multi_label_llm",
-                input_index=i,
-            ))
-        except Exception:
-            failed_count += 1
-
+    """Classify multiple texts with multi-label assignment."""
+    start = time.perf_counter()
+    spec = _adhoc_spec(request.classes, taxonomies, mode="multi")
+    classifier = _get_classifier(factory, spec, request.provider_name)
+    results, failed = await _run_batch(classifier, request.texts, _multilabel_response)
     return BatchMultiLabelClassifyResponse(
         results=results,
         total_processed=len(request.texts),
-        failed_count=failed_count,
-        total_processing_time=time.time() - start_time,
+        failed_count=failed,
+        total_processing_time=time.perf_counter() - start,
     )
+
+
+# ---------------------------------------------------------------------------
+# Listing
+# ---------------------------------------------------------------------------
 
 
 @router.get(
     "/classifiers",
-    response_model=Dict[str, List[Dict[str, Any]]],
+    response_model=dict[str, list[dict[str, Any]]],
     summary="List available classifiers",
-    description="List all available classifiers and their configurations.",
+    description="List classifier endpoints, configured taxonomies and LLM providers.",
 )
 async def list_classifiers(
     config: ConfigManager = Depends(get_config),
-    user: Optional[dict] = Depends(get_optional_auth),
-) -> Dict[str, List[Dict[str, Any]]]:
-    """List available classifiers and their configurations."""
-    providers: List[Dict[str, Any]] = []
+    user: dict | None = Depends(get_optional_auth),
+) -> dict[str, list[dict[str, Any]]]:
+    """List available classifiers, taxonomies and providers."""
+    providers: list[dict[str, Any]] = []
     try:
         llm_config = LLMConfig.from_config_manager(config)
         providers = [
             {
                 "name": provider.name,
-                "status": "available",
+                "status": "configured",
                 "default": provider.name == llm_config.default_provider,
+                "model": provider.model,
+                "api_type": api_type_for(provider),
+                "output_mode": output_mode_for(provider),
+                "max_concurrency": max_concurrency_for(provider),
             }
             for provider in llm_config.providers
         ]
@@ -645,24 +435,33 @@ async def list_classifiers(
         # must not turn the listing into a 500; report what is available.
         logger.warning("Could not load LLM provider configuration: %s", exc)
 
+    taxonomies: list[dict[str, Any]] = []
+    try:
+        taxonomies = [spec.to_dict() for spec in get_taxonomies(config).values()]
+    except ValueError as exc:
+        logger.warning("Could not load taxonomies: %s", exc)
+
     return {
         "classifiers": [
             {
                 "type": "llm",
-                "name": "RecipeLLMClassifier",
+                "name": "recipe",
                 "description": "Binary recipe classification (recipe/not_recipe)",
+                "endpoint": "/api/v1/classify/recipe",
             },
             {
                 "type": "multi_class_llm",
-                "name": "MultiClassLLMClassifier",
-                "description": "Single-label multi-class classification",
+                "name": "multi",
+                "description": "Single-label classification into custom classes",
+                "endpoint": "/api/v1/classify/multi",
             },
             {
                 "type": "multi_label_llm",
-                "name": "MultiLabelLLMClassifier",
+                "name": "multilabel",
                 "description": "Multi-label classification (0..N labels per text)",
+                "endpoint": "/api/v1/classify/multilabel",
             },
         ],
+        "taxonomies": taxonomies,
         "providers": providers,
     }
-

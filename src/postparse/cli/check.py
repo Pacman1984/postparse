@@ -371,7 +371,7 @@ def _cuda_info() -> tuple[int, list[str]]:
             import ctranslate2
 
             count = int(ctranslate2.get_cuda_device_count())
-        except Exception:  # noqa: BLE001 - driver problems mean "no CUDA"
+        except Exception:
             logger.debug("CUDA device query failed", exc_info=True)
     names: list[str] = []
     smi = shutil.which("nvidia-smi")
@@ -406,7 +406,8 @@ def _load_local_model(options: TranscriptionOptions) -> Any:
     """Build the local backend and load its model (tests replace this)."""
     from postparse.media.transcription import build_backend
 
-    backend = build_backend(options, "local")
+    # The local backend (unlike the TranscriptionBackend protocol) has load().
+    backend: Any = build_backend(options, "local")
     backend.load()
     return backend
 
@@ -463,7 +464,7 @@ def transcription_status(
         if load_model:
             try:
                 loaded = _load_local_model(options)
-            except Exception as exc:  # noqa: BLE001 - report every load failure
+            except Exception as exc:
                 result.worsen("fail")
                 result.summary = f"model load failed: {exc}"
                 return result

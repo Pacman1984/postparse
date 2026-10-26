@@ -18,9 +18,12 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Literal, NamedTuple
+from typing import TYPE_CHECKING, Literal, NamedTuple, cast
 
 import av
+
+if TYPE_CHECKING:
+    from av.audio.stream import AudioStream
 
 __all__ = [
     "AudioFormat",
@@ -94,7 +97,7 @@ def decode_pcm16k(path: str | Path) -> bytes:
     """
     chunks: list[bytes] = []
     with av.open(str(path)) as container:
-        stream = next((s for s in container.streams if s.type == "audio"), None)
+        stream = next(iter(container.streams.audio), None)
         if stream is None:
             raise NoAudioStream(f"No audio stream in {Path(path).name}")
         resampler = av.AudioResampler(format="flt", layout="mono", rate=_SAMPLE_RATE)
@@ -143,12 +146,15 @@ def extract_audio(src: str | Path, out: str | Path, fmt: AudioFormat = "m4a") ->
         raise ValueError(f"Unknown audio format: {fmt!r}")
     out_path = Path(out)
     with av.open(str(src)) as inp:
-        stream = next((s for s in inp.streams if s.type == "audio"), None)
+        stream = next(iter(inp.streams.audio), None)
         if stream is None:
             raise NoAudioStream(f"No audio stream in {Path(src).name}")
         resampler = av.AudioResampler(format=sample_format, layout="mono", rate=_SAMPLE_RATE)
         with av.open(str(out_path), "w", format=container_format) as output:
-            out_stream = output.add_stream(codec, rate=_SAMPLE_RATE, layout="mono")
+            # codec is one of two audio codecs, so the stream is an AudioStream.
+            out_stream = cast(
+                "AudioStream", output.add_stream(codec, rate=_SAMPLE_RATE, layout="mono")
+            )
             if codec == "aac":
                 out_stream.bit_rate = _AAC_BITRATE
             for frame in inp.decode(stream):

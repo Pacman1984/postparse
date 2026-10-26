@@ -238,7 +238,7 @@ def test_size_cap(db: Database, tmp_path: Path) -> None:
     work.mkdir()
     with (
         make_fetcher(db, cdn, max_download_mb=1) as fetcher,
-        pytest.raises(FetchError, match="too large|size cap"),
+        pytest.raises(FetchError, match=r"too large|size cap"),
     ):
         fetcher.fetch(get_media(db, mid), "BIG", work)
     assert list(work.iterdir()) == []  # partial file removed

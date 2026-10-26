@@ -191,7 +191,7 @@ def discover_ollama_model(
             continue
         name = model.get("name") or model.get("model")
         if name:
-            return name
+            return str(name)
 
     return None
 

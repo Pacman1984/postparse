@@ -162,7 +162,9 @@ def show_welcome() -> None:
             content,
             border_style="bold cyan",
             padding=(1, 2),
-            subtitle="[dim]Use [cyan]postparse COMMAND --help[/cyan] for detailed information[/dim]",
+            subtitle=(
+                "[dim]Use [cyan]postparse COMMAND --help[/cyan] for detailed information[/dim]"
+            ),
             subtitle_align="center",
         )
     )
@@ -209,7 +211,7 @@ def _database_rows(ctx: click.Context) -> list[tuple[str, str]]:
 
     try:
         path = resolve_db_path(ctx)
-    except Exception as exc:  # noqa: BLE001 - info must never crash on bad config
+    except Exception as exc:
         return [("💾 Database", f"[red]{exc}[/red]")]
     rows = [("💾 Database", str(path))]
     if not path.is_file():
@@ -222,7 +224,7 @@ def _database_rows(ctx: click.Context) -> list[tuple[str, str]]:
             items = int(conn.execute("SELECT count(*) FROM items").fetchone()[0]) if version else 0
         finally:
             conn.close()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         rows.append(("   Status", f"[red]unreadable: {exc}[/red]"))
         return rows
     latest = latest_version()
@@ -260,7 +262,7 @@ def info(ctx: click.Context) -> None:
         table.add_row("📁 Data dir", str(settings.data_dir))
         table.add_row("🔑 Sessions dir", str(settings.sessions_dir))
         table.add_row("⬇️  Downloads dir", str(settings.downloads_dir))
-    except Exception as exc:  # noqa: BLE001 - info must never crash on bad config
+    except Exception as exc:
         table.add_row("📁 Paths", f"[red]{exc}[/red]")
     for key, value in _database_rows(ctx):
         table.add_row(key, value)

@@ -37,7 +37,7 @@ class TestConfigManager:
             f.write("""
             [models]
             zero_shot_model = "test-model"
-            
+
             [classification]
             min_confidence_threshold = 0.8
             """)
@@ -172,7 +172,7 @@ class TestConfigManager:
             [models]
             zero_shot_model = "test-model"
             default_llm_model = "test-llm"
-            
+
             [classification]
             min_confidence_threshold = 0.8
             """)

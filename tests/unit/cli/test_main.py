@@ -62,14 +62,16 @@ class TestEnvLoading:
         # Mock __file__ to point to temp directory so script_dir check also fails
         fake_file = str(tmp_path / "fake" / "cli" / "main.py")
 
-        with patch("postparse.cli.main.load_dotenv") as mock_load_dotenv:
-            with patch("postparse.cli.main.__file__", fake_file):
-                result = load_env_files()
+        with (
+            patch("postparse.cli.main.load_dotenv") as mock_load_dotenv,
+            patch("postparse.cli.main.__file__", fake_file),
+        ):
+            result = load_env_files()
 
-                # Should return None if no file found
-                assert result is None
-                # load_dotenv should not have been called since no files exist
-                assert not mock_load_dotenv.called
+            # Should return None if no file found
+            assert result is None
+            # load_dotenv should not have been called since no files exist
+            assert not mock_load_dotenv.called
 
 
 class TestWelcomeBanner:
@@ -97,7 +99,7 @@ class TestWelcomeBanner:
             assert mock_console.print.call_count >= 2
 
             # Verify that print was called (actual version rendering happens in Rich Panel)
-            # We can't easily check the rendered content without rendering, but we verify the call happened
+            # The rendered Panel is not inspected here; verify the print call happened.
             assert mock_console.print.called
 
 

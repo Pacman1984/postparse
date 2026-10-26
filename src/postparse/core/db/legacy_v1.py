@@ -43,11 +43,12 @@ from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, SupportsFloat, SupportsIndex
 from zoneinfo import ZoneInfo
 
 from postparse.core.db.connection import connect
 from postparse.core.db.migrate import migrate as run_migrations
+from postparse.core.db.models import TaxonomyMode
 from postparse.core.db.repos.classification import ClassificationRepo
 from postparse.core.db.repos.links import LinksRepo
 from postparse.core.db.repos.media import normalize_local_path
@@ -117,7 +118,7 @@ _LEGACY_PREFIX = ("data", "downloads")
 _FFFD = chr(0xFFFD)
 
 #: v1 classifier name -> (taxonomy name, mode, is_legacy, fallback labels).
-_CLASSIFIERS: dict[str, tuple[str, str, bool, tuple[str, ...]]] = {
+_CLASSIFIERS: dict[str, tuple[str, TaxonomyMode, bool, tuple[str, ...]]] = {
     "multilabel_llm": ("topics", "multi", False, ()),
     "recipe_llm": ("recipe_legacy", "single", True, ("recipe", "not_recipe")),
 }
@@ -308,7 +309,9 @@ def _confidence(value: object) -> float | None:
     if value is None:
         return None
     try:
-        number = float(value)  # type: ignore[arg-type]
+        if not isinstance(value, str | bytes | SupportsFloat | SupportsIndex):
+            return None
+        number = float(value)
     except (TypeError, ValueError):
         return None
     return number if 0.0 <= number <= 1.0 else None
@@ -323,7 +326,7 @@ def _is_url_list(text: str) -> bool:
 def _load_ftfy() -> Any:
     """Return the ``ftfy`` module or ``None`` if the ``migrate`` extra is missing."""
     try:
-        import ftfy  # type: ignore[import-not-found]
+        import ftfy
     except ImportError:
         return None
     return ftfy
@@ -600,24 +603,24 @@ class _Migrator:
             for post_id, name in self.src.execute(
                 "SELECT post_id, hashtag FROM instagram_hashtags ORDER BY id"
             ).fetchall():
-                item_id = self.state.ig_items.get(post_id)
-                if item_id is None:
+                tagged_id = self.state.ig_items.get(post_id)
+                if tagged_id is None:
                     self.report.dropped["instagram_hashtags_orphan"] = (
                         self.report.dropped.get("instagram_hashtags_orphan", 0) + 1
                     )
                     continue
-                hashtag_links += self._link_item_tags(item_id, "hashtag", [name])
+                hashtag_links += self._link_item_tags(tagged_id, "hashtag", [name])
         if self._has("instagram_mentions"):
             for post_id, name in self.src.execute(
                 "SELECT post_id, username FROM instagram_mentions ORDER BY id"
             ).fetchall():
-                item_id = self.state.ig_items.get(post_id)
-                if item_id is None:
+                tagged_id = self.state.ig_items.get(post_id)
+                if tagged_id is None:
                     self.report.dropped["instagram_mentions_orphan"] = (
                         self.report.dropped.get("instagram_mentions_orphan", 0) + 1
                     )
                     continue
-                mention_links += self._link_item_tags(item_id, "mention", [name])
+                mention_links += self._link_item_tags(tagged_id, "mention", [name])
         self.report.tags["instagram_hashtag_links"] = hashtag_links
         self.report.tags["instagram_mention_links"] = mention_links
         self._ig_expanded = [
@@ -988,7 +991,7 @@ class _Migrator:
         for classifier in sorted({key[0] for key in grouped}):
             name, mode, is_legacy, fallback = _CLASSIFIERS[classifier]
             label_names = sorted(set(fallback) | labels_seen[classifier])
-            taxonomy = repo.ensure_taxonomy(name, mode, label_names, is_legacy=is_legacy)  # type: ignore[arg-type]
+            taxonomy = repo.ensure_taxonomy(name, mode, label_names, is_legacy=is_legacy)
             taxonomies[classifier] = taxonomy
             cls["taxonomies"].append(
                 {"name": name, "mode": mode, "is_legacy": is_legacy, "labels": len(label_names)}

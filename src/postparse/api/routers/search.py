@@ -310,7 +310,7 @@ def list_hashtags(
     rows = query.tag_counts_by_source("hashtag", limit=limit)
     hashtags = []
     for row in rows:
-        ig, tg = int(row["instagram"]), int(row["telegram"])
+        ig, tg = int(str(row["instagram"])), int(str(row["telegram"]))
         source = "both" if ig and tg else ("instagram" if ig else "telegram")
         hashtags.append(
             {

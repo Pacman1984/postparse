@@ -175,9 +175,9 @@ def run_transcription(
                 )
 
             report = service.run(
-                source=source,  # type: ignore[arg-type]
+                source=source,  # type: ignore[arg-type]  # click.Choice values are typed str
                 limit=limit,
-                backend=backend,  # type: ignore[arg-type]
+                backend=backend,  # type: ignore[arg-type]  # click.Choice values are typed str
                 refetch=refetch,
                 item_ids=item_ids,
                 progress=on_progress,

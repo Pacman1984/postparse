@@ -125,9 +125,9 @@ def transcribe_job(
 
     def run(progress: ProgressSink) -> Any:
         return service.run(
-            source=source,  # type: ignore[arg-type]
+            source=source,  # type: ignore[arg-type]  # str validated by the request schema
             limit=limit,
-            backend=backend,  # type: ignore[arg-type]
+            backend=backend,  # type: ignore[arg-type]  # str validated by the request schema
             refetch=refetch,
             item_ids=item_ids,
             progress=lambda p: progress(p.index, p.total, f"media {p.media_id}: {p.status}"),
@@ -171,7 +171,7 @@ def enrich_job(
 
     def run(progress: ProgressSink) -> Any:
         return service.run(
-            source,  # type: ignore[arg-type]
+            source,  # type: ignore[arg-type]  # str validated by the request schema
             limit,
             force=force,
             refresh_legacy=refresh_legacy,
@@ -197,7 +197,7 @@ def classify_job(
     async def factory(progress: ProgressSink) -> Any:
         return await service.aclassify_pending(
             taxonomy,
-            scope=scope,  # type: ignore[arg-type]
+            scope=scope,  # type: ignore[arg-type]  # str validated by the request schema
             filters=filters,
             limit=limit,
             provider=provider,

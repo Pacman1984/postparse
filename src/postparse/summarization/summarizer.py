@@ -35,8 +35,8 @@ __all__ = [
     "DEFAULT_OUTPUT_RETRIES",
     "INSTRUCTIONS",
     "SummarizationError",
-    "SummaryOutcome",
     "Summarizer",
+    "SummaryOutcome",
 ]
 
 logger = logging.getLogger(__name__)
@@ -100,7 +100,9 @@ def prompt_sha256() -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def _output_spec(mode: OutputMode) -> object:
+def _output_spec(
+    mode: OutputMode,
+) -> NativeOutput[SummaryOutput] | ToolOutput[SummaryOutput] | PromptedOutput[SummaryOutput]:
     if mode == "native":
         return NativeOutput(SummaryOutput)
     if mode == "tool":
@@ -141,7 +143,7 @@ class Summarizer:
         self.prompt_sha256 = prompt_sha256()
         self.agent: Agent[None, SummaryOutput] = Agent(
             model,
-            output_type=_output_spec(output_mode),  # type: ignore[arg-type]
+            output_type=_output_spec(output_mode),
             instructions=INSTRUCTIONS,
             retries={"output": output_retries},
             name="summarize",

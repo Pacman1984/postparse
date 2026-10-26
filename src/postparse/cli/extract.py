@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import rich_click as click
+from click.exceptions import Exit as ClickExit
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
@@ -173,7 +174,7 @@ def _run(
     view = _ProgressView(label)
     try:
         report = call(view)
-    except click.exceptions.Exit:
+    except ClickExit:
         raise
     except Exception as exc:
         view.stop()

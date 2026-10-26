@@ -7,11 +7,24 @@ import sqlite3
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import PurePosixPath, PureWindowsPath
+from typing import TypedDict
 
 from postparse.core.db.models import Media, MediaInput, Source
 from postparse.core.timeutil import to_db_ts, utcnow_ts
 
-__all__ = ["MediaRepo", "normalize_local_path"]
+__all__ = ["MediaRepo", "QueueStats", "normalize_local_path"]
+
+
+class QueueStats(TypedDict):
+    """Transcription queue statistics (see :meth:`MediaRepo.queue_stats`)."""
+
+    counts: dict[tuple[str, str], int]
+    due: dict[str, int]
+    exhausted: dict[str, int]
+    next_attempt_at: dict[str, str | None]
+    transcripts: int
+    transcribed_seconds: float
+
 
 _TRANSCRIBABLE = ("video", "audio")
 
@@ -216,9 +229,7 @@ class MediaRepo:
         ).fetchall()
         return [int(row[0]) for row in rows]
 
-    def queue_stats(
-        self, *, max_attempts: int = 5, now: datetime | None = None
-    ) -> dict[str, object]:
+    def queue_stats(self, *, max_attempts: int = 5, now: datetime | None = None) -> QueueStats:
         """Return transcription queue statistics.
 
         Returns:
@@ -227,7 +238,7 @@ class MediaRepo:
             "transcripts": n, "transcribed_seconds": s}``.
         """
         now_ts = to_db_ts(now) if now is not None else utcnow_ts()
-        counts = {
+        counts: dict[tuple[str, str], int] = {
             (row[0], row[1]): int(row[2])
             for row in self.conn.execute(
                 "SELECT i.source, m.transcript_status, count(*) FROM media AS m "
@@ -294,7 +305,7 @@ class MediaRepo:
         if row is None:
             raise KeyError(media_id)
         attempts = int(row[0]) + 1
-        delay = min(backoff * (2 ** (attempts - 1)), max_backoff)
+        delay: timedelta = min(backoff * (2 ** (attempts - 1)), max_backoff)
         next_at = (now or datetime.now(UTC)) + delay
         self.conn.execute(
             "UPDATE media SET transcript_status = 'failed', attempts = ?, last_error = ?, "

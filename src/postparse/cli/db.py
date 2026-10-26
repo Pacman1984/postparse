@@ -138,11 +138,11 @@ def _print_stats(stats: DatabaseStats, *, detailed: bool) -> None:
 
     media = _metric_table("Media & transcripts")
     media.add_row("Media", ", ".join(f"{k} {v:,}" for k, v in stats.media.items()) or "0")
-    for source, states in stats.transcript_status.items():
+    for source_name, states in stats.transcript_status.items():
         relevant = {k: v for k, v in states.items() if k != "none"}
         if relevant:
             media.add_row(
-                f"Transcript status ({source})",
+                f"Transcript status ({source_name})",
                 ", ".join(f"{k} {v:,}" for k, v in relevant.items()),
             )
     due = sum(stats.transcription_due.values())
@@ -335,12 +335,12 @@ def export(
     )
     service = QueryService(open_database(ctx, db_path))
     if output == "-":
-        service.export(flt, fmt, sys.stdout, limit=limit)  # type: ignore[arg-type]
+        service.export(flt, fmt, sys.stdout, limit=limit)  # type: ignore[arg-type]  # click.Choice values are typed str
         return
     path = Path(output)
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        count = service.export(flt, fmt, path, limit=limit)  # type: ignore[arg-type]
+        count = service.export(flt, fmt, path, limit=limit)  # type: ignore[arg-type]  # click.Choice values are typed str
     except OSError as exc:
         raise click.ClickException(f"Could not write {path}: {exc}") from exc
     print_success(f"Exported {count:,} item(s) to {path} ({fmt})")

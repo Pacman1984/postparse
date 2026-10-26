@@ -73,7 +73,7 @@ async def test_thread_progress_is_delivered_in_order() -> None:
 
 
 async def test_report_stop_reason_fails_job_and_keeps_counts() -> None:
-    runner, jobs, ws, cache = _runner()
+    runner, jobs, _ws, cache = _runner()
 
     async def work(progress: Any) -> Report:
         return Report(processed=4, stopped_reason="suspected_block", error="blocked")
@@ -102,7 +102,7 @@ async def test_report_stop_reason_fails_job_and_keeps_counts() -> None:
     ],
 )
 async def test_exceptions_become_error_codes(exc: Exception, code: str) -> None:
-    runner, jobs, ws, cache = _runner()
+    runner, jobs, ws, _cache = _runner()
 
     async def work(progress: Any) -> None:
         raise exc
@@ -116,7 +116,7 @@ async def test_exceptions_become_error_codes(exc: Exception, code: str) -> None:
 
 
 async def test_shutdown_cancels_running_jobs() -> None:
-    runner, jobs, ws, cache = _runner()
+    runner, jobs, _ws, _cache = _runner()
 
     async def work(progress: Any) -> None:
         await asyncio.sleep(30)

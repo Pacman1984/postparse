@@ -77,7 +77,11 @@ class TagsRepo:
             hashtags: New hashtag set; ``None`` keeps the current hashtags.
             mentions: New mention set; ``None`` keeps the current mentions.
         """
-        for kind, names in (("hashtag", hashtags), ("mention", mentions)):
+        updates: tuple[tuple[TagKind, Iterable[str] | None], ...] = (
+            ("hashtag", hashtags),
+            ("mention", mentions),
+        )
+        for kind, names in updates:
             if names is None:
                 continue
             self.conn.execute(
@@ -85,11 +89,7 @@ class TagsRepo:
                 "AND tag_id IN (SELECT id FROM tags WHERE kind = ?)",
                 (item_id, kind),
             )
-            tag_ids = {
-                self.ensure(kind, name)  # type: ignore[arg-type]
-                for name in names
-                if normalize_tag_name(name)
-            }
+            tag_ids = {self.ensure(kind, name) for name in names if normalize_tag_name(name)}
             self.conn.executemany(
                 "INSERT INTO item_tags (item_id, tag_id) VALUES (?, ?) ON CONFLICT DO NOTHING",
                 [(item_id, tag_id) for tag_id in sorted(tag_ids)],

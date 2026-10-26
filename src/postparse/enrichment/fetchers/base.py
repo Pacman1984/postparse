@@ -22,8 +22,8 @@ __all__ = [
     "BodyTooLarge",
     "CappedResponse",
     "FetchResult",
-    "Fetcher",
     "FetchStatusName",
+    "Fetcher",
     "charset_of",
     "decode_body",
     "get_capped",
@@ -120,7 +120,8 @@ class CappedResponse:
     @property
     def content_type(self) -> str:
         """Lower-case media type without parameters (``""`` if missing)."""
-        return self.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+        value = str(self.headers.get("content-type", ""))
+        return value.split(";", 1)[0].strip().lower()
 
 
 async def get_capped(

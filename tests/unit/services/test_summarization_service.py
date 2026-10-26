@@ -185,7 +185,7 @@ def test_service_counts_errors_and_keeps_item_due(db: Database) -> None:
 
 
 def test_service_skips_empty_inputs(db: Database) -> None:
-    item_id, (mid,) = add_video_item(db, "EMPTY", caption=None)
+    _item_id, (mid,) = add_video_item(db, "EMPTY", caption=None)
     add_transcript(db, mid, "   ")
     report = make_service(db, json_model(PAYLOAD)).run()
     assert report.skipped_empty == 1 and report.summarized == 0

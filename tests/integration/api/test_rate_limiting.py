@@ -33,9 +33,10 @@ def client_no_rate_limit() -> TestClient:
     with patch.object(ConfigManager, "get") as mock_get:
 
         def config_side_effect(key, default=None):
-            if key == "api.rate_limiting.enabled":
-                return False
-            return default
+            values = {
+                "api.rate_limiting.enabled": False,
+            }
+            return values.get(key, default)
 
         mock_get.side_effect = config_side_effect
         yield TestClient(app)
@@ -130,13 +131,12 @@ class TestRateLimitingEnabled:
         with patch.object(mock_config, "get") as mock_get:
 
             def config_side_effect(key, default=None):
-                if key == "api.rate_limiting.enabled":
-                    return True
-                elif key == "api.rate_limiting.requests_per_minute":
-                    return 5  # Very low limit for testing
-                elif key == "api.rate_limiting.burst_size":
-                    return 2  # Small burst
-                return default
+                values = {
+                    "api.rate_limiting.enabled": True,
+                    "api.rate_limiting.requests_per_minute": 5,  # Very low limit for testing
+                    "api.rate_limiting.burst_size": 2,  # Small burst
+                }
+                return values.get(key, default)
 
             mock_get.side_effect = config_side_effect
 
@@ -198,13 +198,12 @@ class TestRateLimitingEnabled:
         with patch.object(mock_config, "get") as mock_get:
 
             def config_side_effect(key, default=None):
-                if key == "api.rate_limiting.enabled":
-                    return True
-                elif key == "api.rate_limiting.requests_per_minute":
-                    return 10  # 10 per minute = 1 every 6 seconds
-                elif key == "api.rate_limiting.burst_size":
-                    return 0  # No burst
-                return default
+                values = {
+                    "api.rate_limiting.enabled": True,
+                    "api.rate_limiting.requests_per_minute": 10,  # one request every 6 s
+                    "api.rate_limiting.burst_size": 0,  # No burst
+                }
+                return values.get(key, default)
 
             mock_get.side_effect = config_side_effect
 
@@ -258,13 +257,12 @@ class TestRateLimitingEnabled:
         with patch.object(mock_config, "get") as mock_get:
 
             def config_side_effect(key, default=None):
-                if key == "api.rate_limiting.enabled":
-                    return True
-                elif key == "api.rate_limiting.requests_per_minute":
-                    return 5
-                elif key == "api.rate_limiting.burst_size":
-                    return 3  # Can burst to 8 total (5 + 3)
-                return default
+                values = {
+                    "api.rate_limiting.enabled": True,
+                    "api.rate_limiting.requests_per_minute": 5,
+                    "api.rate_limiting.burst_size": 3,  # Can burst to 8 total (5 + 3)
+                }
+                return values.get(key, default)
 
             mock_get.side_effect = config_side_effect
 
@@ -295,7 +293,8 @@ class TestRateLimitingEnabled:
         reason="TestClient does not support simulating multiple client IPs. "
         "Per-IP isolation requires real HTTP client with IP spoofing or integration test "
         "with actual network requests from different sources. "
-        "This functionality should be tested manually or with end-to-end tests using real HTTP clients."
+        "This functionality should be tested manually or with end-to-end tests "
+        "using real HTTP clients."
     )
     def test_rate_limiting_per_client_ip(self):
         """
@@ -334,13 +333,12 @@ class TestRateLimitingEnabled:
         with patch.object(mock_config, "get") as mock_get:
 
             def config_side_effect(key, default=None):
-                if key == "api.rate_limiting.enabled":
-                    return True
-                elif key == "api.rate_limiting.requests_per_minute":
-                    return 2  # Very low limit
-                elif key == "api.rate_limiting.burst_size":
-                    return 0
-                return default
+                values = {
+                    "api.rate_limiting.enabled": True,
+                    "api.rate_limiting.requests_per_minute": 2,  # Very low limit
+                    "api.rate_limiting.burst_size": 0,
+                }
+                return values.get(key, default)
 
             mock_get.side_effect = config_side_effect
 
@@ -375,7 +373,8 @@ class TestRateLimitingEnabled:
     @pytest.mark.integration
     @pytest.mark.slow
     @pytest.mark.skip(
-        reason="This test was removed due to testing private implementation details (_buckets, _check_rate_limit). "
+        reason="This test was removed due to testing private implementation details "
+        "(_buckets, _check_rate_limit). "
         "Cleanup behavior should be tested through observable effects in production usage. "
         "Consider adding memory profiling tests or monitoring in production instead."
     )

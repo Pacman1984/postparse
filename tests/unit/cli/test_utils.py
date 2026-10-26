@@ -134,12 +134,14 @@ class TestConsoleOutput:
 
     def test_print_table_with_empty_data(self) -> None:
         """Test that print_table handles empty data gracefully."""
-        with patch("postparse.cli.utils.get_console") as mock_console:
-            with patch("postparse.cli.utils.print_warning") as mock_warning:
-                print_table([], title="Empty Table")
+        with (
+            patch("postparse.cli.utils.get_console"),
+            patch("postparse.cli.utils.print_warning") as mock_warning,
+        ):
+            print_table([], title="Empty Table")
 
-                # Should call print_warning instead of printing table
-                mock_warning.assert_called_once_with("No data to display")
+            # Should call print_warning instead of printing table
+            mock_warning.assert_called_once_with("No data to display")
 
 
 class TestConfigManagement:

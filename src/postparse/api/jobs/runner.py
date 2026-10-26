@@ -190,7 +190,11 @@ class JobRunner:
             name=f"job-{kind}-{job_id}",
         )
         self._tasks[job_id] = task
-        task.add_done_callback(lambda _t, jid=job_id: self._tasks.pop(jid, None))
+
+        def _forget(_task: asyncio.Task[Any], jid: str = job_id) -> None:
+            self._tasks.pop(jid, None)
+
+        task.add_done_callback(_forget)
         logger.info("Started %s job %s", kind, job_id)
         return job_id
 
@@ -238,10 +242,10 @@ class JobRunner:
             try:
                 job = self.jobs.set_progress(job_id, processed, total, message)
                 post(job.to_dict())
-            except Exception:  # noqa: BLE001 - progress must never break a service run
+            except Exception:
                 logger.exception("Progress update for job %s failed", job_id)
 
-        progress.post = post  # type: ignore[attr-defined]
+        progress.post = post  # type: ignore[attr-defined]  # post() is attached to the sink at runtime
         return progress
 
     async def _send_events(self, job_id: str, queue: asyncio.Queue[dict[str, Any] | None]) -> None:
@@ -251,7 +255,7 @@ class JobRunner:
                 return
             try:
                 await self.ws.broadcast_progress(job_id, payload)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 logger.exception("WebSocket broadcast for job %s failed", job_id)
 
     async def _run(
@@ -263,7 +267,7 @@ class JobRunner:
         loop_thread: int,
     ) -> None:
         sink = self._make_sink(job_id, queue, loop, loop_thread)
-        post: Callable[[dict[str, Any]], None] = sink.post  # type: ignore[attr-defined]
+        post: Callable[[dict[str, Any]], None] = sink.post  # type: ignore[attr-defined]  # post() is attached to the sink at runtime
         sender = loop.create_task(self._send_events(job_id, queue))
         job = self.jobs.get_job(job_id)
         assert job is not None
@@ -288,7 +292,7 @@ class JobRunner:
         except asyncio.CancelledError:
             self.jobs.mark_job_failed(job_id, "Job cancelled", error_code="cancelled")
             raise
-        except Exception as exc:  # noqa: BLE001 - every failure becomes a failed job
+        except Exception as exc:
             code = error_code_for(exc)
             if code == "internal_error":
                 logger.exception("Job %s failed", job_id)
@@ -307,5 +311,5 @@ class JobRunner:
             return
         try:
             await anyio.to_thread.run_sync(self.cache.invalidate)
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.exception("Cache invalidation after job failed")

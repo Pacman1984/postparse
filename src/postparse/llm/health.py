@@ -31,8 +31,6 @@ HealthStatus = Literal[
     "available", "unavailable", "auth_error", "model_not_found", "no_api_key", "error"
 ]
 
-_PING_MESSAGES = [{"role": "user", "content": "ping"}]
-
 
 @dataclass(slots=True)
 class HealthResult:
@@ -103,7 +101,7 @@ def _check_openai(
     )
     try:
         result.models = [m.id for m in client.models.list().data]
-    except Exception as exc:  # noqa: BLE001 - many servers lack /models; keep going
+    except Exception as exc:
         logger.debug("Listing models of %s failed: %s", cfg.name, exc)
         if _classify_error(exc) in ("unavailable", "auth_error"):
             result.status = _classify_error(exc)
@@ -111,14 +109,16 @@ def _check_openai(
             return
     if chat:
         started = time.perf_counter()
-        client.chat.completions.create(model=cfg.model, messages=_PING_MESSAGES, max_tokens=1)
+        client.chat.completions.create(
+            model=cfg.model, messages=[{"role": "user", "content": "ping"}], max_tokens=1
+        )
         result.latency_ms = round((time.perf_counter() - started) * 1000, 1)
         result.chat_ok = True
     if embeddings:
         try:
             client.embeddings.create(model=embedding_model or cfg.model, input="ping")
             result.embeddings_ok = True
-        except Exception as exc:  # noqa: BLE001 - optional capability
+        except Exception as exc:
             logger.debug("Embeddings ping of %s failed: %s", cfg.name, exc)
             result.embeddings_ok = False
 
@@ -134,11 +134,13 @@ def _check_anthropic(
     )
     try:
         result.models = [m.id for m in client.models.list().data]
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.debug("Listing Anthropic models failed: %s", exc)
     if chat:
         started = time.perf_counter()
-        client.messages.create(model=cfg.model, max_tokens=1, messages=_PING_MESSAGES)
+        client.messages.create(
+            model=cfg.model, max_tokens=1, messages=[{"role": "user", "content": "ping"}]
+        )
         result.latency_ms = round((time.perf_counter() - started) * 1000, 1)
         result.chat_ok = True
 
@@ -185,7 +187,7 @@ def check_provider(
                 embedding_model=embedding_model,
                 timeout=request_timeout,
             )
-    except Exception as exc:  # noqa: BLE001 - report every failure as a status
+    except Exception as exc:
         result.status = _classify_error(exc)
         result.error = _short(exc)
         logger.debug("Health check of %s failed: %s", cfg.name, exc)

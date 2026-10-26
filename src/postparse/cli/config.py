@@ -281,7 +281,7 @@ def _validate_database(ctx: click.Context, results: list[dict[str, str]]) -> Non
             version = int(conn.execute("PRAGMA user_version").fetchone()[0])
         finally:
             conn.close()
-    except Exception as exc:  # noqa: BLE001 - report unreadable files
+    except Exception as exc:
         _add(results, "Database", "fail", f"{db_path}: {exc}")
         return
     latest = latest_version()

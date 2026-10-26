@@ -213,7 +213,7 @@ def telegram_message(
         channel_username=view.author,
         content=view.text,
         content_type=view.kind,
-        media_urls=[m.remote_url or m.local_path for m in media if m.remote_url or m.local_path],
+        media_urls=[url for m in media if (url := m.remote_url or m.local_path)],
         hashtags=hashtags,
         mentions=mentions,
         created_at=view.created_at,

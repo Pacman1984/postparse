@@ -131,16 +131,18 @@ class TranscriptionOptions:
         local_raw = section.get("local") or {}
         api_raw = section.get("api") or {}
         dl, da = LocalAsrOptions(), ApiAsrOptions()
-        backend = str(_get(section, "backend", d.backend)).lower()
-        if backend not in ("local", "api"):
-            raise ValueError(f"transcription.backend must be 'local' or 'api', not {backend!r}")
-        upload_format = str(_get(api_raw, "upload_format", da.upload_format))
-        if upload_format not in ("m4a", "wav16k"):
+        backend_raw = str(_get(section, "backend", d.backend)).lower()
+        if backend_raw not in ("local", "api"):
+            raise ValueError(f"transcription.backend must be 'local' or 'api', not {backend_raw!r}")
+        backend: Literal["local", "api"] = "local" if backend_raw == "local" else "api"
+        upload_raw = str(_get(api_raw, "upload_format", da.upload_format))
+        if upload_raw not in ("m4a", "wav16k"):
             raise ValueError(
-                f"transcription.api.upload_format must be 'm4a' or 'wav16k', not {upload_format!r}"
+                f"transcription.api.upload_format must be 'm4a' or 'wav16k', not {upload_raw!r}"
             )
+        upload_format: Literal["m4a", "wav16k"] = "m4a" if upload_raw == "m4a" else "wav16k"
         return cls(
-            backend=backend,  # type: ignore[arg-type]
+            backend=backend,
             limit=int(_get(section, "limit", d.limit)),
             max_attempts=int(_get(section, "max_attempts", d.max_attempts)),
             backoff_minutes=float(_get(section, "backoff_minutes", d.backoff_minutes)),
@@ -177,6 +179,6 @@ class TranscriptionOptions:
                 api_key_env=str(_get(api_raw, "api_key_env", da.api_key_env)),
                 model=str(_get(api_raw, "model", da.model)),
                 timeout=float(_get(api_raw, "timeout", da.timeout)),
-                upload_format=upload_format,  # type: ignore[arg-type]
+                upload_format=upload_format,
             ),
         )

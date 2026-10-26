@@ -31,7 +31,7 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
@@ -59,6 +59,9 @@ from postparse.api.routers.health import API_VERSION
 from postparse.config import Settings, get_settings
 from postparse.llm.exceptions import LLMProviderError
 from postparse.services.query import InvalidCursorError
+
+if TYPE_CHECKING:
+    from postparse.core.utils.config import ConfigManager
 
 __all__ = ["CONFIG_ENV_VAR", "create_app"]
 
@@ -130,7 +133,7 @@ async def _job_cleanup(services: ApiServices, config: Any) -> None:
             removed = services.jobs.cleanup_old_jobs(max_age_hours=max_age_hours)
             if removed:
                 logger.info("Job cleanup: removed %d old jobs", removed)
-        except Exception:  # noqa: BLE001 - keep the cleanup loop alive
+        except Exception:
             logger.exception("Job cleanup failed")
 
 
@@ -157,13 +160,18 @@ def create_app(
         config_path = os.environ.get(CONFIG_ENV_VAR) or None
     if config is None:
         config = _load_config(config_path)
-    effective_config = config if config is not None else _NullConfig()
+    # _NullConfig duck-types the ConfigManager.get() the middlewares use.
+    effective_config = cast("ConfigManager", config if config is not None else _NullConfig())
     if settings is None:
         settings = services.settings if services is not None else get_settings(config_path)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        state = services or await asyncio.to_thread(build_services, settings, config)
+        state: ApiServices = (
+            services
+            if services is not None
+            else await asyncio.to_thread(build_services, settings, config)
+        )
         app.state.services = state
         logger.info(
             "PostParse API ready (database %s, cache %s)", state.db.path, state.cache.backend

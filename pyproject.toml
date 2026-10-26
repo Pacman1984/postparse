@@ -145,8 +145,69 @@ line-length = 100
 extend-exclude = ["playground", "notebooks", "docs", "instructions", "dist"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B", "UP", "SIM"]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+
+# The CLI prints the INFORMATION SOURCE emoji on purpose.
+allowed-confusables = ["ℹ"]
 
 [tool.ruff.lint.flake8-bugbear]
 # FastAPI dependency markers in parameter defaults are the framework idiom.
 extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Path", "fastapi.Body"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src"]
+mypy_path = "src"
+plugins = ["pydantic.mypy"]
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+show_error_codes = true
+check_untyped_defs = true
+no_implicit_optional = true
+strict_equality = true
+extra_checks = true
+
+# Library core: fully strict.
+[[tool.mypy.overrides]]
+module = [
+    "postparse.core.*",
+    "postparse.services.*",
+    "postparse.collectors.*",
+    "postparse.media.*",
+    "postparse.classification.*",
+    "postparse.llm.*",
+    "postparse.enrichment.*",
+    "postparse.summarization.*",
+    "postparse.config",
+]
+# The flags of `strict = true`, spelled out: mypy applies a per-module `strict`
+# to the whole run, so it cannot be used to make only these packages strict.
+disallow_any_generics = true
+disallow_subclassing_any = true
+disallow_untyped_calls = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+disallow_untyped_decorators = true
+warn_return_any = true
+no_implicit_reexport = true
+
+# Third-party packages without type information (no py.typed, no stubs on PyPI).
+# lxml: lxml-stubs 0.5 (2024) types lxml.html.fromstring() as a plain _Element and
+# produces false positives, so lxml is treated as untyped as well.
+[[tool.mypy.overrides]]
+module = [
+    "telethon",
+    "ctranslate2",
+    "faster_whisper",
+    "readability",
+    "yt_dlp",
+    "lxml",
+    "lxml.*",
+]
+ignore_missing_imports = true
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true

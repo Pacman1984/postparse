@@ -154,7 +154,7 @@ def test_transcribe_status(env) -> None:
 
 
 def test_summarize_run(env) -> None:
-    item_id, (mid,) = add_video_item(env["db"], "A")
+    item_id, (_mid,) = add_video_item(env["db"], "A")
     invoke("transcribe", "run")
     result = invoke("summarize", "run", "--limit", "3")
     assert result.exit_code == 0, result.output
@@ -174,7 +174,7 @@ def test_extract_instagram_transcribe(env, monkeypatch: pytest.MonkeyPatch) -> N
             ig_post(ig_node("VID2", "GraphVideo")),  # no video_url in the feed node
         ]
     )
-    old_item, (old_mid,) = add_video_item(db, "OLD")  # backlog: must not be touched
+    _old_item, (old_mid,) = add_video_item(db, "OLD")  # backlog: must not be touched
 
     def build(ctx, db_path):
         return ExtractionService(

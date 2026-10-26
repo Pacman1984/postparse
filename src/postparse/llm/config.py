@@ -202,11 +202,14 @@ class LLMConfig(BaseModel):
             provider_configs.append(ProviderConfig(**provider_data))
 
         # Build LLMConfig
-        return cls(
-            providers=provider_configs,
-            default_provider=llm_section.get("default_provider"),
-            enable_fallback=llm_section.get("enable_fallback", True),
-            cache_responses=llm_section.get("cache_responses", False),
+        # model_validate: a missing default_provider is reported by pydantic.
+        return cls.model_validate(
+            {
+                "providers": provider_configs,
+                "default_provider": llm_section.get("default_provider"),
+                "enable_fallback": llm_section.get("enable_fallback", True),
+                "cache_responses": llm_section.get("cache_responses", False),
+            }
         )
 
 

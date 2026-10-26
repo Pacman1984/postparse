@@ -210,8 +210,8 @@ class XFetcher:
         tree = lxml_html.fromstring(html)
         paragraphs = tree.xpath("//blockquote//p")
         if not paragraphs:
-            return tree.text_content().strip()
-        return "\n".join(p.text_content().strip() for p in paragraphs).strip()
+            return str(tree.text_content()).strip()
+        return "\n".join(str(p.text_content()).strip() for p in paragraphs).strip()
 
     def _named(self, result: FetchResult) -> FetchResult:
         result.fetcher = self.name

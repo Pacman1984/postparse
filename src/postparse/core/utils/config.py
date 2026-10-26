@@ -86,9 +86,9 @@ class ConfigManager:
             with open(self._config_path, "rb") as f:
                 return tomllib.load(f)
         except tomllib.TOMLDecodeError as e:
-            raise ValueError(f"Invalid TOML configuration file: {e}")
+            raise ValueError(f"Invalid TOML configuration file: {e}") from e
         except Exception as e:
-            raise ValueError(f"Error loading configuration file: {e}")
+            raise ValueError(f"Error loading configuration file: {e}") from e
 
     def get(self, key_path: str, default: Any = None, env_var: str | None = None) -> Any:
         """Get configuration value with support for nested keys and environment overrides.
@@ -146,7 +146,8 @@ class ConfigManager:
         Returns:
             Dictionary containing section data or empty dict if not found
         """
-        return self._config_data.get(section, {})
+        section_data: dict[str, Any] = self._config_data.get(section, {})
+        return section_data
 
     def reload(self) -> None:
         """Reload configuration from file."""

@@ -232,14 +232,13 @@ def _media(conn: sqlite3.Connection, stats: DatabaseStats, max_attempts: int) ->
     }
     queue = MediaRepo(conn).queue_stats(max_attempts=max_attempts)
     status: dict[str, dict[str, int]] = {}
-    counts: dict[tuple[str, str], int] = queue["counts"]  # type: ignore[assignment]
-    for (source, state), n in counts.items():
+    for (source, state), n in queue["counts"].items():
         status.setdefault(source, {})[state] = n
     stats.transcript_status = status
-    stats.transcription_due = dict(queue["due"])  # type: ignore[call-overload]
-    stats.transcription_exhausted = dict(queue["exhausted"])  # type: ignore[call-overload]
-    stats.transcripts = int(queue["transcripts"])  # type: ignore[call-overload]
-    stats.transcribed_seconds = float(queue["transcribed_seconds"])  # type: ignore[arg-type]
+    stats.transcription_due = dict(queue["due"])
+    stats.transcription_exhausted = dict(queue["exhausted"])
+    stats.transcripts = queue["transcripts"]
+    stats.transcribed_seconds = queue["transcribed_seconds"]
     stats.items_with_transcript = _scalar(
         conn,
         "SELECT count(DISTINCT m.item_id) FROM media AS m "

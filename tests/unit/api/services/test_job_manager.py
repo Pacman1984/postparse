@@ -384,7 +384,7 @@ class TestJobManagerUpdateJobStatus:
         """
         manager = JobManager()
 
-        with pytest.raises(ValueError, match="Job .* not found"):
+        with pytest.raises(ValueError, match=r"Job .* not found"):
             manager.update_job_status("nonexistent-uuid", ExtractionStatus.RUNNING, 50, 100, None)
 
 
@@ -458,7 +458,7 @@ class TestJobManagerMarkJobCompleted:
         """
         manager = JobManager()
 
-        with pytest.raises(ValueError, match="Job .* not found"):
+        with pytest.raises(ValueError, match=r"Job .* not found"):
             manager.mark_job_completed("nonexistent-uuid", 100)
 
 
@@ -534,7 +534,7 @@ class TestJobManagerMarkJobFailed:
         """
         manager = JobManager()
 
-        with pytest.raises(ValueError, match="Job .* not found"):
+        with pytest.raises(ValueError, match=r"Job .* not found"):
             manager.mark_job_failed("nonexistent-uuid", "Error")
 
 

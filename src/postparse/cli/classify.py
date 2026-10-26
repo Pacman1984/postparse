@@ -208,7 +208,7 @@ def _run_classification(
     except ValueError as exc:
         raise click.BadParameter(str(exc), param_hint="--since") from exc
     item_filter = ItemFilter(
-        source=None if source == "all" else source,  # type: ignore[arg-type]
+        source=None if source == "all" else source,  # type: ignore[arg-type]  # click.Choice values are typed str
         tags=tags,
         date_from=date_from,
         has_transcript=True if with_transcript else None,
@@ -234,7 +234,7 @@ def _run_classification(
         try:
             report = service.classify_pending(
                 taxonomy,
-                scope=scope,  # type: ignore[arg-type]
+                scope=scope,  # type: ignore[arg-type]  # click.Choice values are typed str
                 filters=item_filter,
                 limit=limit,
                 provider=provider,
@@ -416,7 +416,7 @@ def text(
                     mode="multi" if classifier == "multilabel" else "single",
                 )
         if spec is None and labels:
-            spec = TaxonomySpec.adhoc(_parse_labels(labels), mode=mode)  # type: ignore[arg-type]
+            spec = TaxonomySpec.adhoc(_parse_labels(labels), mode=mode)  # type: ignore[arg-type]  # click.Choice values are typed str
     except ValueError as exc:
         raise click.UsageError(str(exc)) from exc
 
@@ -432,7 +432,7 @@ def text(
         raise click.ClickException(f"Classification failed: {exc}") from exc
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
-    except Exception as exc:  # noqa: BLE001 - e.g. missing API key
+    except Exception as exc:
         raise click.ClickException(f"Classification failed: {exc}") from exc
 
     if output == "json":

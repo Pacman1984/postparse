@@ -173,7 +173,8 @@ def _default_saved_posts(loader: Any) -> Iterable[Any]:
     """Iterate the logged-in user's saved posts (newest saved first)."""
     import instaloader
 
-    return instaloader.Profile.own_profile(loader.context).get_saved_posts()
+    saved: Iterable[Any] = instaloader.Profile.own_profile(loader.context).get_saved_posts()
+    return saved
 
 
 def _default_post_from_shortcode(loader: Any, shortcode: str) -> Any:
@@ -196,8 +197,10 @@ def _node(post: Any) -> dict[str, Any]:
 def _count(node: dict[str, Any], *keys: str) -> int | None:
     for key in keys:
         value = node.get(key)
-        if isinstance(value, dict) and isinstance(value.get("count"), int):
-            return value["count"]
+        if isinstance(value, dict):
+            count = value.get("count")
+            if isinstance(count, int):
+                return count
     return None
 
 

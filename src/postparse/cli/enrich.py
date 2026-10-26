@@ -121,7 +121,7 @@ def _run(
                 )
 
             report = service.run(
-                source=source,  # type: ignore[arg-type]
+                source=source,  # type: ignore[arg-type]  # click.Choice values are typed str
                 limit=limit,
                 force=force,
                 refresh_legacy=refresh_legacy,
@@ -256,7 +256,7 @@ def status(ctx: click.Context, source: str, top: int, db_path: str | None) -> No
         postparse enrich status --source telegram --domains 30
     """
     service = _build_service(ctx, db_path)
-    stats = service.status(source=source, top_domains=top)  # type: ignore[arg-type]
+    stats = service.status(source=source, top_domains=top)  # type: ignore[arg-type]  # click.Choice values are typed str
     console = get_console()
     by_state: dict[tuple[str, str], int] = stats["by_state"]
     table = Table(title=f"Links ({stats['links']})", show_header=True, header_style="bold cyan")

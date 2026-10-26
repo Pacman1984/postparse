@@ -7,7 +7,7 @@ import json
 import sys
 import types
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import httpx
 import openai
@@ -153,9 +153,9 @@ def test_segments_json_is_serializable(tmp_path: Path) -> None:
 
 
 class FakeWhisperModel:
-    instances: list[FakeWhisperModel] = []
-    fail_devices: set[str] = set()
-    fail_transcribe_on: set[str] = set()
+    instances: ClassVar[list[FakeWhisperModel]] = []
+    fail_devices: ClassVar[set[str]] = set()
+    fail_transcribe_on: ClassVar[set[str]] = set()
 
     def __init__(
         self,

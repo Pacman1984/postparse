@@ -44,7 +44,7 @@ from postparse.classification.taxonomy import (
     spec_from_db,
 )
 from postparse.core.db.connection import Database
-from postparse.core.db.models import ItemFilter, PendingScope, RunStatus
+from postparse.core.db.models import ItemFilter, PendingScope, RunStatus, Source
 from postparse.core.db.repos import (
     ClassificationRepo,
     ItemsRepo,
@@ -63,9 +63,9 @@ if TYPE_CHECKING:
 __all__ = [
     "DEFAULT_MAX_INPUT_CHARS",
     "ClassificationService",
-    "PersistedOutcome",
     "ClassifierFactory",
     "ComposedInput",
+    "PersistedOutcome",
     "ProgressUpdate",
     "RunReport",
     "TaxonomyInfo",
@@ -335,7 +335,9 @@ def _filter_params(item_filter: ItemFilter | None) -> dict[str, Any] | None:
             continue
         data[f.name] = json.loads(
             json.dumps(
-                dataclasses.asdict(value) if dataclasses.is_dataclass(value) else value,
+                dataclasses.asdict(value)
+                if dataclasses.is_dataclass(value) and not isinstance(value, type)
+                else value,
                 default=str,
             )
         )
@@ -473,11 +475,16 @@ class ClassificationService:
             spec = self.taxonomies.get(name)
             tx = stored.get(name)
             counters = stats.get(tx.id, {}) if tx is not None else {}
+            if spec is not None:
+                mode, labels = spec.mode, tuple(spec.label_names)
+            else:
+                assert tx is not None  # every listed name is configured or stored
+                mode, labels = tx.mode, tuple(tx.label_names)
             infos.append(
                 TaxonomyInfo(
                     name=name,
-                    mode=spec.mode if spec is not None else tx.mode,  # type: ignore[union-attr]
-                    labels=spec.label_names if spec is not None else tx.label_names,  # type: ignore[union-attr]
+                    mode=mode,
+                    labels=labels,
                     configured=spec is not None,
                     in_db=tx is not None,
                     version=tx.version if tx is not None else None,
@@ -685,7 +692,9 @@ class ClassificationService:
             return filters
         if len(spec.sources) == 1:
             base = filters or ItemFilter()
-            return dataclasses.replace(base, source=spec.sources[0])  # type: ignore[arg-type]
+            # sources are validated by TaxonomySpec, so this is a Source literal.
+            only: Source = "instagram" if spec.sources[0] == "instagram" else "telegram"
+            return dataclasses.replace(base, source=only)
         return filters
 
     async def aclassify_pending(

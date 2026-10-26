@@ -271,7 +271,7 @@ def test_kept_local_file_is_used_and_not_deleted(db: Database, settings: Setting
     local = settings.downloads_dir / "telegram" / "clip.mp4"
     local.parent.mkdir(parents=True)
     make_media_file(local)
-    _, (mid,) = add_video_item(
+    _, (_mid,) = add_video_item(
         db, "100:5", source="telegram", kind="video", local_path="telegram/clip.mp4"
     )
     fetcher = FakeFetcher()

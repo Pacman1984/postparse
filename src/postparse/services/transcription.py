@@ -277,8 +277,7 @@ class TranscriptionService:
             stats = MediaRepo(conn).queue_stats(
                 max_attempts=self.options.max_attempts, now=self._clock()
             )
-        stats["max_attempts"] = self.options.max_attempts
-        return stats
+        return {**stats, "max_attempts": self.options.max_attempts}
 
     def items_with_fresh_urls(self, source: Source, since: datetime) -> list[int]:
         """Items with pending media whose URL was seen at/after ``since``."""

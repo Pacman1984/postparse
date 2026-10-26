@@ -157,7 +157,7 @@ def _adhoc_spec(
             ),
         )
     try:
-        return TaxonomySpec.adhoc(classes, mode=mode, name=f"api_{mode}")  # type: ignore[arg-type]
+        return TaxonomySpec.adhoc(classes, mode=mode, name=f"api_{mode}")  # type: ignore[arg-type]  # str validated by the request schema
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 

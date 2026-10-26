@@ -233,16 +233,20 @@ def build_model(cfg: ProviderConfig, *, resolve: bool = True) -> Model:
             from pydantic_ai.models.anthropic import AnthropicModel
             from pydantic_ai.providers.anthropic import AnthropicProvider
 
-            provider = AnthropicProvider(api_key=resolved.api_key, base_url=resolved.api_base)
-            model: Model = AnthropicModel(resolved.model, provider=provider, settings=settings)
+            anthropic_provider = AnthropicProvider(
+                api_key=resolved.api_key, base_url=resolved.api_base
+            )
+            model: Model = AnthropicModel(
+                resolved.model, provider=anthropic_provider, settings=settings
+            )
         else:
             from pydantic_ai.models.openai import OpenAIChatModel
             from pydantic_ai.providers.openai import OpenAIProvider
 
             base_url = openai_base_url(resolved)
             api_key = resolved.api_key or (NO_API_KEY if base_url else None)
-            provider = OpenAIProvider(base_url=base_url, api_key=api_key)
-            model = OpenAIChatModel(resolved.model, provider=provider, settings=settings)
+            openai_provider = OpenAIProvider(base_url=base_url, api_key=api_key)
+            model = OpenAIChatModel(resolved.model, provider=openai_provider, settings=settings)
     except UserError as exc:
         raise LLMAuthenticationError(
             f"Cannot create model for provider '{resolved.name}': {exc}",

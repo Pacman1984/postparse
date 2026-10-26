@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, ClassVar
 
 import httpx2
 import openai
@@ -19,7 +19,7 @@ _REQUEST = httpx2.Request("GET", "http://127.0.0.1:9/v1/models")
 class FakeOpenAI:
     """Stand-in for ``openai.OpenAI`` recording calls."""
 
-    instances: list[FakeOpenAI] = []
+    instances: ClassVar[list[FakeOpenAI]] = []
     models_error: Exception | None = None
     chat_error: Exception | None = None
     embeddings_error: Exception | None = None

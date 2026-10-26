@@ -165,12 +165,12 @@ def test_mapping_never_triggers_requests() -> None:
 
 
 def test_collect_new_posts_and_store_no_cdn_urls(db: Database, settings: Settings) -> None:
-    feed = Feed(posts("a", "b") + [ig_post(ig_node("v", "GraphVideo", video_url="https://cdn/v"))])
+    feed = Feed([*posts("a", "b"), ig_post(ig_node("v", "GraphVideo", video_url="https://cdn/v"))])
     with make(db, settings, feed) as collector:
         stats = collector.collect_saved()
 
     assert (stats.new, stats.updated, stats.stopped_reason) == (3, 0, "end_of_feed")
-    _, detail, media = get(db, "v")
+    _, _detail, media = get(db, "v")
     assert media[0].transcript_status == "pending" and media[0].remote_url == "https://cdn/v"
     assert media[0].remote_url_seen_at is not None
     _, detail_a, media_a = get(db, "a")

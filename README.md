@@ -179,7 +179,7 @@ from postparse.services.analysis.classifiers import MultiClassLLMClassifier
 classes = {
     "recipe": "Cooking instructions or ingredients",
     "tech_news": "Technology news or product announcements",
-    "sports": "Sports news, scores, or athlete updates"
+    "sports": "Sports news, scores, or athlete updates",
 }
 
 classifier = MultiClassLLMClassifier(classes=classes)
@@ -270,8 +270,8 @@ response = requests.post(
     json={
         "text": "Boil pasta, add tomato sauce and basil",
         "classifier_type": "llm",
-        "provider_name": "lm_studio"
-    }
+        "provider_name": "lm_studio",
+    },
 )
 result = response.json()
 print(f"Classification: {result['label']} ({result['confidence']:.2f})")

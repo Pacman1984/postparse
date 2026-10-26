@@ -136,7 +136,7 @@ def backend_status(transcription: TranscriptionService) -> dict[str, Any]:
     try:
         backend = transcription.backend()
         backend.check()
-    except Exception as exc:  # noqa: BLE001 - reported, never raised
+    except Exception as exc:
         return {"kind": transcription.options.backend, "status": "unavailable", "error": str(exc)}
     return {
         "kind": transcription.options.backend,
@@ -224,7 +224,7 @@ def enrichment_status(
     user: dict[str, Any] | None = Depends(get_optional_auth),
 ) -> dict[str, Any]:
     """Return enrichment statistics."""
-    data = enrichment.status(source=source, top_domains=top_domains)  # type: ignore[arg-type]
+    data = enrichment.status(source=source, top_domains=top_domains)  # type: ignore[arg-type]  # str validated by the request schema
     by_state = data.pop("by_state", {})
     domains = data.pop("domains", [])
     return {

@@ -96,8 +96,8 @@ def build_item_filter(
     if start and end and start > end:
         raise click.BadParameter("--from is after --to", param_hint="--from")
     return ItemFilter(
-        source=None if source in (None, "all") else source,  # type: ignore[arg-type]
-        kinds=tuple(dict.fromkeys(kinds)),  # type: ignore[arg-type]
+        source=None if source in (None, "all") else source,  # type: ignore[arg-type]  # click.Choice values are typed str
+        kinds=tuple(dict.fromkeys(kinds)),  # type: ignore[arg-type]  # click.Choice values are typed str
         tags=tuple(t for t in tags if t.strip()),
         authors=tuple(a for a in authors if a.strip()),
         date_from=start,

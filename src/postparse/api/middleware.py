@@ -510,7 +510,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             else:
                 logger.error(
                     f"[{request_id}] {request.method} {request.url.path} - "
-                    f"Error: {str(e)} - Time: {processing_time:.3f}s",
+                    f"Error: {e!s} - Time: {processing_time:.3f}s",
                     exc_info=True,
                 )
 

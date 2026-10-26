@@ -126,7 +126,7 @@ class LLMHealthCache:
             from postparse.llm.health import check_provider as checker
         try:
             result = checker(provider, chat=True, timeout=self.timeout)
-        except Exception as exc:  # noqa: BLE001 - health checks never raise
+        except Exception as exc:
             return {
                 "status": "error",
                 "provider": provider.name,

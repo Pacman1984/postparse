@@ -19,8 +19,8 @@ from postparse.services.query import InvalidCursorError, QueryService, decode_cu
 __all__ = [
     "CONTENT_TYPE_KINDS",
     "accepted",
-    "job_or_404",
     "item_filter_or_400",
+    "job_or_404",
     "resolve_cursor",
     "serve_job_websocket",
 ]
@@ -151,7 +151,7 @@ async def serve_job_websocket(
             await websocket.receive_text()
     except WebSocketDisconnect:
         pass
-    except Exception:  # noqa: BLE001 - any socket error ends the stream
+    except Exception:
         logger.debug("WebSocket for job %s closed with an error", job_id, exc_info=True)
     finally:
         await ws_manager.disconnect(job_id, websocket)

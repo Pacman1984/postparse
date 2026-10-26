@@ -106,7 +106,7 @@ class CacheManager:
             candidate.ping()
             self.redis_client = candidate
             logger.info("Redis cache connected")
-        except Exception as exc:  # noqa: BLE001 - any connection problem means fallback
+        except Exception as exc:
             logger.warning("Redis unavailable (%s); using the in-memory cache", exc)
 
     @classmethod
@@ -162,7 +162,7 @@ class CacheManager:
                 raw = self.redis_client.get(key)
             else:
                 raw = self._memory_get(key)
-        except Exception as exc:  # noqa: BLE001 - a broken cache must not fail requests
+        except Exception as exc:
             logger.warning("Cache get failed: %s", exc)
             return None
         if raw is None:
@@ -182,7 +182,7 @@ class CacheManager:
                 self.redis_client.set(key, serialized, ex=ttl)
             else:
                 self._memory_set(key, serialized, ttl)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning("Cache set failed: %s", exc)
             return False
         return True
@@ -209,7 +209,7 @@ class CacheManager:
                     for k in keys:
                         del self._memory[k]
                 deleted = len(keys)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning("Cache invalidation failed: %s", exc)
             return 0
         if deleted:

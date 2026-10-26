@@ -71,7 +71,8 @@ class RetryPolicy:
     def delay(self, failures: int) -> timedelta:
         """Delay after ``failures`` consecutive failures (>= 1)."""
         factor = 2 ** max(failures - 1, 0)
-        return min(self.backoff * factor, self.max_backoff)
+        delay: timedelta = min(self.backoff * factor, self.max_backoff)
+        return delay
 
     def exhausted(self, failures: int) -> bool:
         """True once ``failures`` reached ``max_attempts``."""

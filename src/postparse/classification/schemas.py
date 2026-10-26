@@ -75,7 +75,7 @@ def build_output_model(spec: TaxonomySpec) -> type[BaseModel]:
         ``confidence`` fields.
     """
     names = spec.label_names
-    label_type: Any = Literal[names]  # type: ignore[valid-type]
+    label_type: Any = Literal[names]
     reasoning = (
         str,
         Field(description="One short sentence explaining the decision."),
@@ -121,6 +121,7 @@ def output_labels(output: BaseModel) -> tuple[str, ...]:
     Returns:
         Label names (one for single, zero or more for multi).
     """
-    if hasattr(output, "labels"):
-        return tuple(output.labels)
-    return (output.label,)
+    fields = dict(output)  # field name -> value
+    if "labels" in fields:
+        return tuple(fields["labels"])
+    return (fields["label"],)

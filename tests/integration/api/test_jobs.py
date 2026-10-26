@@ -406,7 +406,7 @@ class TestWebSocketProgress:
         processed = [e["messages_processed"] for e in events if e["status"] == "running"]
         assert processed == sorted(processed)
         assert processed[-3:] == [1, 2, 3]
-        assert [e["message"] for e in events if e["messages_processed"] == 2][0] == (
+        assert next(e["message"] for e in events if e["messages_processed"] == 2) == (
             "media 2: transcribed"
         )
         final = events[-1]

@@ -127,7 +127,8 @@ def extract_html(html: str, url: str, *, min_text_chars: int = 200) -> FetchResu
         ``ok`` with title/text (metadata ``extractor`` names the winner) or
         ``skipped`` when the page has neither text nor title.
     """
-    text, meta = "", {}
+    text: str = ""
+    meta: dict[str, Any] = {}
     try:
         text, meta = _trafilatura(html, url)
         extractor = "trafilatura"

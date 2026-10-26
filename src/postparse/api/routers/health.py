@@ -52,7 +52,7 @@ def database_check(services: ApiServices) -> dict[str, Any]:
             version = int(conn.execute("PRAGMA user_version").fetchone()[0])
             items = int(conn.execute("SELECT count(*) FROM items").fetchone()[0])
             indexed = SearchRepo(conn).indexed_count()
-    except Exception as exc:  # noqa: BLE001 - reported, never raised
+    except Exception as exc:
         return {**info, "status": "error", "error": str(exc)}
     latest = latest_version()
     ok = version == latest and indexed == items
@@ -163,7 +163,7 @@ def get_metrics(request: Request) -> dict[str, Any]:
                 key = "instagram_posts" if source == "instagram" else "telegram_messages"
                 metrics["database"][key] = int(n)
                 metrics["database"]["items"] += int(n)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning("Metrics database query failed: %s", exc)
     for job in services.jobs.list_jobs():
         bucket = metrics["jobs"].setdefault(job.job_type or "unknown", {})

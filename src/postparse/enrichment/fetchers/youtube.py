@@ -79,7 +79,8 @@ def youtube_video_id(url: str) -> str | None:
     if host.endswith("youtu.be"):
         candidate = segments[0] if segments else None
     elif segments and segments[0] == "watch":
-        candidate = (parse_qs(parts.query).get("v") or [None])[0]
+        values = parse_qs(parts.query).get("v")
+        candidate = values[0] if values else None
     elif len(segments) >= 2 and segments[0] in _PATH_PREFIXES:
         candidate = segments[1]
     return candidate if candidate and _ID_RE.match(candidate) else None

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 from datetime import timedelta
 from typing import Any
 
@@ -109,7 +110,7 @@ async def test_same_domain_requests_are_spaced_by_min_interval() -> None:
     for domain, at in default.starts:
         by_domain.setdefault(domain, []).append(at)
     for times in by_domain.values():
-        gaps = [later - earlier for earlier, later in zip(times, times[1:], strict=False)]
+        gaps = [later - earlier for earlier, later in itertools.pairwise(times)]
         assert all(gap >= 1.5 - 1e-9 for gap in gaps), gaps
     # The first request of each domain does not wait.
     assert sorted(t[0] for t in by_domain.values())[0] == 1000.0

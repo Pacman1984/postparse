@@ -14,7 +14,12 @@ from postparse.collectors.base import InstagramAuthRequired, InstagramRateLimite
 from postparse.config import Settings
 from postparse.core.db import Database
 from postparse.core.db.repos import MediaRepo, SearchRepo, TranscriptsRepo
-from postparse.media.fetch import FetchError, InstagramVideoFetcher, MediaUnavailable
+from postparse.media.fetch import (
+    FetchError,
+    InstagramVideoFetcher,
+    MediaUnavailable,
+    RefetchError,
+)
 from postparse.media.options import TranscriptionOptions
 from postparse.media.transcription import BackendUnavailable, TranscriptionError
 from postparse.services.transcription import TranscriptionService
@@ -340,3 +345,47 @@ def test_service_with_real_fetcher_refetch_and_throttle(
     assert scratch_files(settings) == []
     with db.read() as conn:
         assert SearchRepo(conn).integrity_check()
+
+
+def test_consecutive_refetch_failures_open_the_circuit(db: Database, settings: Settings) -> None:
+    """Three re-fetch failures in a row -> stop with suspected_block, rest untouched."""
+    ids = [add_video_item(db, code)[1][0] for code in ("B1", "B2", "B3", "B4")]
+    soft = RefetchError("Re-fetch failed: BadResponseException: metadata failed")
+    fetcher = FakeFetcher(errors={code: soft for code in ("B1", "B2", "B3", "B4")})
+    report = service(db, settings, fetcher=fetcher, max_consecutive_refetch_failures=3).run()
+    assert report.stopped_reason == "suspected_block" and not report.ok
+    assert report.failed == 3 and "soft-blocked" in (report.error or "")
+    assert [f[1] for f in fetcher.fetched] == ["B1", "B2", "B3"]
+    # Failed media are retried later (never skipped); the fourth one is untouched.
+    assert [get_media(db, m).transcript_status for m in ids] == [
+        "failed", "failed", "failed", "pending"
+    ]
+
+
+def test_successful_fetch_resets_the_refetch_failure_streak(
+    db: Database, settings: Settings
+) -> None:
+    for code in ("F1", "F2", "OK", "F3", "F4"):
+        add_video_item(db, code)
+    soft = RefetchError("metadata failed")
+    fetcher = FakeFetcher(errors={code: soft for code in ("F1", "F2", "F3", "F4")})
+    report = service(db, settings, fetcher=fetcher, max_consecutive_refetch_failures=3).run()
+    assert report.ok and report.failed == 4 and report.transcribed == 1
+
+
+def test_other_fetch_errors_do_not_count_towards_the_circuit(
+    db: Database, settings: Settings
+) -> None:
+    for code in ("D1", "D2", "D3", "D4"):
+        add_video_item(db, code)
+    fetcher = FakeFetcher(errors={c: FetchError("HTTP 500") for c in ("D1", "D2", "D3", "D4")})
+    report = service(db, settings, fetcher=fetcher, max_consecutive_refetch_failures=3).run()
+    assert report.ok and report.failed == 4
+
+
+def test_circuit_breaker_option_from_config() -> None:
+    config = SimpleNamespace(
+        get_section=lambda name: {"max_consecutive_refetch_failures": 5}
+    )
+    assert TranscriptionOptions.from_config(config).max_consecutive_refetch_failures == 5
+    assert TranscriptionOptions().max_consecutive_refetch_failures == 3

@@ -12,6 +12,7 @@ section) is missing::
     remote_url_max_age_hours = 6      # stored video URLs older than this are re-fetched
     refetch_min_delay = 20            # pause between Instagram post re-fetches (seconds) ...
     refetch_max_delay = 60            # ... uniformly jittered between min and max
+    max_consecutive_refetch_failures = 3  # stop the run (suspected Instagram block); 0 = never
     download_timeout = 60             # HTTP timeout per video download (seconds)
     max_download_mb = 200             # abort downloads larger than this
     max_duration_minutes = 30         # longer media are marked 'skipped'
@@ -89,6 +90,7 @@ class TranscriptionOptions:
     remote_url_max_age_hours: float = 6.0
     refetch_min_delay: float = 20.0
     refetch_max_delay: float = 60.0
+    max_consecutive_refetch_failures: int = 3
     download_timeout: float = 60.0
     max_download_mb: float = 200.0
     max_duration_minutes: float = 30.0
@@ -148,6 +150,13 @@ class TranscriptionOptions:
             ),
             refetch_min_delay=float(_get(section, "refetch_min_delay", d.refetch_min_delay)),
             refetch_max_delay=float(_get(section, "refetch_max_delay", d.refetch_max_delay)),
+            max_consecutive_refetch_failures=int(
+                _get(
+                    section,
+                    "max_consecutive_refetch_failures",
+                    d.max_consecutive_refetch_failures,
+                )
+            ),
             download_timeout=float(_get(section, "download_timeout", d.download_timeout)),
             max_download_mb=float(_get(section, "max_download_mb", d.max_download_mb)),
             max_duration_minutes=float(

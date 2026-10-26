@@ -7,7 +7,8 @@ Thin adapters over :class:`postparse.services.transcription.TranscriptionService
 - ``status``: queue counts per source and status, next retries, totals
 
 Exit codes (as ``extract``): 0 success, 1 error / ASR backend unavailable,
-2 Instagram login required, 3 rate limited, 130 interrupted.
+2 Instagram login required, 3 rate limited / suspected Instagram block,
+130 interrupted.
 
 Configuration: ``[transcription]`` (see :mod:`postparse.media.options`).
 
@@ -55,6 +56,7 @@ _REASONS = {
     "rate_limited": "Instagram rate limit",
     "auth_required": "Instagram login required",
     "backend_unavailable": "ASR backend unavailable",
+    "suspected_block": "suspected Instagram block",
     "interrupted": "interrupted",
 }
 
@@ -127,6 +129,13 @@ def exit_code(report: TranscriptionReport) -> int:
     if report.stopped_reason == "rate_limited":
         print_warning(report.error or "Rate limited; retry later.")
         print_info("Everything transcribed before the limit was hit has been kept.")
+        return EXIT_RATE_LIMITED
+    if report.stopped_reason == "suspected_block":
+        print_warning(report.error or "Instagram re-fetches keep failing.")
+        print_info(
+            "Instagram is probably soft-blocking this session. Wait a few hours before "
+            "the next run; nothing committed so far is lost."
+        )
         return EXIT_RATE_LIMITED
     if report.stopped_reason == "backend_unavailable":
         print_error(report.error or "Transcription backend unavailable.")

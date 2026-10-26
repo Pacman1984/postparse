@@ -13,7 +13,13 @@ Re-fetches are throttled with a jittered pause (``refetch_min_delay`` ..
 ``refetch_max_delay``, default 20-60 s) and share one login per fetcher. Rate
 limits and invalid sessions surface as :class:`InstagramRateLimited` /
 :class:`InstagramAuthRequired`, which end the whole run. Deleted or inaccessible
-posts raise :class:`MediaUnavailable` (the caller marks the media ``skipped``).
+posts (``QueryReturnedNotFoundException`` / ``ProfileNotExistsException``, or a
+post without a video at the media position) raise :class:`MediaUnavailable`
+(the caller marks the media ``skipped``). Every other re-fetch failure --
+including instaloader's ``BadResponseException("... metadata failed")``, which
+Instagram also returns when it soft-blocks a session -- raises
+:class:`RefetchError` (retried with backoff; the service stops the run after
+several in a row, see ``max_consecutive_refetch_failures``).
 
 Downloads are streamed with a size cap and a timeout. Nothing is kept: the
 caller deletes the scratch directory after transcription.
@@ -47,6 +53,7 @@ __all__ = [
     "InstagramVideoFetcher",
     "MediaUnavailable",
     "RefetchDisabled",
+    "RefetchError",
     "video_url_for",
 ]
 
@@ -66,6 +73,10 @@ CollectorFactory = Callable[[], Any]
 
 class FetchError(RuntimeError):
     """Download or re-fetch failed (the media is retried later with backoff)."""
+
+
+class RefetchError(FetchError):
+    """Re-fetching the post from Instagram failed (possibly a soft block; retry later)."""
 
 
 class MediaUnavailable(RuntimeError):
@@ -258,11 +269,11 @@ class InstagramVideoFetcher:
             name = type(exc).__name__
             if isinstance(exc, CollectorError):
                 raise
-            if name in _UNAVAILABLE_ERRORS or (
-                name == "BadResponseException" and "metadata failed" in str(exc).lower()
-            ):
+            if name in _UNAVAILABLE_ERRORS:
                 raise MediaUnavailable(f"post not available ({name})") from exc
-            raise FetchError(f"Re-fetch of {shortcode} failed: {name}: {exc}") from exc
+            # Includes BadResponseException("... metadata failed"): Instagram sends it
+            # for deleted posts *and* for soft-blocked sessions, so it is retried.
+            raise RefetchError(f"Re-fetch of {shortcode} failed: {name}: {exc}") from exc
         if not url:
             raise MediaUnavailable(f"post has no video at position {media.position}")
         with self.db.transaction() as conn:

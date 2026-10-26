@@ -19,7 +19,11 @@ Each media is committed on its own, so an interrupted run keeps its progress.
 Failures are recorded with exponential backoff (``mark_failed``); deleted or
 private posts and over-long media are marked ``skipped`` with the reason in
 ``last_error``. Instagram rate limits / missing logins end the run cleanly
-(``stopped_reason``), leaving the current media untouched.
+(``stopped_reason``), leaving the current media untouched. After
+``transcription.max_consecutive_refetch_failures`` re-fetch failures in a row
+(default 3) the run stops with ``stopped_reason="suspected_block"``: Instagram
+answers soft-blocked sessions with errors that look like missing posts, so
+continuing would only burn retries.
 
 Configuration: ``[transcription]`` (see :mod:`postparse.media.options`).
 
@@ -55,6 +59,7 @@ from postparse.media.fetch import (
     InstagramVideoFetcher,
     MediaUnavailable,
     RefetchDisabled,
+    RefetchError,
 )
 from postparse.media.options import BackendKind, TranscriptionOptions
 from postparse.media.transcription import (
@@ -74,7 +79,12 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 TranscriptionStopReason = Literal[
-    "done", "rate_limited", "auth_required", "backend_unavailable", "interrupted"
+    "done",
+    "rate_limited",
+    "auth_required",
+    "backend_unavailable",
+    "suspected_block",
+    "interrupted",
 ]
 MediaStatus = Literal["transcribed", "no_audio", "skipped", "failed", "deferred"]
 
@@ -212,6 +222,7 @@ class TranscriptionService:
         self._sleep = sleep
         self._clock = clock or (lambda: datetime.now(UTC))
         self._backends: dict[BackendKind | None, TranscriptionBackend] = {}
+        self._refetch_failures = 0
 
     # -- factories -----------------------------------------------------------
 
@@ -344,6 +355,7 @@ class TranscriptionService:
         )
 
         fetcher = self._fetcher(refetch)
+        self._refetch_failures = 0
         try:
             for index, media in enumerate(candidates, start=1):
                 status = self._process(media, asr, fetcher, report)
@@ -356,6 +368,8 @@ class TranscriptionService:
                             media.id, media.item_id, status, index, len(candidates), report
                         )
                     )
+                if self._circuit_open(report):
+                    break
             else:
                 report.stopped_reason = "done"
         except KeyboardInterrupt:
@@ -387,6 +401,7 @@ class TranscriptionService:
         try:
             try:
                 path = self._fetch(media, fetcher, work)
+                self._refetch_failures = 0
                 info = probe(path)
                 if not info.has_audio:
                     self._finish(media, "no_audio", "no audio stream", info.duration)
@@ -424,6 +439,9 @@ class TranscriptionService:
                 if media.item_id not in report.item_ids:
                     report.item_ids.append(media.item_id)
                 return "transcribed"
+            except RefetchError as exc:
+                self._refetch_failures += 1
+                return self._mark_failed(media, exc, report)
             except RefetchDisabled as exc:
                 report.deferred += 1
                 logger.debug("Media %d deferred: %s", media.id, exc)
@@ -449,24 +467,43 @@ class TranscriptionService:
                 logger.error("Transcription backend unavailable: %s", exc)
                 return None
             except Exception as exc:
-                message = f"{type(exc).__name__}: {exc}"
-                with self.db.transaction() as conn:
-                    next_at = MediaRepo(conn).mark_failed(
-                        media.id,
-                        message[:1000],
-                        backoff=self.options.backoff,
-                        max_backoff=self.options.max_backoff,
-                        now=self._clock(),
-                    )
-                report.failed += 1
-                self._sample(report, media, message)
-                logger.warning(
-                    "Transcription of media %d failed (retry after %s): %s",
-                    media.id, next_at.isoformat(timespec="minutes"), message,
-                )
-                return "failed"
+                return self._mark_failed(media, exc, report)
         finally:
             shutil.rmtree(work, ignore_errors=True)
+
+    def _mark_failed(
+        self, media: Media, exc: BaseException, report: TranscriptionReport
+    ) -> MediaStatus:
+        """Record a retryable failure with exponential backoff."""
+        message = f"{type(exc).__name__}: {exc}"
+        with self.db.transaction() as conn:
+            next_at = MediaRepo(conn).mark_failed(
+                media.id,
+                message[:1000],
+                backoff=self.options.backoff,
+                max_backoff=self.options.max_backoff,
+                now=self._clock(),
+            )
+        report.failed += 1
+        self._sample(report, media, message)
+        logger.warning(
+            "Transcription of media %d failed (retry after %s): %s",
+            media.id, next_at.isoformat(timespec="minutes"), message,
+        )
+        return "failed"
+
+    def _circuit_open(self, report: TranscriptionReport) -> bool:
+        """Stop the run after too many consecutive Instagram re-fetch failures."""
+        limit = self.options.max_consecutive_refetch_failures
+        if limit <= 0 or self._refetch_failures < limit:
+            return False
+        report.stopped_reason = "suspected_block"
+        report.error = (
+            f"{self._refetch_failures} Instagram re-fetches failed in a row; "
+            "the session is probably soft-blocked"
+        )
+        logger.warning("Transcription stopped: %s", report.error)
+        return True
 
     def _fetch(self, media: Media, fetcher: Any, work: Path) -> Path:
         """Return a local file for ``media`` (kept local file or a scratch download)."""

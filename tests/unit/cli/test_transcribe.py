@@ -189,3 +189,14 @@ def test_extract_instagram_without_transcribe_flag(env, monkeypatch) -> None:
                     env_vars={"INSTAGRAM_USERNAME": "me", "INSTAGRAM_PASSWORD": "pw"})
     assert result.exit_code == 0, result.output
     assert env["runs"] == [] and "Transcription" not in result.output
+
+
+def test_transcribe_run_suspected_block_exit_3(env) -> None:
+    from postparse.media.fetch import RefetchError
+
+    for code in ("S1", "S2", "S3"):
+        add_video_item(env["db"], code)
+        env["fetcher"].errors[code] = RefetchError("metadata failed")
+    result = invoke("transcribe", "run")
+    assert result.exit_code == 3, result.output
+    assert "hours" in result.output and "lost" in result.output

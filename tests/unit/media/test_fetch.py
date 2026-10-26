@@ -9,7 +9,11 @@ from typing import Any
 
 import httpx
 import pytest
-from instaloader.exceptions import BadResponseException, QueryReturnedNotFoundException
+from instaloader.exceptions import (
+    BadResponseException,
+    ProfileNotExistsException,
+    QueryReturnedNotFoundException,
+)
 
 from postparse.collectors.base import InstagramAuthRequired, InstagramRateLimited
 from postparse.core.db import Database
@@ -18,6 +22,7 @@ from postparse.media.fetch import (
     InstagramVideoFetcher,
     MediaUnavailable,
     RefetchDisabled,
+    RefetchError,
     video_url_for,
 )
 from postparse.media.options import TranscriptionOptions
@@ -174,7 +179,7 @@ def test_login_failure_propagates(db: Database, tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("error", [
     QueryReturnedNotFoundException("404 not found"),
-    BadResponseException("Fetching Post metadata failed."),
+    ProfileNotExistsException("profile gone"),
 ])
 def test_deleted_posts_are_unavailable(db: Database, tmp_path: Path, error: Exception) -> None:
     _, (mid,) = add_video_item(db, "GONE")
@@ -243,3 +248,14 @@ def test_video_url_for_single_and_sidecar() -> None:
     assert video_url_for(sidecar, 1) == "https://cdn.test/1.mp4"
     assert video_url_for(sidecar, 0) is None
     assert video_url_for(sidecar, 5) is None
+
+
+def test_metadata_failed_is_retryable_not_unavailable(db: Database, tmp_path: Path) -> None:
+    """Instagram answers soft-blocked sessions with "metadata failed" -> retry, never skip."""
+    _, (mid,) = add_video_item(db, "SOFT")
+    collector = FakeCollector(errors={"SOFT": BadResponseException("Fetching Post metadata failed.")})
+    with make_fetcher(db, Cdn({}), collector) as fetcher, \
+            pytest.raises(RefetchError, match="metadata failed") as info:
+        fetcher.fetch(get_media(db, mid), "SOFT", tmp_path)
+    assert isinstance(info.value, FetchError)
+    assert not isinstance(info.value, MediaUnavailable)

@@ -3,9 +3,9 @@
 ## Tools and Libraries
 
 - Instaloader for Instagram data extraction
-- Langchain for LLM integration
-- Ollama Server for local model execution
-- OpenAI/Anthropic models for markdown generation
+- pydantic-ai for LLM integration (LangChain/LiteLLM were removed in 0.2)
+- OpenAI-compatible local servers (llama.cpp, LM Studio, Ollama) for local model execution
+- OpenAI/Anthropic models as optional cloud providers
 
 ## Coding Standards
 

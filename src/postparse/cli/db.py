@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import rich_click as click
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
@@ -403,7 +404,7 @@ def run_db_check(path: Path, config_path: str | None = None) -> bool:
 
     warning = legacy_db_key_warning(config_path)
     if warning:
-        print_warning(warning)
+        print_warning(escape(warning))
     if not path.is_file():
         print_error(f"Database not found: {path} (run `postparse db migrate`)")
         return False

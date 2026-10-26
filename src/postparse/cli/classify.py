@@ -44,6 +44,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _DB_OPTION_HELP = "Schema v2 database file (default: Settings.db_path)"
+# Help texts are rich markup: "\[" keeps the TOML table name visible.
+_PROVIDER_HELP = r"LLM provider from \[\[llm.providers]] (default: default_provider)"
 
 
 @click.group()
@@ -287,7 +289,7 @@ def _run_classification(
 @click.option("--with-transcript", is_flag=True, help="Only items that have a transcript")
 @click.option("--since", help="Only items dated on/after DATE (YYYY-MM-DD)")
 @click.option("--limit", type=click.IntRange(min=1), help="Maximum items sent to the LLM")
-@click.option("--provider", help="LLM provider from [llm.providers] (default: default_provider)")
+@click.option("--provider", help=_PROVIDER_HELP)
 @click.option("--db", "db_path", type=click.Path(dir_okay=False), help=_DB_OPTION_HELP)
 @click.option(
     "--no-wait-transcripts",
@@ -350,7 +352,7 @@ def run(
     show_default=True,
     help="Mode for --labels",
 )
-@click.option("--provider", help="LLM provider from [llm.providers] (default: default_provider)")
+@click.option("--provider", help=_PROVIDER_HELP)
 @click.option(
     "--output",
     type=click.Choice(["text", "json"]),
@@ -490,7 +492,7 @@ def taxonomies(ctx: click.Context, db_path: str | None, output: str) -> None:
         )
         return
     if not infos:
-        print_warning("No taxonomies configured ([[classification.taxonomies]]) or stored")
+        print_warning(r"No taxonomies configured (\[\[classification.taxonomies]]) or stored")
         return
     table = Table(title="Taxonomies", show_header=True, header_style="bold cyan")
     for column in (
@@ -552,7 +554,7 @@ def taxonomies(ctx: click.Context, db_path: str | None, output: str) -> None:
     "--classes",
     "classes_arg",
     default=None,
-    help="Ignored (configure [[classification.taxonomies]] instead)",
+    help=r"Ignored (configure \[\[classification.taxonomies]] instead)",
 )
 @click.option(
     "--limit",
@@ -592,7 +594,7 @@ def db(
             "used (recipe is a label there)"
         )
     if classes_arg is not None:
-        print_warning("--classes is ignored: configure [[classification.taxonomies]] instead")
+        print_warning(r"--classes is ignored: configure \[\[classification.taxonomies]] instead")
     if replace:
         print_warning("--replace is ignored: every run keeps its own results")
     _run_classification(

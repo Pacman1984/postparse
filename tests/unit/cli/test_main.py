@@ -380,3 +380,37 @@ class TestStdioEncoding:
             main()
 
         assert calls == ["configure", "cli"]
+
+
+class TestSchemaV2Info:
+    """`info` reports paths and the schema v2 database; .env loading can be disabled."""
+
+    def test_info_reports_database(self, v2_db, monkeypatch: pytest.MonkeyPatch) -> None:
+        from postparse.config import clear_settings_cache
+
+        path, _ = v2_db
+        monkeypatch.setenv("POSTPARSE_DB_PATH", str(path))
+        clear_settings_cache()
+        result = CliRunner().invoke(cli, ["info"])
+        assert result.exit_code == 0, result.output
+        assert "Schema / items" in result.output
+        assert "/ 4" in result.output
+
+    def test_info_with_missing_database(self, tmp_path: Path,
+                                        monkeypatch: pytest.MonkeyPatch) -> None:
+        from postparse.config import clear_settings_cache
+
+        monkeypatch.setenv("POSTPARSE_DB_PATH", str(tmp_path / "none.db"))
+        clear_settings_cache()
+        result = CliRunner().invoke(cli, ["info"])
+        assert result.exit_code == 0
+        assert "not found" in result.output
+        assert not (tmp_path / "none.db").exists()
+
+    def test_no_dotenv_switch(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        (tmp_path / ".env").write_text("X=1\n")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("POSTPARSE_NO_DOTENV", "1")
+        with patch("postparse.cli.main.load_dotenv") as mock_load:
+            assert load_env_files() is None
+            assert not mock_load.called

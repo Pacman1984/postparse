@@ -383,6 +383,7 @@ class QueryService:
         item_filter: ItemFilter | None,
         fmt: Literal["json", "csv"] = "json",
         out: str | Path | IO[str] = "-",
+        limit: int | None = None,
     ) -> int:
         """Export matching items as a JSON array or CSV.
 
@@ -394,6 +395,7 @@ class QueryService:
             item_filter: Selection criteria.
             fmt: ``json`` or ``csv``.
             out: File path or an open text stream.
+            limit: Export at most this many items (newest first); ``None``: all.
 
         Returns:
             Number of exported items.
@@ -405,15 +407,24 @@ class QueryService:
             raise ValueError(f"Unsupported export format: {fmt!r}")
         if isinstance(out, (str, Path)):
             with open(out, "w", encoding="utf-8", newline="") as handle:
-                return self._export(item_filter, fmt, handle)
-        return self._export(item_filter, fmt, out)
+                return self._export(item_filter, fmt, handle, limit)
+        return self._export(item_filter, fmt, out, limit)
 
-    def _export(self, item_filter: ItemFilter | None, fmt: str, handle: IO[str]) -> int:
+    def _limited(self, item_filter: ItemFilter | None, limit: int | None) -> Iterator[ItemView]:
+        """Yield matching items, stopping after ``limit``."""
+        for index, view in enumerate(self.iter_items(item_filter)):
+            if limit is not None and index >= limit:
+                return
+            yield view
+
+    def _export(
+        self, item_filter: ItemFilter | None, fmt: str, handle: IO[str], limit: int | None = None
+    ) -> int:
         """Write the export to an open stream."""
         count = 0
         if fmt == "json":
             handle.write("[")
-            for view in self.iter_items(item_filter):
+            for view in self._limited(item_filter, limit):
                 handle.write(",\n" if count else "\n")
                 handle.write(json.dumps(view.to_dict(), ensure_ascii=False))
                 count += 1
@@ -424,7 +435,7 @@ class QueryService:
             ["id", "source", "external_id", "kind", "created_at", "collected_at", "author",
              "url", "text", "tags", "labels"]
         )
-        for view in self.iter_items(item_filter):
+        for view in self._limited(item_filter, limit):
             data = view.to_dict()
             writer.writerow(
                 [

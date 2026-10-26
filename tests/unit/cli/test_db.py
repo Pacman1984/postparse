@@ -1,413 +1,184 @@
-"""
-Unit tests for CLI database commands.
+"""Tests for `postparse stats` / `db stats` / `db export` against a seeded v2 database."""
 
-This module tests database operations including statistics display,
-data export, and database management commands.
-"""
+from __future__ import annotations
 
+import csv
+import io
+import json
 from pathlib import Path
-from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
 from click.testing import CliRunner
 
 from postparse.cli.main import cli
-
-
-class TestDbStats:
-    """Test db stats command."""
-
-    def test_db_stats_displays_counts(self) -> None:
-        """
-        Test that db stats displays post and message counts.
-
-        Mocks database at the boundary and tests display logic.
-        """
-        runner = CliRunner()
-
-        with patch("postparse.cli.db.load_config") as mock_load:
-            with patch("postparse.cli.db.get_database") as mock_get_db:
-                mock_config = MagicMock()
-                mock_config.get.return_value = "data/test.db"
-                mock_load.return_value = mock_config
-
-                mock_db = MagicMock()
-                mock_db.get_instagram_posts.return_value = [
-                    {"id": 1, "caption": "Test 1", "date": "2024-01-15T10:00:00Z", "content_type": "image"},
-                    {"id": 2, "caption": "Test 2", "date": "2024-01-16T10:00:00Z", "content_type": "video"},
-                ]
-                mock_db.get_telegram_messages.return_value = [
-                    {"id": 1, "text": "Message 1", "date": "2024-01-17T10:00:00Z", "media_type": "text"},
-                ]
-                mock_get_db.return_value = mock_db
-
-                result = runner.invoke(cli, ["db", "stats"])
-
-                assert result.exit_code == 0
-                # Should display counts
-                assert "2" in result.output  # 2 posts
-                assert "1" in result.output  # 1 message
-
-    def test_db_stats_with_empty_database(self) -> None:
-        """Test db stats with empty database shows helpful message."""
-        runner = CliRunner()
-
-        with patch("postparse.cli.db.load_config") as mock_load:
-            with patch("postparse.cli.db.get_database") as mock_get_db:
-                mock_config = MagicMock()
-                mock_config.get.return_value = "data/test.db"
-                mock_load.return_value = mock_config
-
-                mock_db = MagicMock()
-                mock_db.get_instagram_posts.return_value = []
-                mock_db.get_telegram_messages.return_value = []
-                mock_get_db.return_value = mock_db
-
-                result = runner.invoke(cli, ["db", "stats"])
-
-                assert result.exit_code == 0
-                # Should show empty message and help
-                assert "empty" in result.output.lower() or "extract" in result.output.lower()
-
-    def test_db_stats_shows_date_ranges(self) -> None:
-        """Test that stats displays date ranges for posts and messages."""
-        runner = CliRunner()
-
-        with patch("postparse.cli.db.load_config") as mock_load:
-            with patch("postparse.cli.db.get_database") as mock_get_db:
-                mock_config = MagicMock()
-                mock_config.get.return_value = "data/test.db"
-                mock_load.return_value = mock_config
-
-                mock_db = MagicMock()
-                mock_db.get_instagram_posts.return_value = [
-                    {"id": 1, "date": "2024-01-01T10:00:00Z", "content_type": "image"},
-                    {"id": 2, "date": "2024-12-31T10:00:00Z", "content_type": "image"},
-                ]
-                mock_db.get_telegram_messages.return_value = [
-                    {"id": 1, "date": "2024-06-15T10:00:00Z", "media_type": "text"},
-                ]
-                mock_get_db.return_value = mock_db
-
-                result = runner.invoke(cli, ["db", "stats"])
-
-                assert result.exit_code == 0
-                # Should show date information
-                assert "2024" in result.output
-
-    def test_db_stats_shows_content_type_breakdown(self) -> None:
-        """Test that stats shows breakdown by content type."""
-        runner = CliRunner()
-
-        with patch("postparse.cli.db.load_config") as mock_load:
-            with patch("postparse.cli.db.get_database") as mock_get_db:
-                mock_config = MagicMock()
-                mock_config.get.return_value = "data/test.db"
-                mock_load.return_value = mock_config
-
-                mock_db = MagicMock()
-                mock_db.get_instagram_posts.return_value = [
-                    {"id": 1, "content_type": "image"},
-                    {"id": 2, "content_type": "image"},
-                    {"id": 3, "content_type": "video"},
-                ]
-                mock_db.get_telegram_messages.return_value = []
-                mock_get_db.return_value = mock_db
-
-                result = runner.invoke(cli, ["db", "stats"])
-
-                assert result.exit_code == 0
-                # Should show content types
-                output_lower = result.output.lower()
-                assert "image" in output_lower or "video" in output_lower
-
-    def test_db_stats_detailed_shows_hashtags(self) -> None:
-        """Test that stats --detailed shows hashtag distribution."""
-        runner = CliRunner()
-
-        with patch("postparse.cli.db.load_config") as mock_load:
-            with patch("postparse.cli.db.get_database") as mock_get_db:
-                mock_config = MagicMock()
-                mock_config.get.return_value = "data/test.db"
-                mock_load.return_value = mock_config
-
-                mock_db = MagicMock()
-                mock_db.get_instagram_posts.return_value = [{"id": 1}]
-                mock_db.get_telegram_messages.return_value = []
-                mock_db.get_all_hashtags.return_value = ["recipe", "cooking", "food", "recipe"]
-                mock_get_db.return_value = mock_db
-
-                result = runner.invoke(cli, ["db", "stats", "--detailed"])
-
-                assert result.exit_code == 0
-                # Should show hashtags
-                output_lower = result.output.lower()
-                assert "hashtag" in output_lower or "recipe" in output_lower
-
-    def test_db_stats_handles_database_error(self) -> None:
-        """Test that stats handles database errors gracefully."""
-        runner = CliRunner()
-
-        with patch("postparse.cli.db.load_config") as mock_load:
-            with patch("postparse.cli.db.get_database") as mock_get_db:
-                mock_config = MagicMock()
-                mock_load.return_value = mock_config
-
-                mock_get_db.side_effect = Exception("Database error")
-
-                result = runner.invoke(cli, ["db", "stats"])
-
-                # Should handle error
-                assert result.exit_code != 0
-
-
-class TestDbExport:
-    """Test db export command."""
-
-    def test_db_export_json_format(self, tmp_path: Path) -> None:
-        """
-        Test exporting database to JSON format.
-
-        Tests actual export logic with mocked database data.
-        """
-        output_file = tmp_path / "export.json"
-
-        runner = CliRunner()
-
-        with patch("postparse.cli.db.load_config") as mock_load:
-            with patch("postparse.cli.db.get_database") as mock_get_db:
-                mock_config = MagicMock()
-                mock_load.return_value = mock_config
-
-                mock_db = MagicMock()
-                mock_db.get_instagram_posts.return_value = [
-                    {"id": 1, "caption": "Test post"},
-                ]
-                mock_db.get_telegram_messages.return_value = [
-                    {"id": 1, "text": "Test message"},
-                ]
-                mock_get_db.return_value = mock_db
-
-                result = runner.invoke(
-                    cli,
-                    ["db", "export", str(output_file), "--format", "json"]
-                )
-
-                assert result.exit_code == 0
-                # Check file was created
-                assert output_file.exists()
-
-    def test_db_export_csv_format(self, tmp_path: Path) -> None:
-        """Test exporting database to CSV format."""
-        output_file = tmp_path / "export.csv"
-
-        runner = CliRunner()
-
-        with patch("postparse.cli.db.load_config") as mock_load:
-            with patch("postparse.cli.db.get_database") as mock_get_db:
-                mock_config = MagicMock()
-                mock_load.return_value = mock_config
-
-                mock_db = MagicMock()
-                mock_db.get_instagram_posts.return_value = [
-                    {"id": 1, "caption": "Test post", "likes": 10},
-                ]
-                mock_db.get_telegram_messages.return_value = [
-                    {"id": 1, "text": "Test message", "views": 5},
-                ]
-                mock_get_db.return_value = mock_db
-
-                result = runner.invoke(
-                    cli,
-                    ["db", "export", str(output_file), "--format", "csv", "--source", "all"]
-                )
-
-                assert result.exit_code == 0
-                # Should create separate files for posts and messages
-                assert (tmp_path / "export_posts.csv").exists() or output_file.exists()
-
-    def test_db_export_posts_only(self, tmp_path: Path) -> None:
-        """Test exporting only Instagram posts."""
-        output_file = tmp_path / "posts_export.json"
-
-        runner = CliRunner()
-
-        with patch("postparse.cli.db.load_config") as mock_load:
-            with patch("postparse.cli.db.get_database") as mock_get_db:
-                mock_config = MagicMock()
-                mock_load.return_value = mock_config
-
-                mock_db = MagicMock()
-                mock_db.get_instagram_posts.return_value = [
-                    {"id": 1, "caption": "Test post"},
-                ]
-                mock_get_db.return_value = mock_db
-
-                result = runner.invoke(
-                    cli,
-                    ["db", "export", str(output_file), "--source", "posts"]
-                )
-
-                assert result.exit_code == 0
-                assert output_file.exists()
-
-    def test_db_export_messages_only(self, tmp_path: Path) -> None:
-        """Test exporting only Telegram messages."""
-        output_file = tmp_path / "messages_export.json"
-
-        runner = CliRunner()
-
-        with patch("postparse.cli.db.load_config") as mock_load:
-            with patch("postparse.cli.db.get_database") as mock_get_db:
-                mock_config = MagicMock()
-                mock_load.return_value = mock_config
-
-                mock_db = MagicMock()
-                mock_db.get_telegram_messages.return_value = [
-                    {"id": 1, "text": "Test message"},
-                ]
-                mock_get_db.return_value = mock_db
-
-                result = runner.invoke(
-                    cli,
-                    ["db", "export", str(output_file), "--source", "messages"]
-                )
-
-                assert result.exit_code == 0
-                assert output_file.exists()
-
-    def test_db_export_with_limit(self, tmp_path: Path) -> None:
-        """Test exporting with record limit."""
-        output_file = tmp_path / "limited_export.json"
-
-        runner = CliRunner()
-
-        with patch("postparse.cli.db.load_config") as mock_load:
-            with patch("postparse.cli.db.get_database") as mock_get_db:
-                mock_config = MagicMock()
-                mock_load.return_value = mock_config
-
-                mock_db = MagicMock()
-                # Return multiple records but limit should apply
-                mock_db.get_instagram_posts.return_value = [
-                    {"id": i, "caption": f"Post {i}"} for i in range(100)
-                ]
-                mock_db.get_telegram_messages.return_value = []
-                mock_get_db.return_value = mock_db
-
-                result = runner.invoke(
-                    cli,
-                    ["db", "export", str(output_file), "--limit", "10"]
-                )
-
-                assert result.exit_code == 0
-                # Database method should be called with limit
-                mock_db.get_instagram_posts.assert_called_with(limit=10)
-
-    def test_db_export_handles_empty_data(self, tmp_path: Path) -> None:
-        """Test exporting empty database."""
-        output_file = tmp_path / "empty_export.json"
-
-        runner = CliRunner()
-
-        with patch("postparse.cli.db.load_config") as mock_load:
-            with patch("postparse.cli.db.get_database") as mock_get_db:
-                mock_config = MagicMock()
-                mock_load.return_value = mock_config
-
-                mock_db = MagicMock()
-                mock_db.get_instagram_posts.return_value = []
-                mock_db.get_telegram_messages.return_value = []
-                mock_get_db.return_value = mock_db
-
-                result = runner.invoke(
-                    cli,
-                    ["db", "export", str(output_file)]
-                )
-
-                assert result.exit_code == 0
-                assert output_file.exists()
-
-    def test_db_export_handles_write_error(self, tmp_path: Path) -> None:
-        """Test export handles file write errors."""
-        # Use a path that will cause write error (e.g., read-only)
-        output_file = tmp_path / "readonly" / "export.json"
-
-        runner = CliRunner()
-
-        with patch("postparse.cli.db.load_config") as mock_load:
-            with patch("postparse.cli.db.get_database") as mock_get_db:
-                mock_config = MagicMock()
-                mock_load.return_value = mock_config
-
-                mock_db = MagicMock()
-                mock_db.get_instagram_posts.return_value = [{"id": 1}]
-                mock_db.get_telegram_messages.return_value = []
-                mock_get_db.return_value = mock_db
-
-                result = runner.invoke(
-                    cli,
-                    ["db", "export", str(output_file)]
-                )
-
-                # Should handle error
-                assert result.exit_code != 0
-
-
-class TestDbCommandHelp:
-    """Test db command help output."""
-
-    def test_db_help_displays_subcommands(self) -> None:
-        """Test that db --help shows available subcommands."""
-        runner = CliRunner()
-        result = runner.invoke(cli, ["db", "--help"])
-
+from postparse.core.db import Database
+from postparse.services.stats import collect_stats, database_size
+
+
+def _stats_json(path: Path, *args: str) -> dict:
+    result = CliRunner().invoke(cli, ["stats", "--db", str(path), "--json", *args])
+    assert result.exit_code == 0, result.output
+    return json.loads(result.output)
+
+
+class TestStats:
+    def test_counts_per_source_and_kind(self, v2_db: tuple[Path, dict[str, int]]) -> None:
+        path, _ = v2_db
+        data = _stats_json(path)
+        assert data["items_total"] == 4
+        sources = {s["source"]: s for s in data["sources"]}
+        assert sources["instagram"]["items"] == 2
+        assert sources["instagram"]["kinds"] == {"image": 1, "video": 1}
+        assert sources["telegram"]["oldest"].startswith("2024-01-15")
+        assert sources["telegram"]["newest"].startswith("2024-03-31")
+        assert data["schema_version"] == data["latest_schema_version"] > 0
+        assert data["size_bytes"] > 0
+
+    def test_tags_media_links_summaries(self, v2_db: tuple[Path, dict[str, int]]) -> None:
+        path, _ = v2_db
+        data = _stats_json(path, "--top", "2")
+        assert data["top_hashtags"][0] == ["#pasta", 2]
+        assert len(data["top_hashtags"]) == 2
+        assert data["tags_distinct"] == 3
+        assert data["media"] == {"video": 1}
+        assert data["transcripts"] == 1 and data["items_with_transcript"] == 1
+        assert data["links"] == 2 and data["items_with_links"] == 2
+        assert data["link_status"] == {"ok": 1, "never": 1}
+        assert data["link_fetchers"] == {"trafilatura": 1}
+        assert data["summaries"] == 1 and data["items_with_summary"] == 1
+
+    def test_classification_coverage(self, v2_db: tuple[Path, dict[str, int]]) -> None:
+        path, _ = v2_db
+        (topics,) = _stats_json(path)["taxonomies"]
+        assert topics["name"] == "topics"
+        assert topics["classified_items"] == 3
+        assert topics["results"] == {"ok": 3, "no_labels": 0, "error": 0}
+        assert topics["top_labels"] == [["food", 2], ["tech", 1]]
+        assert topics["pending_default"] == 1  # the unclassified document
+        assert topics["pending_backfill"] == 1
+
+    def test_no_pending_skips_the_counts(self, v2_db: tuple[Path, dict[str, int]]) -> None:
+        path, _ = v2_db
+        (topics,) = _stats_json(path, "--no-pending")["taxonomies"]
+        assert topics["pending_default"] == 0
+
+    def test_table_output(self, v2_db: tuple[Path, dict[str, int]]) -> None:
+        path, _ = v2_db
+        result = CliRunner().invoke(cli, ["db", "stats", "--db", str(path), "--detailed"])
+        assert result.exit_code == 0, result.output
+        for text in ("Database Overview", "Items", "Media & transcripts", "Links",
+                     "Classification", "topics", "Top hashtags", "#pasta"):
+            assert text in result.output
+
+    def test_empty_database_hint(self, tmp_path: Path) -> None:
+        path = tmp_path / "empty.db"
+        Database.open(path)
+        result = CliRunner().invoke(cli, ["stats", "--db", str(path)])
+        assert result.exit_code == 0, result.output
+        assert "Database is empty" in result.output
+
+    def test_missing_database_fails_without_creating_it(self, tmp_path: Path) -> None:
+        path = tmp_path / "nope.db"
+        result = CliRunner().invoke(cli, ["stats", "--db", str(path)])
+        assert result.exit_code == 1
+        assert "Database not found" in result.output
+        assert not path.exists()
+
+    def test_outdated_schema_asks_for_migrate(self, tmp_path: Path) -> None:
+        import sqlite3
+
+        path = tmp_path / "old.db"
+        conn = sqlite3.connect(path)
+        conn.execute("CREATE TABLE x (a)")
+        conn.commit()
+        conn.close()
+        result = CliRunner().invoke(cli, ["stats", "--db", str(path)])
+        assert result.exit_code == 1
+        assert "db migrate" in result.output
+
+    def test_collect_stats_is_read_only(self, v2_db: tuple[Path, dict[str, int]]) -> None:
+        path, _ = v2_db
+        before = path.read_bytes()
+        stats = collect_stats(Database(path, migrate=False))
+        assert stats.items_total == 4
+        assert path.read_bytes() == before
+        assert database_size(path) >= len(before)
+
+
+class TestExport:
+    def test_json_export_all(self, v2_db: tuple[Path, dict[str, int]], tmp_path: Path) -> None:
+        path, ids = v2_db
+        out = tmp_path / "out" / "items.json"
+        result = CliRunner().invoke(cli, ["db", "export", str(out), "--db", str(path)])
+        assert result.exit_code == 0, result.output
+        assert "Exported 4 item(s)" in result.output
+        data = json.loads(out.read_text(encoding="utf-8"))
+        assert [d["id"] for d in data] == [ids["python"], ids["pasta"], ids["cake"], ids["doc"]]
+        assert data[1]["labels"] == {"topics": ["food"]}
+
+    def test_csv_export_with_filters(self, v2_db: tuple[Path, dict[str, int]],
+                                     tmp_path: Path) -> None:
+        path, ids = v2_db
+        out = tmp_path / "posts.csv"
+        result = CliRunner().invoke(
+            cli, ["db", "export", str(out), "--db", str(path), "--source", "posts",
+                  "--label", "topics:food"],
+        )
+        assert result.exit_code == 0, result.output
+        rows = list(csv.DictReader(io.StringIO(out.read_text(encoding="utf-8"))))
+        assert [int(r["id"]) for r in rows] == [ids["pasta"], ids["cake"]]
+        assert rows[0]["tags"] == "#dinner #pasta"
+        assert rows[0]["labels"] == "topics:food"
+
+    @pytest.mark.parametrize(
+        ("args", "count"),
+        [
+            (["--source", "messages"], 2),
+            (["--query", "pasta"], 3),
+            (["--tag", "dessert"], 1),
+            (["--limit", "2"], 2),
+            (["--from", "2024-03-01", "--to", "2024-03-31"], 2),
+        ],
+    )
+    def test_export_filters_and_limit(self, v2_db: tuple[Path, dict[str, int]],
+                                      tmp_path: Path, args: list[str], count: int) -> None:
+        path, _ = v2_db
+        out = tmp_path / "items.json"
+        result = CliRunner().invoke(cli, ["db", "export", str(out), "--db", str(path), *args])
+        assert result.exit_code == 0, result.output
+        assert len(json.loads(out.read_text(encoding="utf-8"))) == count
+
+    def test_export_to_stdout(self, v2_db: tuple[Path, dict[str, int]]) -> None:
+        path, _ = v2_db
+        result = CliRunner().invoke(
+            cli, ["db", "export", "-", "--format", "csv", "--db", str(path), "--limit", "1"]
+        )
+        assert result.exit_code == 0, result.output
+        lines = [line for line in result.output.splitlines() if line.strip()]
+        assert lines[0].startswith("id,source,external_id")
+        assert len(lines) == 2
+
+    def test_format_from_extension(self, v2_db: tuple[Path, dict[str, int]],
+                                   tmp_path: Path) -> None:
+        path, _ = v2_db
+        out = tmp_path / "x.csv"
+        result = CliRunner().invoke(cli, ["db", "export", str(out), "--db", str(path)])
         assert result.exit_code == 0
-        output_lower = result.output.lower()
-        assert "stats" in output_lower
-        assert "export" in output_lower
+        assert out.read_text(encoding="utf-8").startswith("id,source")
 
-    def test_db_stats_help(self) -> None:
-        """Test db stats --help displays help text."""
-        runner = CliRunner()
-        result = runner.invoke(cli, ["db", "stats", "--help"])
-
+    def test_empty_result(self, v2_db: tuple[Path, dict[str, int]], tmp_path: Path) -> None:
+        path, _ = v2_db
+        out = tmp_path / "none.json"
+        result = CliRunner().invoke(
+            cli, ["db", "export", str(out), "--db", str(path), "--query", "zzzz"]
+        )
         assert result.exit_code == 0
-        assert "stats" in result.output.lower()
-        assert "detailed" in result.output.lower()
+        assert json.loads(out.read_text(encoding="utf-8")) == []
 
-    def test_db_export_help(self) -> None:
-        """Test db export --help displays help text."""
-        runner = CliRunner()
-        result = runner.invoke(cli, ["db", "export", "--help"])
 
+class TestHelp:
+    @pytest.mark.parametrize("args", [["db"], ["db", "stats"], ["db", "export"], ["stats"]])
+    def test_help(self, args: list[str]) -> None:
+        result = CliRunner().invoke(cli, [*args, "--help"])
         assert result.exit_code == 0
-        output_lower = result.output.lower()
-        assert "export" in output_lower
-        assert "format" in output_lower
-        assert "json" in output_lower or "csv" in output_lower
-
-
-class TestStatsAlias:
-    """Test stats command as top-level alias."""
-
-    def test_stats_alias_works(self) -> None:
-        """Test that 'postparse stats' works as alias for 'postparse db stats'."""
-        runner = CliRunner()
-
-        with patch("postparse.cli.db.load_config") as mock_load:
-            with patch("postparse.cli.db.get_database") as mock_get_db:
-                mock_config = MagicMock()
-                mock_config.get.return_value = "data/test.db"
-                mock_load.return_value = mock_config
-
-                mock_db = MagicMock()
-                mock_db.get_instagram_posts.return_value = []
-                mock_db.get_telegram_messages.return_value = []
-                mock_get_db.return_value = mock_db
-
-                result = runner.invoke(cli, ["stats"])
-
-                # Should work same as db stats
-                assert result.exit_code == 0
-
+        assert "Usage" in result.output

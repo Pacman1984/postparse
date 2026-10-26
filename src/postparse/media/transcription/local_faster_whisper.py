@@ -207,6 +207,14 @@ class FasterWhisperBackend:
         with _models_lock:
             return _models.setdefault(key, (whisper, device, compute))[0]
 
+    def load(self) -> None:
+        """Load the model now (warm-up / ``postparse check transcription --load-model``).
+
+        Raises:
+            BackendUnavailable: faster-whisper is missing or the model cannot be loaded.
+        """
+        self._load()
+
     def _load(self, force_cpu: bool = False) -> Any:
         """Load (or reuse) the model, falling back to the CPU if CUDA fails."""
         if self._whisper is not None and not force_cpu:

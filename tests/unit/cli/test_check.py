@@ -1,922 +1,354 @@
-"""
-Unit tests for CLI check commands.
+"""Tests for `postparse check ...` (no network: collectors, ASR and LLM probes are faked)."""
 
-This module tests the check commands for examining new content
-available on Telegram and Instagram without downloading, as well
-as LLM provider availability checking.
-"""
+from __future__ import annotations
 
-from datetime import datetime
-from typing import Dict, List, Optional
-from unittest.mock import AsyncMock, MagicMock, patch
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from click.testing import CliRunner
 
+from postparse.cli import check as check_mod
 from postparse.cli.main import cli
+from postparse.collectors import InstagramAuthRequired, TelegramAuthRequired
+from postparse.config import Settings
+from postparse.llm.health import HealthResult
+from postparse.media.options import ApiAsrOptions, LocalAsrOptions, TranscriptionOptions
+
+
+@pytest.fixture
+def settings(tmp_path: Path) -> Settings:
+    return Settings(data_dir=tmp_path / "data")
+
+
+@pytest.fixture
+def no_network(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """Fail loudly if a collector would be created, fake LLM/ASR probes."""
+    calls: dict[str, Any] = {"telegram": 0, "instagram": 0}
+
+    def forbidden(name: str):
+        def factory(*args: Any, **kwargs: Any) -> Any:
+            calls[name] += 1
+            raise AssertionError(f"{name} collector created without --login")
+        return factory
+
+    monkeypatch.setattr(check_mod, "_make_telegram_collector", forbidden("telegram"))
+    monkeypatch.setattr(check_mod, "_make_instagram_collector", forbidden("instagram"))
+    monkeypatch.setattr(check_mod, "_resolve_model", lambda cfg, timeout: cfg)
+    monkeypatch.setattr(
+        check_mod, "_check_provider",
+        lambda cfg, chat, timeout: HealthResult(cfg.name, cfg.model, "available",
+                                                ["m1"], True, None, 12.0),
+    )
+    monkeypatch.setattr(check_mod, "_cuda_info", lambda: (0, []))
+    return calls
+
+
+# -- telegram / instagram (offline) ------------------------------------------------
+
+
+def test_telegram_status_without_credentials(settings: Settings) -> None:
+    result = check_mod.telegram_status(settings, env={})
+    assert result.status == "fail"
+    assert not result.configured
+    assert ("TELEGRAM_API_ID", "[red]missing[/red]") in result.rows
+
+
+def test_telegram_status_never_shows_values(settings: Settings) -> None:
+    env = {"TELEGRAM_API_ID": "12345", "TELEGRAM_API_HASH": "secret-hash"}
+    result = check_mod.telegram_status(settings, env=env)
+    assert result.status == "warn"  # no session file yet
+    text = " ".join(f"{k} {v}" for k, v in result.rows)
+    assert "12345" not in text and "secret-hash" not in text
+    assert str(settings.sessions_dir / "telegram.session") in text
+
+
+def test_telegram_status_ok_with_session(settings: Settings) -> None:
+    assert settings.sessions_dir is not None
+    settings.sessions_dir.mkdir(parents=True)
+    (settings.sessions_dir / "telegram.session").write_bytes(b"x" * 10)
+    env = {"TELEGRAM_API_ID": "1", "TELEGRAM_API_HASH": "h"}
+    result = check_mod.telegram_status(settings, env=env)
+    assert result.status == "ok"
+
+
+def test_telegram_legacy_session_is_reported(settings: Settings) -> None:
+    legacy = settings.data_dir / "cache" / "telegram_session.session"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_bytes(b"x")
+    result = check_mod.telegram_status(settings, env={"TELEGRAM_API_ID": "1",
+                                                      "TELEGRAM_API_HASH": "h"})
+    assert result.status == "ok"
+    assert str(legacy) in result.rows[0][1]
+
+
+def test_instagram_status_variants(settings: Settings) -> None:
+    assert check_mod.instagram_status(settings, env={}).status == "fail"
+    no_session = check_mod.instagram_status(
+        settings, env={"INSTAGRAM_USERNAME": "me", "INSTAGRAM_PASSWORD": "pw"}
+    )
+    assert no_session.status == "warn"
+    assert "pw" not in " ".join(v for _, v in no_session.rows)
+    assert check_mod.instagram_status(settings, env={"INSTAGRAM_USERNAME": "me"}).status == "fail"
+    assert settings.sessions_dir is not None
+    settings.sessions_dir.mkdir(parents=True)
+    (settings.sessions_dir / "instagram_me").write_bytes(b"s")
+    ok = check_mod.instagram_status(settings, env={}, username="me")
+    assert ok.status == "ok"
+
+
+def test_check_telegram_command_makes_no_network_call(
+    no_network: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TELEGRAM_API_ID", "1")
+    monkeypatch.setenv("TELEGRAM_API_HASH", "h")
+    result = CliRunner().invoke(cli, ["check", "telegram"])
+    assert result.exit_code == 0, result.output
+    assert "TELEGRAM_API_HASH" in result.output
+    assert no_network["telegram"] == 0
+
+
+def test_check_telegram_fails_without_credentials(no_network: dict[str, Any]) -> None:
+    result = CliRunner().invoke(cli, ["check", "telegram", "--login"])
+    assert result.exit_code == 1
+    assert no_network["telegram"] == 0  # --login is not attempted without credentials
 
 
-@pytest.fixture(autouse=True)
-def passthrough_resolve_provider_model():
-    """Keep mocked provider configs unchanged during check CLI tests."""
-    with patch(
-        "postparse.llm.model_discovery.resolve_provider_model",
-        side_effect=lambda cfg: cfg,
-    ):
-        yield
-
-
-class TestCheckTelegram:
-    """Test check telegram command."""
-
-    def test_check_telegram_requires_credentials(self) -> None:
-        """
-        Test that check telegram validates credentials properly.
-
-        Verifies that missing credentials are handled with proper error.
-        """
-        runner = CliRunner()
-
-        with patch("postparse.cli.check.validate_credentials") as mock_validate:
-            # Simulate missing credentials
-            mock_validate.return_value = ["api_id", "api_hash"]
-
-            result = runner.invoke(
-                cli,
-                ["check", "telegram", "--api-id", "", "--api-hash", ""],
-            )
-
-            # Should handle missing credentials
-            assert result.exit_code != 0 or "missing" in result.output.lower()
-
-    def test_check_telegram_with_valid_credentials(self) -> None:
-        """
-        Test check telegram with valid credentials.
-        
-        This test mocks only external boundaries (parser, database) and lets
-        the actual check logic execute to compute real statistics.
-        """
-        runner = CliRunner()
-
-        with patch("postparse.cli.check.load_config") as mock_load:
-            with patch("postparse.cli.check.get_database") as mock_get_db:
-                with patch("postparse.services.parsers.telegram.telegram_parser.TelegramParser") as mock_parser_class:
-                    mock_config = MagicMock()
-                    mock_load.return_value = mock_config
-
-                    mock_db = MagicMock()
-                    mock_db.get_telegram_messages.return_value = []
-                    mock_db.message_exists.return_value = False
-                    mock_get_db.return_value = mock_db
-
-                    # Mock parser with async context manager
-                    mock_parser = MagicMock()
-                    mock_parser.__aenter__ = AsyncMock(return_value=mock_parser)
-                    mock_parser.__aexit__ = AsyncMock(return_value=None)
-                    
-                    async def mock_get_saved_messages(*args, **kwargs):
-                        for i in range(5):
-                            yield {
-                                "message_id": i,
-                                "date": "2024-01-15T10:00:00Z",
-                                "text": f"Message {i}",
-                            }
-                    
-                    mock_parser.get_saved_messages = mock_get_saved_messages
-                    mock_parser_class.return_value = mock_parser
-
-                    # Let run_async execute the real check logic
-                    # It will use the mocked parser data and compute real statistics
-
-                    result = runner.invoke(
-                        cli,
-                        [
-                            "check",
-                            "telegram",
-                            "--api-id",
-                            "12345",
-                            "--api-hash",
-                            "abc123",
-                        ],
-                    )
-
-                    assert result.exit_code == 0
-                    # Verify actual statistics were computed and displayed
-                    assert "5" in result.output or "new" in result.output.lower()
-                    # Verify connection success message
-                    assert "connected" in result.output.lower() or "telegram" in result.output.lower()
-
-    def test_check_telegram_displays_statistics(self) -> None:
-        """
-        Test that check telegram displays message statistics.
-        
-        Verifies that the command computes and displays statistics based on
-        real data from mocked parser (not pre-computed mock results).
-        """
-        runner = CliRunner()
-
-        with patch("postparse.cli.check.load_config") as mock_load:
-            with patch("postparse.cli.check.get_database") as mock_get_db:
-                with patch("postparse.services.parsers.telegram.telegram_parser.TelegramParser") as mock_parser_class:
-                    mock_config = MagicMock()
-                    mock_load.return_value = mock_config
-
-                    mock_db = MagicMock()
-                    mock_db.get_telegram_messages.return_value = [
-                        {"date": "2024-01-10T10:00:00Z"}
-                    ]
-                    mock_db.message_exists.return_value = False
-                    mock_get_db.return_value = mock_db
-
-                    # Mock parser to yield 10 messages
-                    mock_parser = MagicMock()
-                    mock_parser.__aenter__ = AsyncMock(return_value=mock_parser)
-                    mock_parser.__aexit__ = AsyncMock(return_value=None)
-                    
-                    async def mock_get_saved_messages(*args, **kwargs):
-                        for i in range(10):
-                            yield {
-                                "message_id": i,
-                                "date": "2024-01-15T10:00:00Z",
-                                "text": f"Message {i}",
-                            }
-                    
-                    mock_parser.get_saved_messages = mock_get_saved_messages
-                    mock_parser_class.return_value = mock_parser
-
-                    # Let the command compute statistics from the mocked messages
-                    result = runner.invoke(
-                        cli,
-                        [
-                            "check",
-                            "telegram",
-                            "--api-id",
-                            "12345",
-                            "--api-hash",
-                            "abc123",
-                        ],
-                    )
-
-                    assert result.exit_code == 0
-                    # Verify statistics are displayed (command should count the 10 messages)
-                    assert "10" in result.output or "new" in result.output.lower()
-                    # Verify status information is shown
-                    assert "telegram" in result.output.lower() or "message" in result.output.lower()
-
-    def test_check_telegram_handles_connection_error(self) -> None:
-        """Test that check telegram handles connection errors."""
-        runner = CliRunner()
-
-        with patch("postparse.cli.check.load_config") as mock_load:
-            with patch("postparse.cli.check.get_database") as mock_get_db:
-                with patch("postparse.services.parsers.telegram.telegram_parser.TelegramParser") as mock_parser:
-                    mock_config = MagicMock()
-                    mock_load.return_value = mock_config
-
-                    mock_db = MagicMock()
-                    mock_get_db.return_value = mock_db
-
-                    mock_parser.side_effect = Exception("Connection failed")
-
-                    result = runner.invoke(
-                        cli,
-                        [
-                            "check",
-                            "telegram",
-                            "--api-id",
-                            "12345",
-                            "--api-hash",
-                            "abc123",
-                        ],
-                    )
-
-                    # Should handle error gracefully
-                    assert result.exit_code != 0
-
-
-class TestCheckInstagram:
-    """Test check instagram command."""
-
-    def test_check_instagram_requires_credentials(self) -> None:
-        """Test that check instagram validates username and password."""
-        runner = CliRunner()
-
-        with patch("postparse.cli.check.validate_credentials") as mock_validate:
-            # Simulate missing credentials
-            mock_validate.return_value = ["username", "password"]
-
-            result = runner.invoke(
-                cli,
-                ["check", "instagram", "--username", "", "--password", ""],
-            )
-
-            # Should handle missing credentials
-            assert result.exit_code != 0 or "missing" in result.output.lower()
-
-    def test_check_instagram_with_valid_credentials(self) -> None:
-        """Test check instagram with valid credentials."""
-        runner = CliRunner()
-
-        with patch("postparse.cli.check.load_config") as mock_load:
-            with patch("postparse.cli.check.get_database") as mock_get_db:
-                with patch("postparse.services.parsers.instagram.instagram_parser.InstaloaderParser") as mock_parser_class:
-                    mock_config = MagicMock()
-                    mock_load.return_value = mock_config
-
-                    mock_db = MagicMock()
-                    mock_db.get_instagram_posts.return_value = []
-                    mock_db.post_exists.return_value = False
-                    mock_get_db.return_value = mock_db
-
-                    mock_parser = MagicMock()
-                    
-                    def mock_get_saved_posts(*args, **kwargs):
-                        for i in range(5):
-                            yield {
-                                "shortcode": f"post{i}",
-                                "date": "2024-01-15T10:00:00Z",
-                                "caption": f"Post {i}",
-                            }
-                    
-                    mock_parser.get_saved_posts = mock_get_saved_posts
-                    mock_parser_class.return_value = mock_parser
-
-                    result = runner.invoke(
-                        cli,
-                        [
-                            "check",
-                            "instagram",
-                            "--username",
-                            "testuser",
-                            "--password",
-                            "testpass",
-                        ],
-                    )
-
-                    assert result.exit_code == 0
-
-    def test_check_instagram_displays_statistics(self) -> None:
-        """Test that check instagram displays post statistics."""
-        runner = CliRunner()
-
-        with patch("postparse.cli.check.load_config") as mock_load:
-            with patch("postparse.cli.check.get_database") as mock_get_db:
-                with patch("postparse.services.parsers.instagram.instagram_parser.InstaloaderParser") as mock_parser_class:
-                    mock_config = MagicMock()
-                    mock_load.return_value = mock_config
-
-                    mock_db = MagicMock()
-                    mock_db.get_instagram_posts.return_value = []
-                    mock_db.post_exists.return_value = False
-                    mock_get_db.return_value = mock_db
-
-                    mock_parser = MagicMock()
-                    
-                    def mock_get_saved_posts(*args, **kwargs):
-                        for i in range(8):
-                            yield {
-                                "shortcode": f"post{i}",
-                                "date": "2024-01-15T10:00:00Z",
-                            }
-                    
-                    mock_parser.get_saved_posts = mock_get_saved_posts
-                    mock_parser_class.return_value = mock_parser
-
-                    result = runner.invoke(
-                        cli,
-                        [
-                            "check",
-                            "instagram",
-                            "--username",
-                            "testuser",
-                            "--password",
-                            "testpass",
-                        ],
-                    )
-
-                    assert result.exit_code == 0
-                    # Should display count
-                    assert "8" in result.output or "new" in result.output.lower()
-
-
-class TestCheckAll:
-    """Test check all command."""
-
-    def _create_mock_llm_setup(self) -> tuple:
-        """Create mock LLM config and provider for tests.
-
-        Returns:
-            Tuple of (mock_llm_config, mock_provider_cfg).
-        """
-        mock_provider_cfg = MagicMock()
-        mock_provider_cfg.name = "lm_studio"
-        mock_provider_cfg.model = "test-model"
-        mock_provider_cfg.api_base = "http://localhost:1234/v1"
-        mock_provider_cfg.api_key = None
-
-        mock_llm_config = MagicMock()
-        mock_llm_config.providers = [mock_provider_cfg]
-        mock_llm_config.default_provider = "lm_studio"
-
-        return mock_llm_config, mock_provider_cfg
-
-    def _create_mock_telegram_parser(self) -> MagicMock:
-        """Create a mocked Telegram parser for check-all tests."""
-        mock_parser = MagicMock()
-        mock_parser.__aenter__ = AsyncMock(return_value=mock_parser)
-        mock_parser.__aexit__ = AsyncMock(return_value=None)
-
-        async def mock_get_saved_messages(*args, **kwargs):
-            for i in range(3):
-                yield {
-                    "message_id": i,
-                    "date": "2024-01-15T10:00:00Z",
-                    "text": f"Message {i}",
-                }
-
-        mock_parser.get_saved_messages = mock_get_saved_messages
-        return mock_parser
-
-    def _create_mock_instagram_parser(self) -> MagicMock:
-        """Create a mocked Instagram parser for check-all tests."""
-        mock_parser = MagicMock()
-
-        def mock_get_saved_posts(*args, **kwargs):
-            for i in range(3):
-                yield {
-                    "shortcode": f"post{i}",
-                    "date": "2024-01-15T10:00:00Z",
-                    "caption": f"Post {i}",
-                }
-
-        mock_parser.get_saved_posts = mock_get_saved_posts
-        return mock_parser
-
-    def test_check_all_with_no_credentials(self) -> None:
-        """Test check all when no credentials are provided."""
-        runner = CliRunner()
-
-        mock_llm_config, _ = self._create_mock_llm_setup()
-
-        with patch("postparse.cli.check.load_config") as mock_load:
-            with patch("postparse.cli.check.get_database") as mock_get_db:
-                with patch("postparse.core.utils.config.ConfigManager"):
-                    with patch("postparse.llm.config.LLMConfig") as mock_llm_cls:
-                        with patch("postparse.llm.health.check_provider") as mock_prov:
-                            with patch("postparse.cli.check.os.getenv", return_value=None):
-                                mock_config = MagicMock()
-                                mock_config.get.return_value = "data/test.db"
-                                mock_load.return_value = mock_config
-
-                                mock_db = MagicMock()
-                                mock_db.get_instagram_posts.return_value = []
-                                mock_db.get_telegram_messages.return_value = []
-                                mock_get_db.return_value = mock_db
-
-                                mock_llm_cls.from_config_manager.return_value = mock_llm_config
-                                mock_provider = MagicMock()
-                                mock_provider.ok = True
-                                mock_prov.return_value = mock_provider
-
-                                result = runner.invoke(cli, ["check", "all"])
-
-                                assert result.exit_code == 0
-                                # Should warn about missing credentials
-                                output_lower = result.output.lower()
-                                assert (
-                                    "skip" in output_lower
-                                    or "no credentials" in output_lower
-                                    or "credentials" in output_lower
-                                )
-
-    def test_check_all_checks_both_platforms(self) -> None:
-        """Test that check all attempts to check both platforms."""
-        runner = CliRunner()
-
-        mock_llm_config, _ = self._create_mock_llm_setup()
-
-        with patch("postparse.cli.check.load_config") as mock_load:
-            with patch("postparse.cli.check.get_database") as mock_get_db:
-                with patch("postparse.core.utils.config.ConfigManager"):
-                    with patch("postparse.llm.config.LLMConfig") as mock_llm_cls:
-                        with patch("postparse.llm.health.check_provider") as mock_prov:
-                            with patch(
-                                "postparse.services.parsers.telegram.telegram_parser.TelegramParser"
-                            ) as mock_tg_parser_class:
-                                with patch(
-                                    "postparse.services.parsers.instagram.instagram_parser.InstaloaderParser"
-                                ) as mock_ig_parser_class:
-                                    with patch("postparse.cli.check.os.getenv") as mock_getenv:
-                                        # Provide credentials for both platforms
-                                        mock_getenv.side_effect = lambda key: {
-                                            "TELEGRAM_API_ID": "12345",
-                                            "TELEGRAM_API_HASH": "abc123",
-                                            "INSTAGRAM_USERNAME": "testuser",
-                                            "INSTAGRAM_PASSWORD": "testpass",
-                                        }.get(key)
-
-                                        mock_config = MagicMock()
-                                        mock_config.get.return_value = "data/test.db"
-                                        mock_load.return_value = mock_config
-
-                                        mock_db = MagicMock()
-                                        mock_db.get_instagram_posts.return_value = []
-                                        mock_db.get_telegram_messages.return_value = []
-                                        mock_db.post_exists.return_value = False
-                                        mock_db.message_exists.return_value = False
-                                        mock_get_db.return_value = mock_db
-
-                                        mock_tg_parser_class.return_value = (
-                                            self._create_mock_telegram_parser()
-                                        )
-                                        mock_ig_parser_class.return_value = (
-                                            self._create_mock_instagram_parser()
-                                        )
-
-                                        mock_llm_cls.from_config_manager.return_value = mock_llm_config
-                                        mock_provider = MagicMock()
-                                        mock_provider.ok = True
-                                        mock_prov.return_value = mock_provider
-
-                                        result = runner.invoke(cli, ["check", "all"])
-
-                                        assert result.exit_code == 0
-                                        output_lower = result.output.lower()
-                                        assert "telegram" in output_lower
-                                        assert "instagram" in output_lower
-
-    def test_check_all_without_subcommand_defaults_to_all(self) -> None:
-        """Test that 'check' without subcommand defaults to 'check all'."""
-        runner = CliRunner()
-
-        mock_llm_config, _ = self._create_mock_llm_setup()
-
-        with patch("postparse.cli.check.load_config") as mock_load:
-            with patch("postparse.cli.check.get_database") as mock_get_db:
-                with patch("postparse.core.utils.config.ConfigManager"):
-                    with patch("postparse.llm.config.LLMConfig") as mock_llm_cls:
-                        with patch("postparse.llm.health.check_provider") as mock_prov:
-                            with patch("postparse.cli.check.os.getenv", return_value=None):
-                                mock_config = MagicMock()
-                                mock_config.get.return_value = "data/test.db"
-                                mock_load.return_value = mock_config
-
-                                mock_db = MagicMock()
-                                mock_db.get_instagram_posts.return_value = []
-                                mock_db.get_telegram_messages.return_value = []
-                                mock_get_db.return_value = mock_db
-
-                                mock_llm_cls.from_config_manager.return_value = mock_llm_config
-                                mock_provider = MagicMock()
-                                mock_provider.ok = True
-                                mock_prov.return_value = mock_provider
-
-                                result = runner.invoke(cli, ["check"])
-
-                                assert result.exit_code == 0
-                                # Should run 'all' by default
-                                output_lower = result.output.lower()
-                                assert "platform" in output_lower or "check" in output_lower
-
-
-class TestCheckLlm:
-    """Test check llm command for LLM provider availability."""
-
-    def _create_mock_provider_config(
-        self,
-        name: str = "lm_studio",
-        model: str = "test-model",
-        api_base: Optional[str] = "http://localhost:1234/v1",
-        api_key: Optional[str] = None,
-    ) -> MagicMock:
-        """Create a mock ProviderConfig for testing.
-
-        Args:
-            name: Provider name.
-            model: Model name.
-            api_base: API base URL.
-            api_key: Optional API key.
-
-        Returns:
-            MagicMock configured as ProviderConfig.
-        """
-        config = MagicMock()
-        config.name = name
-        config.model = model
-        config.api_base = api_base
-        config.api_key = api_key
-        return config
-
-    def _create_mock_llm_config(
-        self,
-        providers: List[MagicMock],
-        default_provider: str = "lm_studio",
-    ) -> MagicMock:
-        """Create a mock LLMConfig for testing.
-
-        Args:
-            providers: List of mock ProviderConfig objects.
-            default_provider: Name of the default provider.
-
-        Returns:
-            MagicMock configured as LLMConfig.
-        """
-        config = MagicMock()
-        config.providers = providers
-        config.default_provider = default_provider
-        return config
-
-    def test_check_llm_with_available_provider(self) -> None:
-        """Test check llm when a provider is available.
-
-        Verifies that an available LLM provider is correctly detected and
-        the classification ready message is displayed.
-        """
-        runner = CliRunner()
-
-        mock_provider_cfg = self._create_mock_provider_config(
-            name="lm_studio",
-            model="qwen/qwen3-vl-8b",
-            api_base="http://localhost:1234/v1",
-        )
-        mock_llm_config = self._create_mock_llm_config(
-            providers=[mock_provider_cfg],
-            default_provider="lm_studio",
-        )
-
-        with patch("postparse.core.utils.config.ConfigManager") as mock_config_mgr:
-            with patch("postparse.llm.config.LLMConfig") as mock_llm_config_class:
-                with patch("postparse.llm.health.check_provider") as mock_provider_class:
-                    mock_llm_config_class.from_config_manager.return_value = mock_llm_config
-
-                    mock_provider = MagicMock()
-                    mock_provider.ok = True
-                    mock_provider_class.return_value = mock_provider
-
-                    result = runner.invoke(cli, ["check", "llm"])
-
-                    assert result.exit_code == 0
-                    output_lower = result.output.lower()
-                    # Should show provider is available
-                    assert "available" in output_lower
-                    # Should show classification ready message
-                    assert "classification ready" in output_lower
-                    # Should mention the model
-                    assert "qwen" in output_lower or "lm studio" in output_lower
-
-    def test_check_llm_with_unavailable_provider(self) -> None:
-        """Test check llm when provider is not available.
-
-        Verifies that an unavailable provider (e.g., LM Studio not running)
-        is correctly detected and appropriate error message is shown.
-        """
-        runner = CliRunner()
-
-        mock_provider_cfg = self._create_mock_provider_config(
-            name="lm_studio",
-            model="test-model",
-            api_base="http://localhost:1234/v1",
-        )
-        mock_llm_config = self._create_mock_llm_config(
-            providers=[mock_provider_cfg],
-            default_provider="lm_studio",
-        )
-
-        with patch("postparse.core.utils.config.ConfigManager") as mock_config_mgr:
-            with patch("postparse.llm.config.LLMConfig") as mock_llm_config_class:
-                with patch("postparse.llm.health.check_provider") as mock_provider_class:
-                    mock_llm_config_class.from_config_manager.return_value = mock_llm_config
-
-                    mock_provider = MagicMock()
-                    mock_provider.ok = False
-                    mock_provider_class.return_value = mock_provider
-
-                    result = runner.invoke(cli, ["check", "llm"])
-
-                    assert result.exit_code == 0
-                    output_lower = result.output.lower()
-                    # Should indicate not running or unavailable
-                    assert (
-                        "not running" in output_lower
-                        or "unavailable" in output_lower
-                        or "not available" in output_lower
-                    )
-                    # Should show troubleshooting info
-                    assert "lm studio" in output_lower or "ollama" in output_lower
-
-    def test_check_llm_with_missing_api_key(self) -> None:
-        """Test check llm when cloud provider API key is missing.
-
-        Verifies that missing API keys for cloud providers (OpenAI, Anthropic)
-        are correctly detected without attempting connection.
-        """
-        runner = CliRunner()
-
-        mock_provider_cfg = self._create_mock_provider_config(
-            name="openai",
-            model="gpt-4o-mini",
-            api_base=None,  # Cloud provider, no custom endpoint
-            api_key=None,
-        )
-        mock_llm_config = self._create_mock_llm_config(
-            providers=[mock_provider_cfg],
-            default_provider="openai",
-        )
-
-        with patch("postparse.core.utils.config.ConfigManager") as mock_config_mgr:
-            with patch("postparse.llm.config.LLMConfig") as mock_llm_config_class:
-                with patch("postparse.llm.health.check_provider") as mock_provider_class:
-                    with patch.dict("os.environ", {}, clear=True):
-                        mock_llm_config_class.from_config_manager.return_value = mock_llm_config
-
-                        result = runner.invoke(cli, ["check", "llm"])
-
-                        assert result.exit_code == 0
-                        output_lower = result.output.lower()
-                        # Should indicate API key issue
-                        assert (
-                            "api_key" in output_lower
-                            or "api key" in output_lower
-                            or "openai_api_key" in output_lower
-                        )
-                        # Provider should not try to connect without API key
-                        mock_provider_class.assert_not_called()
-
-    def test_check_llm_with_multiple_providers(self) -> None:
-        """Test check llm with multiple providers configured.
-
-        Verifies that all configured providers are checked and displayed
-        in the output table.
-        """
-        runner = CliRunner()
-
-        providers = [
-            self._create_mock_provider_config(
-                name="lm_studio",
-                model="qwen/qwen3-vl-8b",
-                api_base="http://localhost:1234/v1",
-            ),
-            self._create_mock_provider_config(
-                name="ollama",
-                model="qwen3:14b",
-                api_base="http://localhost:11434",
-            ),
-        ]
-        mock_llm_config = self._create_mock_llm_config(
-            providers=providers,
-            default_provider="lm_studio",
-        )
-
-        with patch("postparse.core.utils.config.ConfigManager") as mock_config_mgr:
-            with patch("postparse.llm.config.LLMConfig") as mock_llm_config_class:
-                with patch("postparse.llm.health.check_provider") as mock_provider_class:
-                    mock_llm_config_class.from_config_manager.return_value = mock_llm_config
-
-                    # First provider available, second not
-                    mock_provider_available = MagicMock()
-                    mock_provider_available.ok = True
-
-                    mock_provider_unavailable = MagicMock()
-                    mock_provider_unavailable.ok = False
-
-                    mock_provider_class.side_effect = [
-                        mock_provider_available,
-                        mock_provider_unavailable,
-                    ]
-
-                    result = runner.invoke(cli, ["check", "llm"])
-
-                    assert result.exit_code == 0
-                    output_lower = result.output.lower()
-                    # Should mention both providers
-                    assert "lm_studio" in output_lower or "lm studio" in output_lower
-                    assert "ollama" in output_lower
-                    # Should show one available
-                    assert "available" in output_lower
-                    # Should use first available for classification
-                    assert "classification ready" in output_lower
-
-    def test_check_llm_verbose_flag(self) -> None:
-        """Test check llm with verbose flag.
-
-        Verifies that verbose mode shows progress information during checks.
-        """
-        runner = CliRunner()
-
-        mock_provider_cfg = self._create_mock_provider_config()
-        mock_llm_config = self._create_mock_llm_config(
-            providers=[mock_provider_cfg],
-        )
-
-        with patch("postparse.core.utils.config.ConfigManager") as mock_config_mgr:
-            with patch("postparse.llm.config.LLMConfig") as mock_llm_config_class:
-                with patch("postparse.llm.health.check_provider") as mock_provider_class:
-                    mock_llm_config_class.from_config_manager.return_value = mock_llm_config
-
-                    mock_provider = MagicMock()
-                    mock_provider.ok = True
-                    mock_provider_class.return_value = mock_provider
-
-                    result = runner.invoke(cli, ["check", "llm", "--verbose"])
-
-                    assert result.exit_code == 0
-                    # Verbose mode should show checking progress
-                    output_lower = result.output.lower()
-                    assert "checking" in output_lower or "llm" in output_lower
-
-    def test_check_llm_displays_default_provider_marker(self) -> None:
-        """Test that default provider is marked with asterisk.
-
-        Verifies that the default provider is visually distinguished in output.
-        """
-        runner = CliRunner()
-
-        providers = [
-            self._create_mock_provider_config(
-                name="lm_studio",
-                model="test-model",
-                api_base="http://localhost:1234/v1",
-            ),
-            self._create_mock_provider_config(
-                name="openai",
-                model="gpt-4o-mini",
-                api_base=None,
-                api_key="sk-test",
-            ),
-        ]
-        mock_llm_config = self._create_mock_llm_config(
-            providers=providers,
-            default_provider="lm_studio",
-        )
-
-        with patch("postparse.core.utils.config.ConfigManager") as mock_config_mgr:
-            with patch("postparse.llm.config.LLMConfig") as mock_llm_config_class:
-                with patch("postparse.llm.health.check_provider") as mock_provider_class:
-                    mock_llm_config_class.from_config_manager.return_value = mock_llm_config
-
-                    mock_provider = MagicMock()
-                    mock_provider.ok = True
-                    mock_provider_class.return_value = mock_provider
-
-                    result = runner.invoke(cli, ["check", "llm"])
-
-                    assert result.exit_code == 0
-                    # Default provider should have marker
-                    assert "*" in result.output or "default" in result.output.lower()
-
-
-class TestCheckAllWithLlm:
-    """Test check all command includes LLM status."""
-
-    def test_check_all_includes_llm_status(self) -> None:
-        """Test that check all command includes LLM provider status.
-
-        Verifies that running 'check all' also displays LLM availability.
-        """
-        runner = CliRunner()
-
-        mock_provider_cfg = MagicMock()
-        mock_provider_cfg.name = "lm_studio"
-        mock_provider_cfg.model = "test-model"
-        mock_provider_cfg.api_base = "http://localhost:1234/v1"
-        mock_provider_cfg.api_key = None
-
-        mock_llm_config = MagicMock()
-        mock_llm_config.providers = [mock_provider_cfg]
-        mock_llm_config.default_provider = "lm_studio"
-
-        with patch("postparse.cli.check.load_config") as mock_load:
-            with patch("postparse.cli.check.get_database") as mock_get_db:
-                with patch("postparse.core.utils.config.ConfigManager") as mock_config_mgr:
-                    with patch("postparse.llm.config.LLMConfig") as mock_llm_config_class:
-                        with patch("postparse.llm.health.check_provider") as mock_provider_class:
-                            with patch("postparse.cli.check.os.getenv", return_value=None):
-                                mock_config = MagicMock()
-                                mock_config.get.return_value = "data/test.db"
-                                mock_load.return_value = mock_config
-
-                                mock_db = MagicMock()
-                                mock_db.get_instagram_posts.return_value = []
-                                mock_db.get_telegram_messages.return_value = []
-                                mock_get_db.return_value = mock_db
-
-                                mock_llm_config_class.from_config_manager.return_value = (
-                                    mock_llm_config
-                                )
-
-                                mock_provider = MagicMock()
-                                mock_provider.ok = True
-                                mock_provider_class.return_value = mock_provider
-
-                                result = runner.invoke(cli, ["check", "all"])
-
-                                assert result.exit_code == 0
-                                output_lower = result.output.lower()
-                                # Should show LLM status
-                                assert (
-                                    "llm" in output_lower
-                                    or "classification" in output_lower
-                                    or "provider" in output_lower
-                                )
-
-    def test_check_all_shows_llm_not_available(self) -> None:
-        """Test that check all shows when no LLM providers are available.
-
-        Verifies proper messaging when LLM providers are down.
-        """
-        runner = CliRunner()
-
-        mock_provider_cfg = MagicMock()
-        mock_provider_cfg.name = "lm_studio"
-        mock_provider_cfg.model = "test-model"
-        mock_provider_cfg.api_base = "http://localhost:1234/v1"
-        mock_provider_cfg.api_key = None
-
-        mock_llm_config = MagicMock()
-        mock_llm_config.providers = [mock_provider_cfg]
-        mock_llm_config.default_provider = "lm_studio"
-
-        with patch("postparse.cli.check.load_config") as mock_load:
-            with patch("postparse.cli.check.get_database") as mock_get_db:
-                with patch("postparse.core.utils.config.ConfigManager") as mock_config_mgr:
-                    with patch("postparse.llm.config.LLMConfig") as mock_llm_config_class:
-                        with patch("postparse.llm.health.check_provider") as mock_provider_class:
-                            with patch("postparse.cli.check.os.getenv", return_value=None):
-                                mock_config = MagicMock()
-                                mock_config.get.return_value = "data/test.db"
-                                mock_load.return_value = mock_config
-
-                                mock_db = MagicMock()
-                                mock_db.get_instagram_posts.return_value = []
-                                mock_db.get_telegram_messages.return_value = []
-                                mock_get_db.return_value = mock_db
-
-                                mock_llm_config_class.from_config_manager.return_value = (
-                                    mock_llm_config
-                                )
-
-                                mock_provider = MagicMock()
-                                mock_provider.ok = False
-                                mock_provider_class.return_value = mock_provider
-
-                                result = runner.invoke(cli, ["check", "all"])
-
-                                assert result.exit_code == 0
-                                output_lower = result.output.lower()
-                                # Should indicate classification not available or show status
-                                assert (
-                                    "not available" in output_lower
-                                    or "not running" in output_lower
-                                    or "llm" in output_lower
-                                )
-
-
-class TestCheckHelp:
-    """Test check command help output."""
-
-    def test_check_help_displays_subcommands(self) -> None:
-        """Test that check --help shows available subcommands including llm."""
-        runner = CliRunner()
-        result = runner.invoke(cli, ["check", "--help"])
-
-        assert result.exit_code == 0
-        output_lower = result.output.lower()
-        assert "telegram" in output_lower
-        assert "instagram" in output_lower
-        assert "all" in output_lower
-        assert "llm" in output_lower
-
-    def test_check_telegram_help(self) -> None:
-        """Test check telegram --help displays help text."""
-        runner = CliRunner()
-        result = runner.invoke(cli, ["check", "telegram", "--help"])
-
-        assert result.exit_code == 0
-        output_lower = result.output.lower()
-        assert "telegram" in output_lower
-        assert "api-id" in output_lower or "api_id" in output_lower
-
-    def test_check_instagram_help(self) -> None:
-        """Test check instagram --help displays help text."""
-        runner = CliRunner()
-        result = runner.invoke(cli, ["check", "instagram", "--help"])
-
-        assert result.exit_code == 0
-        output_lower = result.output.lower()
-        assert "instagram" in output_lower
-        assert "username" in output_lower
-
-    def test_check_llm_help(self) -> None:
-        """Test check llm --help displays help text.
-
-        Verifies that the llm subcommand help describes provider checking.
-        """
-        runner = CliRunner()
-        result = runner.invoke(cli, ["check", "llm", "--help"])
-
-        assert result.exit_code == 0
-        output_lower = result.output.lower()
-        assert "llm" in output_lower
-        # Should mention classification or providers
-        assert "classification" in output_lower or "provider" in output_lower
+def test_check_instagram_command_offline(no_network: dict[str, Any],
+                                         monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INSTAGRAM_USERNAME", "me")
+    monkeypatch.setenv("INSTAGRAM_PASSWORD", "pw")
+    result = CliRunner().invoke(cli, ["check", "instagram"])
+    assert result.exit_code == 0, result.output
+    assert "instagram_me" in result.output
+    assert no_network["instagram"] == 0
 
+
+# -- --login with fake collectors -------------------------------------------------------
+
+
+class FakeTelegram:
+    def __init__(self, error: Exception | None = None) -> None:
+        self.error = error
+        self.session_path = "telegram.session"
+
+    async def __aenter__(self) -> FakeTelegram:
+        if self.error:
+            raise self.error
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        return None
+
+
+class FakeInstagram:
+    def __init__(self, error: Exception | None = None) -> None:
+        self.error = error
+        self.save_path = "instagram_me"
+
+    def __enter__(self) -> FakeInstagram:
+        if self.error:
+            raise self.error
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+
+@pytest.mark.parametrize(("error", "code"), [(None, 0), (TelegramAuthRequired("no"), 1)])
+def test_check_telegram_login(monkeypatch: pytest.MonkeyPatch, error: Exception | None,
+                              code: int) -> None:
+    monkeypatch.setenv("TELEGRAM_API_ID", "1")
+    monkeypatch.setenv("TELEGRAM_API_HASH", "h")
+    seen: list[Any] = []
+
+    def factory(settings: Settings, credentials: Any, config: Any, session: Any) -> Any:
+        seen.append(credentials)
+        return FakeTelegram(error)
+
+    monkeypatch.setattr(check_mod, "_make_telegram_collector", factory)
+    result = CliRunner().invoke(cli, ["check", "telegram", "--login"])
+    assert result.exit_code == code, result.output
+    assert seen[0].api_id == 1
+    assert ("authorized" in result.output) is (error is None)
+
+
+@pytest.mark.parametrize(("error", "code"), [(None, 0), (InstagramAuthRequired("2fa"), 1)])
+def test_check_instagram_login(monkeypatch: pytest.MonkeyPatch, error: Exception | None,
+                               code: int) -> None:
+    monkeypatch.setenv("INSTAGRAM_USERNAME", "me")
+    monkeypatch.setenv("INSTAGRAM_PASSWORD", "pw")
+    monkeypatch.setattr(check_mod, "_make_instagram_collector",
+                        lambda *a, **k: FakeInstagram(error))
+    result = CliRunner().invoke(cli, ["check", "instagram", "--login"])
+    assert result.exit_code == code, result.output
+
+
+# -- transcription --------------------------------------------------------------------
+
+
+def test_transcription_local_missing_faster_whisper(monkeypatch: pytest.MonkeyPatch) -> None:
+    import importlib.util
+
+    real = importlib.util.find_spec
+    monkeypatch.setattr(importlib.util, "find_spec",
+                        lambda name, *a: None if name == "faster_whisper" else real(name, *a))
+    result = check_mod.transcription_status(TranscriptionOptions())
+    assert result.status == "fail"
+    assert "faster-whisper" in result.summary
+
+
+def test_transcription_local_reports_cuda(monkeypatch: pytest.MonkeyPatch) -> None:
+    import importlib.util
+
+    real = importlib.util.find_spec
+    monkeypatch.setattr(importlib.util, "find_spec",
+                        lambda name, *a: object() if name == "faster_whisper" else real(name, *a))
+    monkeypatch.setattr(check_mod, "_cuda_info", lambda: (1, ["NVIDIA RTX, 8192 MiB"]))
+    loaded: list[Any] = []
+    monkeypatch.setattr(check_mod, "_load_local_model", lambda opts: loaded.append(opts))
+    result = check_mod.transcription_status(TranscriptionOptions())
+    assert result.status == "ok"
+    assert ("GPU", "NVIDIA RTX, 8192 MiB") in result.rows
+    assert loaded == []  # no model load without --load-model
+
+    monkeypatch.setattr(
+        check_mod, "_load_local_model",
+        lambda opts: SimpleNamespace(active_device="cuda", active_compute_type="int8_float16",
+                                     load_seconds=1.5),
+    )
+    loaded_result = check_mod.transcription_status(TranscriptionOptions(), load_model=True)
+    assert loaded_result.summary == "model loaded on cuda"
+
+
+def test_transcription_cuda_configured_but_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    import importlib.util
+
+    real = importlib.util.find_spec
+    monkeypatch.setattr(importlib.util, "find_spec",
+                        lambda name, *a: object() if name == "faster_whisper" else real(name, *a))
+    monkeypatch.setattr(check_mod, "_cuda_info", lambda: (0, []))
+    options = TranscriptionOptions(local=LocalAsrOptions(device="cuda"))
+    assert check_mod.transcription_status(options).status == "warn"
+
+
+def test_transcription_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    openai_opts = TranscriptionOptions(backend="api")
+    assert check_mod.transcription_status(openai_opts, env={}).status == "fail"
+
+    probes: list[tuple[str, Any]] = []
+
+    def probe(url: str, key: Any, timeout: float) -> tuple[bool, str]:
+        probes.append((url, key))
+        return True, "HTTP 200"
+
+    monkeypatch.setattr(check_mod, "_probe_endpoint", probe)
+    local = TranscriptionOptions(backend="api",
+                                 api=ApiAsrOptions(base_url="http://speaches.lan:8000/v1"))
+    result = check_mod.transcription_status(local, env={})
+    assert result.status == "ok"
+    assert probes == [("http://speaches.lan:8000/v1", None)]
+
+    monkeypatch.setattr(check_mod, "_probe_endpoint", lambda *a: (False, "ConnectError"))
+    assert check_mod.transcription_status(local, env={}).status == "fail"
+    monkeypatch.setattr(check_mod, "_probe_endpoint", lambda *a: (True, "HTTP 401"))
+    assert check_mod.transcription_status(local, env={}).status == "warn"
+
+
+# -- llm ---------------------------------------------------------------------------------
+
+
+def test_check_llm_all_available(no_network: dict[str, Any]) -> None:
+    result = CliRunner().invoke(cli, ["check", "llm"])
+    assert result.exit_code == 0, result.output
+    assert "3/3 provider(s) available" in result.output
+    assert "lm_studio *" in result.output
+
+
+def test_check_llm_default_unavailable_fails(no_network: dict[str, Any],
+                                             monkeypatch: pytest.MonkeyPatch) -> None:
+    def health(cfg: Any, chat: bool, timeout: float) -> HealthResult:
+        if cfg.name == "lm_studio":
+            return HealthResult(cfg.name, cfg.model, "unavailable", error="refused")
+        return HealthResult(cfg.name, cfg.model, "available", chat_ok=True, latency_ms=5.0)
+
+    monkeypatch.setattr(check_mod, "_check_provider", health)
+    result = CliRunner().invoke(cli, ["check", "llm"])
+    assert result.exit_code == 1
+    assert "lm_studio is not answering" in result.output
+
+
+def test_check_llm_other_unavailable_only_warns(no_network: dict[str, Any],
+                                                monkeypatch: pytest.MonkeyPatch) -> None:
+    def health(cfg: Any, chat: bool, timeout: float) -> HealthResult:
+        status = "available" if cfg.name == "lm_studio" else "no_api_key"
+        return HealthResult(cfg.name, cfg.model, status, chat_ok=status == "available")
+
+    monkeypatch.setattr(check_mod, "_check_provider", health)
+    result = CliRunner().invoke(cli, ["check", "llm"])
+    assert result.exit_code == 0, result.output
+
+
+def test_check_llm_discovered_model_and_provider_filter(
+    no_network: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(check_mod, "_resolve_model",
+                        lambda cfg, timeout: cfg.model_copy(update={"model": "served-7b"}))
+    result = CliRunner().invoke(cli, ["check", "llm", "--provider", "ollama"])
+    assert result.exit_code == 0, result.output
+    assert "served-7b (discovered)" in result.output
+    assert "1/1" in result.output
+    unknown = CliRunner().invoke(cli, ["check", "llm", "--provider", "nope"])
+    assert unknown.exit_code == 1
+
+
+# -- db / all --------------------------------------------------------------------------
+
+
+def test_check_db(v2_db: tuple[Path, dict[str, int]], tmp_path: Path) -> None:
+    path, _ = v2_db
+    ok = CliRunner().invoke(cli, ["check", "db", "--db", str(path)])
+    assert ok.exit_code == 0, ok.output
+    assert "check passed" in ok.output
+    assert "default_db_path" in ok.output  # legacy key in the test config is reported
+    missing = CliRunner().invoke(cli, ["check", "db", "--db", str(tmp_path / "x.db")])
+    assert missing.exit_code == 1
+
+
+def test_check_all_offline(no_network: dict[str, Any], v2_db: tuple[Path, dict[str, int]],
+                           monkeypatch: pytest.MonkeyPatch) -> None:
+    import importlib.util
+
+    real = importlib.util.find_spec
+    monkeypatch.setattr(importlib.util, "find_spec",
+                        lambda name, *a: object() if name == "faster_whisper" else real(name, *a))
+    path, _ = v2_db
+    result = CliRunner().invoke(cli, ["check", "all", "--db", str(path)])
+    assert result.exit_code == 0, result.output
+    assert "Summary" in result.output
+    assert "not configured" in result.output  # telegram / instagram skipped
+    assert no_network == {"telegram": 0, "instagram": 0}
+
+
+def test_check_all_fails_on_db_problem(no_network: dict[str, Any], tmp_path: Path) -> None:
+    result = CliRunner().invoke(cli, ["check", "all", "--skip-llm", "--db",
+                                      str(tmp_path / "missing.db")])
+    assert result.exit_code == 1
+    assert "Problems: db" in result.output
+
+
+def test_check_without_subcommand_runs_all(no_network: dict[str, Any],
+                                           monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[bool] = []
+    monkeypatch.setattr("postparse.cli.db.run_db_check", lambda *a: seen.append(True) or True)
+    result = CliRunner().invoke(cli, ["check"])
+    assert "Summary" in result.output
+    assert seen == [True]
+
+
+@pytest.mark.parametrize("sub", ["all", "db", "llm", "telegram", "instagram", "transcription"])
+def test_help(sub: str) -> None:
+    result = CliRunner().invoke(cli, ["check", sub, "--help"])
+    assert result.exit_code == 0
+    assert "Usage" in result.output

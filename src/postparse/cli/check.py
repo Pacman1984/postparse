@@ -1,895 +1,755 @@
-"""
-Check commands for PostParse CLI.
+"""Health checks: database, transcription backend, collector sessions and LLM providers.
 
-This module provides commands to check for new content without downloading it,
-as well as LLM provider availability status.
+- ``db``: same as ``postparse db check``
+- ``transcription``: ASR backend availability (no model download unless ``--load-model``)
+- ``telegram`` / ``instagram``: which session file would be used and whether
+  credentials are set (names only). Only ``--login`` contacts the service
+  (interactive prompts are allowed); the default makes no network call.
+- ``llm``: list models, discovered model, chat ping and latency per provider
+- ``all``: everything above (``--login`` passes through); also the default
+
+Exit codes: 0 ok (warnings allowed), 1 problems found.
 
 Example:
-    $ postparse check telegram
-    $ postparse check instagram
-    $ postparse check llm
+    $ postparse check
+    $ postparse check telegram --login
+    $ postparse check transcription --load-model
+    $ postparse check llm --provider llama_cpp
 """
 
+from __future__ import annotations
+
+import asyncio
+import logging
 import os
+import shutil
+import subprocess
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal
+
 import rich_click as click
+from rich.markup import escape
 from rich.table import Table
-from rich.panel import Panel
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
 
 from postparse.cli.utils import (
+    config_path_from_ctx,
     get_console,
-    load_config,
-    get_database,
-    print_success,
     print_error,
-    print_info,
+    print_success,
     print_warning,
-    run_async,
-    validate_credentials,
+    resolve_db_path,
 )
+
+if TYPE_CHECKING:
+    from postparse.config import Settings
+    from postparse.llm.config import ProviderConfig
+    from postparse.llm.health import HealthResult
+    from postparse.media.options import TranscriptionOptions
+
+logger = logging.getLogger(__name__)
+
+Status = Literal["ok", "warn", "fail", "skip"]
+
+_DB_OPTION_HELP = "Schema v2 database file (default: Settings.db_path)"
+_STYLE = {"ok": "green", "warn": "yellow", "fail": "red", "skip": "dim"}
+_ICON = {"ok": "✓", "warn": "⚠", "fail": "✗", "skip": "-"}
+
+
+@dataclass(slots=True)
+class CheckResult:
+    """Outcome of one check.
+
+    Attributes:
+        name: Check name (``telegram``, ``llm``, ...).
+        status: ``ok``, ``warn``, ``fail`` or ``skip``.
+        summary: One-line verdict.
+        rows: ``(key, value)`` detail rows (never secret values).
+        hints: Follow-up suggestions.
+        configured: For collector checks: any credential or session file exists.
+    """
+
+    name: str
+    status: Status = "ok"
+    summary: str = ""
+    rows: list[tuple[str, str]] = field(default_factory=list)
+    hints: list[str] = field(default_factory=list)
+    configured: bool = True
+
+    def worsen(self, status: Status) -> None:
+        """Lower the status to ``status`` if that is worse."""
+        order = {"skip": 0, "ok": 1, "warn": 2, "fail": 3}
+        if order[status] > order[self.status]:
+            self.status = status
+
+
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
+
+
+def _settings(ctx: click.Context) -> Settings:
+    from postparse.config import get_settings
+
+    return get_settings(config_path_from_ctx(ctx))
+
+
+def _config(ctx: click.Context) -> Any:
+    """Return the ``ConfigManager`` or ``None`` when no config file exists."""
+    from postparse.core.utils.config import ConfigManager
+
+    try:
+        return ConfigManager(config_path_from_ctx(ctx))
+    except FileNotFoundError:
+        return None
+
+
+def _is_set(env: Mapping[str, str], name: str) -> bool:
+    return bool((env.get(name) or "").strip())
+
+
+def _env_row(env: Mapping[str, str], name: str, *, required: bool) -> tuple[str, str]:
+    """Return a credential row showing only whether ``name`` is set."""
+    if _is_set(env, name):
+        return name, "[green]set[/green]"
+    return name, "[red]missing[/red]" if required else "[dim]not set (optional)[/dim]"
+
+
+def _file_row(path: Path) -> str:
+    """Describe a session file (existence, size, modification date)."""
+    if not path.exists():
+        return f"{escape(str(path))} [yellow](not found)[/yellow]"
+    stat = path.stat()
+    modified = datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M")
+    return f"{escape(str(path))} [green]({stat.st_size / 1024:.1f} KB, {modified})[/green]"
+
+
+def print_result(result: CheckResult) -> None:
+    """Print one check result as a table."""
+    console = get_console()
+    style = _STYLE[result.status]
+    table = Table(
+        title=f"[bold {style}]{_ICON[result.status]} {result.name}: {escape(result.summary)}"
+              f"[/bold {style}]",
+        show_header=False, title_justify="left", box=None, padding=(0, 2),
+    )
+    table.add_column("Key", style="cyan", no_wrap=True)
+    table.add_column("Value", overflow="fold")
+    for key, value in result.rows:
+        table.add_row(key, value)
+    console.print(table)
+    for hint in result.hints:
+        console.print(f"  [dim]→ {hint}[/dim]")
+    console.print()
+
+
+def _finish(ctx: click.Context, results: list[CheckResult]) -> None:
+    """Exit with 1 if any check failed."""
+    if any(result.status == "fail" for result in results):
+        ctx.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# Telegram / Instagram (no network unless --login)
+# ---------------------------------------------------------------------------
+
+
+def telegram_status(
+    settings: Settings, env: Mapping[str, str] | None = None, session: str | None = None
+) -> CheckResult:
+    """Describe the Telegram session file and credentials (no network).
+
+    Args:
+        settings: Application settings.
+        env: Environment (default ``os.environ``).
+        session: ``--session`` override.
+
+    Returns:
+        ``fail`` without API id/hash, ``warn`` without a session file.
+    """
+    from postparse.collectors.telegram import resolve_session_path
+
+    env = os.environ if env is None else env
+    result = CheckResult("telegram")
+    path = resolve_session_path(settings, session)
+    result.rows.append(("Session file", _file_row(path)))
+    for name, required in (("TELEGRAM_API_ID", True), ("TELEGRAM_API_HASH", True),
+                           ("TELEGRAM_PHONE", False)):
+        result.rows.append(_env_row(env, name, required=required))
+    missing = [n for n in ("TELEGRAM_API_ID", "TELEGRAM_API_HASH") if not _is_set(env, n)]
+    result.configured = path.exists() or len(missing) < 2
+    if missing:
+        result.worsen("fail")
+        result.summary = "credentials missing"
+        result.hints.append(f"Set {' and '.join(missing)} (e.g. in config/.env)")
+    elif not path.exists():
+        result.worsen("warn")
+        result.summary = "no session file yet"
+        result.hints.append("`postparse check telegram --login` (or the first extract) "
+                            "logs in interactively and creates it")
+    else:
+        result.summary = "session file and credentials present (not verified)"
+        result.hints.append("Verify the login with `postparse check telegram --login`")
+    return result
+
+
+def _make_telegram_collector(settings: Settings, credentials: Any, config: Any,
+                             session: str | None) -> Any:
+    """Create the Telegram collector used by ``--login`` (tests replace this)."""
+    from postparse.collectors.telegram import TelegramCollector, TelegramOptions
+    from postparse.core.db import Database
+
+    assert settings.db_path is not None
+    # The collector never touches the database while connecting; migrate=False
+    # keeps the handle inert.
+    return TelegramCollector(
+        Database(settings.db_path, migrate=False), settings, credentials,
+        TelegramOptions.from_config(config), interactive=True, session=session,
+    )
+
+
+def telegram_login(settings: Settings, config: Any, session: str | None) -> CheckResult:
+    """Connect to Telegram and verify the session (interactive login allowed)."""
+    from postparse.collectors import CollectorError, telegram_credentials
+
+    result = CheckResult("telegram login")
+    try:
+        collector = _make_telegram_collector(settings, telegram_credentials(), config, session)
+    except CollectorError as exc:
+        return CheckResult("telegram login", "fail", str(exc))
+
+    async def connect() -> None:
+        async with collector:
+            pass
+
+    try:
+        asyncio.run(connect())
+    except CollectorError as exc:
+        result.worsen("fail")
+        result.summary = str(exc)
+        return result
+    result.summary = "session is authorized"
+    result.rows.append(("Session file", _file_row(Path(collector.session_path))))
+    return result
+
+
+def instagram_status(
+    settings: Settings,
+    env: Mapping[str, str] | None = None,
+    username: str | None = None,
+    session: str | None = None,
+) -> CheckResult:
+    """Describe the Instagram session file and credentials (no network).
+
+    Args:
+        settings: Application settings.
+        env: Environment (default ``os.environ``).
+        username: ``--username`` override of ``INSTAGRAM_USERNAME``.
+        session: ``--session`` override (file path).
+
+    Returns:
+        ``fail`` without a username or without both session and password,
+        ``warn`` when only the password is available.
+    """
+    from postparse.collectors.instagram import resolve_session_path
+
+    env = os.environ if env is None else env
+    result = CheckResult("instagram")
+    user = (username or "").strip() or (env.get("INSTAGRAM_USERNAME") or "").strip()
+    result.rows.append(_env_row(env, "INSTAGRAM_USERNAME", required=not username))
+    result.rows.append(_env_row(env, "INSTAGRAM_PASSWORD", required=False))
+    has_password = _is_set(env, "INSTAGRAM_PASSWORD")
+    if not user:
+        assert settings.sessions_dir is not None
+        found = sorted(settings.sessions_dir.glob("instagram_*")) if session is None else []
+        for path in found:
+            result.rows.append(("Session file found", _file_row(path)))
+        result.configured = bool(found) or has_password
+        result.worsen("fail")
+        result.summary = "INSTAGRAM_USERNAME not set"
+        result.hints.append("Set INSTAGRAM_USERNAME (or pass --username) to pick the session")
+        return result
+    load_path, save_path = resolve_session_path(settings, user, session)
+    result.rows.insert(0, ("Session file", _file_row(load_path)))
+    if save_path != load_path:
+        result.rows.insert(1, ("Saved to", escape(str(save_path))))
+    if load_path.exists():
+        result.summary = "session file present (not verified)"
+        result.hints.append("Verify the login with `postparse check instagram --login`")
+    elif has_password:
+        result.worsen("warn")
+        result.summary = "no session file; the next extract logs in with the password"
+    else:
+        result.worsen("fail")
+        result.summary = "no session file and INSTAGRAM_PASSWORD not set"
+        result.hints.append("Set INSTAGRAM_PASSWORD once and run `postparse check instagram "
+                            "--login` to create the session")
+    return result
+
+
+def _make_instagram_collector(settings: Settings, credentials: Any, config: Any,
+                              session: str | None) -> Any:
+    """Create the Instagram collector used by ``--login`` (tests replace this)."""
+    from postparse.collectors.instagram import InstagramCollector, InstagramOptions
+    from postparse.core.db import Database
+
+    assert settings.db_path is not None
+    return InstagramCollector(
+        Database(settings.db_path, migrate=False), settings, credentials,
+        InstagramOptions.from_config(config), interactive=True, session=session,
+    )
+
+
+def instagram_login(settings: Settings, config: Any, username: str | None,
+                    session: str | None) -> CheckResult:
+    """Load the Instagram session (or log in) and save it."""
+    from postparse.collectors import CollectorError, instagram_credentials
+
+    result = CheckResult("instagram login")
+    try:
+        credentials = instagram_credentials(username=username)
+        collector = _make_instagram_collector(settings, credentials, config, session)
+        with collector:
+            pass
+    except CollectorError as exc:
+        result.worsen("fail")
+        result.summary = str(exc)
+        return result
+    result.summary = "session is valid"
+    result.rows.append(("Session file", _file_row(Path(collector.save_path))))
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Transcription
+# ---------------------------------------------------------------------------
+
+
+def _module_version(name: str) -> str | None:
+    """Return the installed distribution version, or ``None``."""
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version(name)
+    except PackageNotFoundError:
+        return None
+
+
+def _cuda_info() -> tuple[int, list[str]]:
+    """Return ``(CUDA devices usable by CTranslate2, GPU names from nvidia-smi)``."""
+    import importlib.util
+
+    count = 0
+    if importlib.util.find_spec("ctranslate2") is not None:
+        from postparse.media.transcription.local_faster_whisper import register_cuda_dlls
+
+        register_cuda_dlls()
+        try:
+            import ctranslate2
+
+            count = int(ctranslate2.get_cuda_device_count())
+        except Exception:  # noqa: BLE001 - driver problems mean "no CUDA"
+            logger.debug("CUDA device query failed", exc_info=True)
+    names: list[str] = []
+    smi = shutil.which("nvidia-smi")
+    if smi:
+        try:
+            completed = subprocess.run(
+                [smi, "--query-gpu=name,memory.total", "--format=csv,noheader"],
+                capture_output=True, text=True, timeout=10, check=False,
+            )
+            names = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
+        except (OSError, subprocess.SubprocessError):
+            logger.debug("nvidia-smi failed", exc_info=True)
+    return count, names
+
+
+def _probe_endpoint(base_url: str, api_key: str | None, timeout: float) -> tuple[bool, str]:
+    """GET ``<base_url>/models``; any HTTP answer counts as reachable."""
+    import httpx
+
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    try:
+        response = httpx.get(base_url.rstrip("/") + "/models", headers=headers, timeout=timeout)
+    except httpx.HTTPError as exc:
+        return False, type(exc).__name__
+    return True, f"HTTP {response.status_code}"
+
+
+def _load_local_model(options: TranscriptionOptions) -> Any:
+    """Build the local backend and load its model (tests replace this)."""
+    from postparse.media.transcription import build_backend
+
+    backend = build_backend(options, "local")
+    backend.load()
+    return backend
+
+
+def transcription_status(
+    options: TranscriptionOptions,
+    *,
+    backend: str | None = None,
+    load_model: bool = False,
+    env: Mapping[str, str] | None = None,
+    timeout: float = 5.0,
+) -> CheckResult:
+    """Check the configured (or requested) ASR backend.
+
+    Args:
+        options: ``[transcription]`` options.
+        backend: ``local`` / ``api`` overriding ``options.backend``.
+        load_model: Load the faster-whisper model (may download it).
+        env: Environment for the API key lookup.
+        timeout: HTTP timeout of the API reachability probe.
+
+    Returns:
+        Check result.
+    """
+    import importlib.util
+
+    env = os.environ if env is None else env
+    kind = backend or options.backend
+    result = CheckResult("transcription")
+    result.rows.append(("Backend", kind))
+    if kind == "local":
+        local = options.local
+        result.rows.append(("Model / device / compute",
+                            f"{local.model} / {local.device} / {local.compute_type}"))
+        fw_version = _module_version("faster-whisper")
+        if importlib.util.find_spec("faster_whisper") is None:
+            result.rows.append(("faster-whisper", "[red]not installed[/red]"))
+            result.worsen("fail")
+            result.summary = "faster-whisper is not installed"
+            result.hints.append("uv sync --extra asr")
+            return result
+        result.rows.append(("faster-whisper", fw_version or "installed"))
+        result.rows.append(("ctranslate2", _module_version("ctranslate2") or "-"))
+        count, names = _cuda_info()
+        result.rows.append(("CUDA devices", str(count)))
+        for name in names:
+            result.rows.append(("GPU", escape(name)))
+        if count == 0 and local.device == "cuda":
+            result.worsen("warn")
+            result.summary = "device = cuda but no CUDA device found"
+        else:
+            result.summary = f"faster-whisper ready ({'cuda' if count else 'cpu'})"
+        if load_model:
+            try:
+                loaded = _load_local_model(options)
+            except Exception as exc:  # noqa: BLE001 - report every load failure
+                result.worsen("fail")
+                result.summary = f"model load failed: {exc}"
+                return result
+            result.rows.append((
+                "Model loaded",
+                f"{loaded.active_device} / {loaded.active_compute_type} "
+                f"in {loaded.load_seconds:.1f}s",
+            ))
+            result.summary = f"model loaded on {loaded.active_device}"
+        else:
+            result.hints.append("--load-model loads (and if needed downloads) the model")
+        return result
+
+    api = options.api
+    base_url = api.base_url or "https://api.openai.com/v1"
+    result.rows.append(("Endpoint", escape(base_url)))
+    result.rows.append(("Model", api.model))
+    result.rows.append(_env_row(env, api.api_key_env, required=api.base_url is None))
+    key = (env.get(api.api_key_env) or "").strip() or None
+    if key is None and api.base_url is None:
+        result.worsen("fail")
+        result.summary = f"{api.api_key_env} not set"
+        return result
+    reachable, detail = _probe_endpoint(base_url, key, timeout)
+    result.rows.append(("Reachable", f"{'yes' if reachable else 'no'} ({detail})"))
+    if not reachable:
+        result.worsen("fail")
+        result.summary = "endpoint not reachable"
+    elif detail in ("HTTP 401", "HTTP 403"):
+        result.worsen("warn")
+        result.summary = "endpoint reachable but rejected the API key"
+    else:
+        result.summary = "endpoint reachable"
+    return result
+
+
+# ---------------------------------------------------------------------------
+# LLM providers
+# ---------------------------------------------------------------------------
+
+
+def _resolve_model(cfg: ProviderConfig, timeout: float) -> ProviderConfig:
+    """Return ``cfg`` with the served model of a local server (tests replace this)."""
+    from postparse.llm.model_discovery import resolve_provider_model
+
+    return resolve_provider_model(cfg, timeout=timeout)
+
+
+def _check_provider(cfg: ProviderConfig, *, chat: bool, timeout: float) -> HealthResult:
+    """Run the health check of one provider (tests replace this)."""
+    from postparse.llm.health import check_provider
+
+    return check_provider(cfg, chat=chat, timeout=timeout)
+
+
+def llm_status(config: Any, *, provider: str | None = None, chat: bool = True,
+               timeout: float = 10.0) -> CheckResult:
+    """Check configured LLM providers.
+
+    The result fails when the default (or the requested) provider does not
+    answer; other unavailable providers only warn.
+    """
+    from postparse.llm.config import LLMConfig
+
+    result = CheckResult("llm")
+    if config is None:
+        return CheckResult("llm", "fail", "no config file found")
+    try:
+        llm_config = LLMConfig.from_config_manager(config)
+    except (ValueError, TypeError) as exc:
+        return CheckResult("llm", "fail", f"invalid [llm] config: {exc}")
+    providers = llm_config.providers
+    target = provider or llm_config.default_provider
+    if provider:
+        providers = [p for p in providers if p.name.lower() == provider.lower()]
+        if not providers:
+            names = ", ".join(p.name for p in llm_config.providers)
+            return CheckResult("llm", "fail", f"provider {provider!r} not configured ({names})")
+
+    available = 0
+    for cfg in providers:
+        resolved = _resolve_model(cfg, min(timeout, 5.0))
+        health = _check_provider(resolved, chat=chat, timeout=timeout)
+        is_target = cfg.name.lower() == target.lower()
+        label = cfg.name + (" *" if cfg.name.lower() == llm_config.default_provider.lower()
+                            else "")
+        model = cfg.model if resolved.model == cfg.model else f"{resolved.model} (discovered)"
+        parts = [f"[green]{health.status}[/green]" if health.ok
+                 else f"[red]{health.status}[/red]"]
+        if health.latency_ms is not None:
+            parts.append(f"{health.latency_ms:.0f} ms")
+        if health.models:
+            parts.append(f"{len(health.models)} model(s)")
+        if health.error and not health.ok:
+            parts.append(escape(health.error[:80]))
+        endpoint = escape(cfg.api_base or "(cloud)")
+        result.rows.append((label, f"{escape(model)} @ {endpoint} — " + ", ".join(parts)))
+        if health.ok:
+            available += 1
+        elif is_target:
+            result.worsen("fail")
+        else:
+            result.worsen("warn")
+    result.summary = f"{available}/{len(providers)} provider(s) available"
+    if result.status == "fail":
+        result.summary += f"; {target} is not answering"
+    result.hints.append("* = default provider")
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
 
 
 @click.group(invoke_without_command=True)
 @click.pass_context
-def check(ctx):
-    """
-    🔍 Check for new content without downloading.
-    
-    Runs 'check all' by default if no platform specified.
+def check(ctx: click.Context) -> None:
+    """🔍 Health checks (database, transcription, sessions, LLM providers).
+
+    Without a subcommand this runs `check all`. Only `--login` and `check llm`
+    talk to external services.
     """
     if ctx.invoked_subcommand is None:
-        # Default to checking all platforms
-        ctx.invoke(all_platforms)
+        ctx.invoke(all_checks)
+
+
+@check.command(name="db")
+@click.option("--db", "db_path", type=click.Path(dir_okay=False), help=_DB_OPTION_HELP)
+@click.pass_context
+def db_check(ctx: click.Context, db_path: str | None) -> None:
+    """🩺 Database integrity, schema version and search index (= `db check`)."""
+    from postparse.cli.db import run_db_check
+
+    if not run_db_check(resolve_db_path(ctx, db_path), config_path_from_ctx(ctx)):
+        ctx.exit(1)
 
 
 @check.command()
-@click.option(
-    '--api-id',
-    envvar='TELEGRAM_API_ID',
-    help='Telegram API ID',
-    required=True,
-)
-@click.option(
-    '--api-hash',
-    envvar='TELEGRAM_API_HASH',
-    help='Telegram API hash',
-    required=True,
-)
-@click.option(
-    '--phone',
-    envvar='TELEGRAM_PHONE',
-    help='Phone number',
-)
-@click.option(
-    '--session',
-    default='telegram_session',
-    help='Session file name',
-)
+@click.option("--session", help="Session name or file (default: Settings.sessions_dir)")
+@click.option("--login", is_flag=True,
+              help="Connect to Telegram and verify the session (may prompt for a code)")
 @click.pass_context
-def telegram(ctx, api_id, api_hash, phone, session):
-    """
-    Check for new Telegram messages.
-    
-    Connects to Telegram and checks what new messages are available
-    without downloading them. Shows latest message time and estimated
-    new message count.
-    
+def telegram(ctx: click.Context, session: str | None, login: bool) -> None:
+    """📱 Telegram session file and credentials (`--login` verifies online).
+
     Examples:
         postparse check telegram
-        
-        postparse check telegram --api-id 12345 --api-hash abc123
+        postparse check telegram --login
     """
-    console = get_console()
-    
-    try:
-        # Load config
-        config_path = ctx.obj.get('config')
-        config = load_config(config_path)
-        
-        # Get database
-        db = get_database(config)
-        
-        # Validate credentials
-        missing = validate_credentials(
-            ['api_id', 'api_hash'],
-            {'api_id': api_id, 'api_hash': api_hash}
-        )
-        if missing:
-            print_error(f"Missing required credentials: {', '.join(missing)}")
-            raise click.Abort()
-        
-        print_info("Connecting to Telegram...")
-        
-        # Import parser
-        from postparse.services.parsers.telegram.telegram_parser import (
-            TelegramParser
-        )
-        
-        # Create parser instance
-        parser = TelegramParser(
-            api_id=int(api_id),
-            api_hash=api_hash,
-            session_file=session,
-            phone=phone,
-        )
-        
-        # Define async check function
-        async def check_messages():
-            stats = {
-                'total_available': 0,
-                'new': 0,
-                'existing': 0,
-                'latest_date': None,
-            }
-            
-            # Use async context manager
-            async with parser:
-                print_success("Connected to Telegram!")
-                print_info("Quick check: sampling 20 newest messages...")
-                
-                # Check only 20 messages for quick estimate (much faster!)
-                count = 0
-                async for message_dict in parser.get_saved_messages(limit=20, db=None):
-                    stats['total_available'] += 1
-                    count += 1
-                    
-                    # Update latest date
-                    if message_dict.get('date') and not stats['latest_date']:
-                        stats['latest_date'] = message_dict['date']
-                    
-                    # Check if this message exists in database
-                    if db.message_exists(message_dict['message_id']):
-                        stats['existing'] += 1
-                    else:
-                        stats['new'] += 1
-                    
-                    # Stop at 20 for quick check
-                    if count >= 20:
-                        break
-            
-            return stats
-        
-        # Run check
-        stats = run_async(check_messages())
-        
-        # Get last sync info from database
-        messages = db.get_telegram_messages(limit=1)
-        last_sync = None
-        total_in_db = len(db.get_telegram_messages(limit=10000))
-        
-        if messages:
-            last_msg = messages[0]
-            if last_msg.get('date'):
-                try:
-                    last_sync = datetime.fromisoformat(last_msg['date'].replace('Z', '+00:00'))
-                except:
-                    pass
-        
-        # Display results
-        console.print()
-        
-        # Create info table
-        info_table = Table(show_header=False, box=None, padding=(0, 2))
-        info_table.add_column("Item", style="cyan", width=20)
-        info_table.add_column("Value", style="green")
-        
-        # Latest message info
-        if stats['latest_date']:
-            try:
-                latest_dt = datetime.fromisoformat(stats['latest_date'].replace('Z', '+00:00'))
-                time_ago = datetime.now(latest_dt.tzinfo) - latest_dt
-                
-                if time_ago.days > 0:
-                    time_str = f"{time_ago.days} day(s) ago"
-                elif time_ago.seconds >= 3600:
-                    time_str = f"{time_ago.seconds // 3600} hour(s) ago"
-                else:
-                    time_str = f"{time_ago.seconds // 60} minute(s) ago"
-                
-                info_table.add_row("Latest message", time_str)
-            except:
-                info_table.add_row("Latest message", "Unknown")
-        
-        # Last sync info
-        if last_sync:
-            sync_ago = datetime.now(last_sync.tzinfo) - last_sync
-            if sync_ago.days > 0:
-                sync_str = f"{sync_ago.days} day(s) ago"
-            elif sync_ago.seconds >= 3600:
-                sync_str = f"{sync_ago.seconds // 3600} hour(s) ago"
-            else:
-                sync_str = f"{sync_ago.seconds // 60} minute(s) ago"
-            info_table.add_row("Last sync", sync_str)
-        else:
-            info_table.add_row("Last sync", "Never")
-        
-        # Message counts
-        info_table.add_row("In database", f"{total_in_db:,} messages")
-        info_table.add_row("Sample size", f"{stats['total_available']} checked")
-        
-        # Calculate percentages
-        skipped = stats['total_available'] - stats['new']
-        if stats['total_available'] > 0:
-            new_percent = (stats['new'] / stats['total_available']) * 100
-            info_table.add_row("Already extracted", f"{skipped} ({100-new_percent:.0f}%)")
-        
-        # New messages estimate
-        if stats['new'] > 0:
-            info_table.add_row("New in sample", f"{stats['new']} ({new_percent:.0f}%)", style="bold yellow")
-            
-            # If all checked messages are new, there are likely more
-            if stats['new'] == stats['total_available'] and stats['total_available'] >= 15:
-                info_table.add_row("Estimate", "⚠ Likely many more!", style="bold yellow")
-                info_table.add_row("", "")
-                info_table.add_row("Action needed", "Extract all new messages", style="bold green")
-            else:
-                info_table.add_row("", "")
-                info_table.add_row("Action needed", f"Extract ~{stats['new']} new message(s)", style="bold green")
-        else:
-            info_table.add_row("New messages", "✓ Up to date", style="green")
-        
-        panel = Panel(
-            info_table,
-            title="[bold cyan]📱 Telegram Status[/bold cyan]",
-            border_style="cyan",
-            padding=(1, 2)
-        )
-        
-        console.print(panel)
-        console.print()
-        
-        # Recommendation
-        if stats['new'] > 0:
-            console.print()
-            if stats['new'] == stats['total_available'] and stats['total_available'] >= 15:
-                print_warning(f"All {stats['new']} checked messages are new! There are likely many more.")
-                print_info("Run without limit to extract all: [bold cyan]postparse extract telegram[/bold cyan]")
-            else:
-                print_success(f"Found {stats['new']} new message(s) in sample!")
-                print_info("To extract: [bold cyan]postparse extract telegram[/bold cyan]")
-        else:
-            console.print()
-            print_success("✓ All recent messages are already extracted!")
-        
-    except click.Abort:
-        pass
-    except Exception as e:
-        print_error(f"Check failed: {e}")
-        if ctx.obj.get('verbose'):
-            console.print_exception()
-        raise click.Abort()
+    settings = _settings(ctx)
+    results = [telegram_status(settings, session=session)]
+    print_result(results[0])
+    if login and results[0].status != "fail":
+        results.append(telegram_login(settings, _config(ctx), session))
+        print_result(results[-1])
+    _finish(ctx, results)
 
 
 @check.command()
-@click.option(
-    '--username',
-    envvar='INSTAGRAM_USERNAME',
-    help='Instagram username',
-    required=True,
-)
-@click.option(
-    '--password',
-    envvar='INSTAGRAM_PASSWORD',
-    help='Instagram password',
-    required=True,
-)
-@click.option(
-    '--session',
-    default='instagram_session',
-    help='Session file name',
-)
+@click.option("--username", help="Instagram username (default: INSTAGRAM_USERNAME)")
+@click.option("--session", help="Session file (default: <sessions_dir>/instagram_<username>)")
+@click.option("--login", is_flag=True,
+              help="Load the session or log in to Instagram (may prompt for a 2FA code)")
 @click.pass_context
-def instagram(ctx, username, password, session):
-    """
-    Check for new Instagram posts.
-    
-    Connects to Instagram and checks what new saved posts are available
-    without downloading them. Shows latest post time and estimated
-    new post count.
-    
+def instagram(ctx: click.Context, username: str | None, session: str | None,
+              login: bool) -> None:
+    """📸 Instagram session file and credentials (`--login` verifies online).
+
     Examples:
         postparse check instagram
-        
-        postparse check instagram --username myuser --password mypass
+        postparse check instagram --login
     """
-    console = get_console()
-    
+    settings = _settings(ctx)
+    results = [instagram_status(settings, username=username, session=session)]
+    print_result(results[0])
+    if login and results[0].status != "fail":
+        results.append(instagram_login(settings, _config(ctx), username, session))
+        print_result(results[-1])
+    _finish(ctx, results)
+
+
+def _transcription_options(ctx: click.Context) -> TranscriptionOptions:
+    from postparse.media.options import TranscriptionOptions
+
     try:
-        # Load config
-        config_path = ctx.obj.get('config')
-        config = load_config(config_path)
-        
-        # Get database
-        db = get_database(config)
-        
-        # Validate credentials
-        missing = validate_credentials(
-            ['username', 'password'],
-            {'username': username, 'password': password}
-        )
-        if missing:
-            print_error(f"Missing required credentials: {', '.join(missing)}")
-            raise click.Abort()
-        
-        print_info("Connecting to Instagram...")
-        
-        # Import parser
-        from postparse.services.parsers.instagram.instagram_parser import (
-            InstaloaderParser
-        )
-        
-        # Create parser instance
-        parser = InstaloaderParser(
-            username=username,
-            password=password,
-            session_file=session,
-        )
-        
-        print_success("Connected to Instagram!")
-        print_info("Quick check: sampling 20 newest posts...")
-        
-        stats = {
-            'total_available': 0,
-            'new': 0,
-            'existing': 0,
-            'latest_date': None,
-        }
-        
-        # Check first 20 posts to get an estimate (much faster!)
-        # Note: get_saved_posts with db parameter only yields NEW posts (skips existing)
-        # So we need to count differently
-        count = 0
-        for post_dict in parser.get_saved_posts(limit=20, db=None):  # Don't pass db to get all
-            count += 1
-            stats['total_available'] += 1
-            
-            # Update latest date
-            if post_dict.get('date') and not stats['latest_date']:
-                stats['latest_date'] = post_dict['date']
-            
-            # Check if this post exists in database
-            if db.post_exists(post_dict['shortcode']):
-                stats['existing'] += 1
-            else:
-                stats['new'] += 1
-            
-            # Stop at 20 for quick check
-            if count >= 20:
-                break
-        
-        # Get last sync info from database
-        posts = db.get_instagram_posts(limit=1)
-        last_sync = None
-        total_in_db = len(db.get_instagram_posts(limit=10000))
-        
-        if posts:
-            last_post = posts[0]
-            if last_post.get('date'):
-                try:
-                    last_sync = datetime.fromisoformat(last_post['date'].replace('Z', '+00:00'))
-                except:
-                    pass
-        
-        # Display results
-        console.print()
-        
-        # Create info table
-        info_table = Table(show_header=False, box=None, padding=(0, 2))
-        info_table.add_column("Item", style="cyan", width=20)
-        info_table.add_column("Value", style="green")
-        
-        # Latest post info
-        if stats['latest_date']:
-            try:
-                latest_dt = datetime.fromisoformat(stats['latest_date'].replace('Z', '+00:00'))
-                time_ago = datetime.now(latest_dt.tzinfo) - latest_dt
-                
-                if time_ago.days > 0:
-                    time_str = f"{time_ago.days} day(s) ago"
-                elif time_ago.seconds >= 3600:
-                    time_str = f"{time_ago.seconds // 3600} hour(s) ago"
-                else:
-                    time_str = f"{time_ago.seconds // 60} minute(s) ago"
-                
-                info_table.add_row("Latest post", time_str)
-            except:
-                info_table.add_row("Latest post", "Unknown")
-        
-        # Last sync info
-        if last_sync:
-            sync_ago = datetime.now(last_sync.tzinfo) - last_sync
-            if sync_ago.days > 0:
-                sync_str = f"{sync_ago.days} day(s) ago"
-            elif sync_ago.seconds >= 3600:
-                sync_str = f"{sync_ago.seconds // 3600} hour(s) ago"
-            else:
-                sync_str = f"{sync_ago.seconds // 60} minute(s) ago"
-            info_table.add_row("Last sync", sync_str)
-        else:
-            info_table.add_row("Last sync", "Never")
-        
-        # Post counts
-        info_table.add_row("In database", f"{total_in_db:,} posts")
-        info_table.add_row("Sample size", f"{stats['total_available']} checked")
-        
-        # Calculate percentages
-        if stats['total_available'] > 0:
-            new_percent = (stats['new'] / stats['total_available']) * 100
-            info_table.add_row("Already extracted", f"{stats['existing']} ({100-new_percent:.0f}%)")
-        
-        # New posts estimate
-        if stats['new'] > 0:
-            info_table.add_row("New in sample", f"{stats['new']} ({new_percent:.0f}%)", style="bold yellow")
-            
-            # If all checked posts are new, there are likely more
-            if stats['new'] == stats['total_available'] and stats['total_available'] >= 15:
-                info_table.add_row("Estimate", "⚠ Likely many more!", style="bold yellow")
-                info_table.add_row("", "")
-                info_table.add_row("Action needed", "Extract all new posts", style="bold green")
-            else:
-                info_table.add_row("", "")
-                info_table.add_row("Action needed", f"Extract ~{stats['new']} new post(s)", style="bold green")
-        else:
-            info_table.add_row("New posts", "✓ Up to date", style="green")
-        
-        panel = Panel(
-            info_table,
-            title="[bold cyan]📸 Instagram Status[/bold cyan]",
-            border_style="cyan",
-            padding=(1, 2)
-        )
-        
-        console.print(panel)
-        console.print()
-        
-        # Recommendation
-        if stats['new'] > 0:
-            console.print()
-            if stats['new'] == stats['total_available'] and stats['total_available'] >= 15:
-                print_warning(f"All {stats['new']} checked posts are new! There are likely many more.")
-                print_info("Run without limit to extract all: [bold cyan]postparse extract instagram[/bold cyan]")
-            else:
-                print_success(f"Found {stats['new']} new post(s) in sample!")
-                print_info("To extract: [bold cyan]postparse extract instagram[/bold cyan]")
-        else:
-            console.print()
-            print_success("✓ All recent posts are already extracted!")
-        
-    except click.Abort:
-        pass
-    except Exception as e:
-        print_error(f"Instagram check failed: {e}")
-        if ctx.obj.get('verbose'):
-            console.print_exception()
-        raise click.Abort()
-
-
-def _check_llm_providers(
-    config_path: Optional[str] = None,
-    verbose: bool = False,
-) -> Tuple[List[Dict], Optional[Dict]]:
-    """Check availability of all configured LLM providers.
-
-    Args:
-        config_path: Path to configuration file. If None, uses default.
-        verbose: Whether to show detailed output during checking.
-
-    Returns:
-        Tuple of (provider_statuses, ready_provider) where:
-        - provider_statuses: List of dicts with provider info and status
-        - ready_provider: Dict of first available provider, or None if none available
-
-    Examples:
-        >>> statuses, ready = _check_llm_providers()
-        >>> for s in statuses:
-        ...     print(f"{s['name']}: {s['status']}")
-    """
-    console = get_console()
-    
-    try:
-        from postparse.llm.config import LLMConfig
-        from postparse.llm.health import check_provider
-        from postparse.llm.model_discovery import is_self_hosted_url, resolve_provider_model
-        from postparse.core.utils.config import ConfigManager
-    except ImportError as e:
-        if verbose:
-            print_error(f"Failed to import LLM modules: {e}")
-        return [], None
-
-    # Load configuration
-    try:
-        config_manager = ConfigManager(config_path=config_path)
-        llm_config = LLMConfig.from_config_manager(config_manager)
-    except Exception as e:
-        if verbose:
-            print_error(f"Failed to load LLM config: {e}")
-        return [], None
-
-    provider_statuses: List[Dict] = []
-    ready_provider: Optional[Dict] = None
-    default_provider_name = llm_config.default_provider
-
-    # Check each configured provider
-    for provider_cfg in llm_config.providers:
-        resolved_cfg = resolve_provider_model(provider_cfg)
-        status_info: Dict = {
-            "name": resolved_cfg.name,
-            "model": resolved_cfg.model,
-            "configured_model": provider_cfg.model,
-            "api_base": resolved_cfg.api_base,
-            "is_default": resolved_cfg.name == default_provider_name,
-            "status": "unknown",
-            "status_detail": "",
-            "has_api_key": False,
-            "is_local": False,
-        }
-
-        # Determine if this is a self-hosted (localhost / LAN) or cloud provider
-        is_local = is_self_hosted_url(provider_cfg.api_base)
-        status_info["is_local"] = is_local
-
-        # Check API key status for cloud providers
-        if not is_local:
-            env_var_map = {
-                "openai": "OPENAI_API_KEY",
-                "anthropic": "ANTHROPIC_API_KEY",
-            }
-            env_var = env_var_map.get(provider_cfg.name.lower())
-            if env_var:
-                has_key = bool(os.getenv(env_var) or provider_cfg.api_key)
-                status_info["has_api_key"] = has_key
-                if not has_key:
-                    status_info["status"] = "no_api_key"
-                    status_info["status_detail"] = f"Set {env_var}"
-                    provider_statuses.append(status_info)
-                    continue
-            else:
-                # Unknown cloud provider, assume API key is needed
-                status_info["has_api_key"] = bool(provider_cfg.api_key)
-        else:
-            # Local providers don't need API keys (or use dummy)
-            status_info["has_api_key"] = True
-
-        # Try to check availability
-        if verbose:
-            print_info(f"Checking {provider_cfg.name}...")
-
-        try:
-            health = check_provider(resolved_cfg)
-
-            if health.ok:
-                status_info["status"] = "available"
-                status_info["status_detail"] = "Ready"
-                if isinstance(health.latency_ms, (int, float)):
-                    status_info["status_detail"] = f"Ready ({health.latency_ms:.0f} ms)"
-                # Track first available provider
-                if ready_provider is None:
-                    ready_provider = status_info.copy()
-            else:
-                status_info["status"] = "unavailable"
-                if health.status == "auth_error":
-                    status_info["status_detail"] = "Authentication failed"
-                elif health.status == "model_not_found":
-                    status_info["status_detail"] = "Model not found"
-                elif is_local:
-                    status_info["status_detail"] = "Not running"
-                else:
-                    status_info["status_detail"] = "Connection failed"
-        except Exception as e:
-            status_info["status"] = "error"
-            error_msg = str(e)
-            # Truncate long error messages
-            if len(error_msg) > 50:
-                error_msg = error_msg[:47] + "..."
-            status_info["status_detail"] = error_msg
-
-        provider_statuses.append(status_info)
-
-    return provider_statuses, ready_provider
-
-
-def _display_llm_status_panel(
-    provider_statuses: List[Dict],
-    ready_provider: Optional[Dict],
-    show_details: bool = True,
-) -> None:
-    """Display a rich panel with LLM provider status.
-
-    Args:
-        provider_statuses: List of provider status dicts from _check_llm_providers.
-        ready_provider: Dict of the ready provider, or None if none available.
-        show_details: Whether to show the detailed table (True) or summary only.
-
-    Examples:
-        >>> statuses, ready = _check_llm_providers()
-        >>> _display_llm_status_panel(statuses, ready)
-    """
-    console = get_console()
-
-    if not provider_statuses:
-        print_warning("No LLM providers configured. Check config/config.toml [llm] section.")
-        return
-
-    # Create status table
-    table = Table(show_header=True, header_style="bold cyan", padding=(0, 1))
-    table.add_column("Provider", style="cyan", width=12)
-    table.add_column("Model", style="dim", width=20)
-    table.add_column("Endpoint", style="dim", width=26)
-    table.add_column("Status", width=16)
-
-    for status in provider_statuses:
-        # Format provider name with default indicator
-        name = status["name"]
-        if status["is_default"]:
-            name = f"{name} *"
-
-        # Format endpoint
-        endpoint = status["api_base"] if status["api_base"] else "(cloud)"
-
-        # Format status with color
-        if status["status"] == "available":
-            status_str = "[bold green]✓ Available[/bold green]"
-        elif status["status"] == "unavailable":
-            status_str = f"[yellow]✗ {status['status_detail']}[/yellow]"
-        elif status["status"] == "no_api_key":
-            status_str = f"[red]✗ {status['status_detail']}[/red]"
-        else:
-            status_str = f"[red]✗ Error[/red]"
-
-        # Truncate model name if too long
-        model = status["model"]
-        if len(model) > 20:
-            model = model[:17] + "..."
-
-        # Truncate endpoint if too long
-        if endpoint and len(endpoint) > 26:
-            endpoint = endpoint[:23] + "..."
-
-        table.add_row(name, model, endpoint, status_str)
-
-    # Determine overall status
-    available_count = sum(1 for s in provider_statuses if s["status"] == "available")
-    total_count = len(provider_statuses)
-
-    if available_count > 0:
-        panel_title = f"[bold green]✓ LLM Status: {available_count}/{total_count} AVAILABLE[/bold green]"
-        panel_style = "green"
-    else:
-        panel_title = "[bold red]✗ LLM Status: NO PROVIDERS AVAILABLE[/bold red]"
-        panel_style = "red"
-
-    if show_details:
-        panel = Panel(
-            table,
-            title=panel_title,
-            border_style=panel_style,
-            padding=(1, 2),
-            subtitle="[dim]* = default provider[/dim]",
-        )
-        console.print(panel)
-        console.print()
-
-    # Show classification readiness summary
-    if ready_provider:
-        provider_name = ready_provider["name"].replace("_", " ").title()
-        model_name = ready_provider["model"]
-        print_success(
-            f"Classification ready: {provider_name} with {model_name}"
-        )
-    else:
-        print_error("Classification not available: No LLM providers responding")
-        console.print()
-        print_info("Troubleshooting:")
-        console.print("  • [cyan]LM Studio[/cyan]: Start local server in LM Studio app")
-        console.print("  • [cyan]Ollama[/cyan]: Run [dim]ollama serve[/dim] and load a model")
-        console.print("  • [cyan]OpenAI[/cyan]: Set [dim]OPENAI_API_KEY[/dim] environment variable")
-        console.print("  • [cyan]Anthropic[/cyan]: Set [dim]ANTHROPIC_API_KEY[/dim] environment variable")
+        return TranscriptionOptions.from_config(_config(ctx))
+    except ValueError as exc:
+        raise click.ClickException(f"Invalid [transcription] config: {exc}") from exc
 
 
 @check.command()
-@click.option(
-    '--verbose', '-v',
-    is_flag=True,
-    help='Show detailed checking progress',
-)
+@click.option("--backend", type=click.Choice(["local", "api"]),
+              help="Backend to check (default: transcription.backend)")
+@click.option("--load-model", is_flag=True,
+              help="Load the faster-whisper model (downloads it on first use)")
 @click.pass_context
-def llm(ctx, verbose):
-    """
-    🤖 Check LLM provider availability for classification.
+def transcription(ctx: click.Context, backend: str | None, load_model: bool) -> None:
+    """🎙️ Transcription backend: faster-whisper / CUDA, or API endpoint reachability.
 
-    Checks all configured LLM providers (LM Studio, Ollama, OpenAI, Anthropic)
-    and shows which are available for content classification.
+    Examples:
+        postparse check transcription
+        postparse check transcription --load-model
+        postparse check transcription --backend api
+    """
+    result = transcription_status(_transcription_options(ctx), backend=backend,
+                                  load_model=load_model)
+    print_result(result)
+    _finish(ctx, [result])
+
+
+@check.command()
+@click.option("--provider", help="Check only this provider (default: all configured)")
+@click.option("--no-chat", is_flag=True, help="Only list models, skip the chat ping")
+@click.option("--timeout", type=float, default=10.0, show_default=True,
+              help="Request timeout in seconds")
+@click.option("--verbose", "-v", is_flag=True, hidden=True, help="Accepted for compatibility")
+@click.pass_context
+def llm(ctx: click.Context, provider: str | None, no_chat: bool, timeout: float,
+        verbose: bool) -> None:
+    """🤖 LLM providers: model list, discovered model, chat ping and latency.
 
     Examples:
         postparse check llm
-
-        postparse check llm --verbose
+        postparse check llm --provider llama_cpp --timeout 30
     """
-    console = get_console()
-
-    console.print()
-    console.print("[bold cyan]🤖 Checking LLM Providers[/bold cyan]")
-    console.print()
-
-    config_path = ctx.obj.get('config') if ctx.obj else None
-    verbose_flag = verbose or (ctx.obj.get('verbose') if ctx.obj else False)
-
-    # Check all providers
-    provider_statuses, ready_provider = _check_llm_providers(
-        config_path=config_path,
-        verbose=verbose_flag,
-    )
-
-    # Display results
-    _display_llm_status_panel(provider_statuses, ready_provider, show_details=True)
-    console.print()
+    result = llm_status(_config(ctx), provider=provider, chat=not no_chat, timeout=timeout)
+    print_result(result)
+    _finish(ctx, [result])
 
 
-@check.command(name='all')
+def _not_configured(result: CheckResult) -> bool:
+    """True when a collector check failed only because nothing is set up."""
+    return result.status == "fail" and not result.configured
+
+
+@check.command(name="all")
+@click.option("--login", is_flag=True, help="Also verify Telegram/Instagram sessions online")
+@click.option("--skip-llm", is_flag=True, help="Skip the LLM provider check")
+@click.option("--db", "db_path", type=click.Path(dir_okay=False), help=_DB_OPTION_HELP)
 @click.pass_context
-def all_platforms(ctx):
-    """
-    Check all platforms for new content.
+def all_checks(ctx: click.Context, login: bool = False, skip_llm: bool = False,
+               db_path: str | None = None) -> None:
+    """✅ Run all checks (no Telegram/Instagram network calls without --login).
 
-    Checks both Telegram and Instagram. Skips platforms where
-    credentials are not provided. Also checks LLM provider availability.
+    Telegram / Instagram are reported as skipped when neither credentials nor
+    a session file exist.
 
     Examples:
-        postparse check all
-
-        postparse check  # Same as 'check all'
+        postparse check
+        postparse check all --login
     """
+    from postparse.cli.db import run_db_check
+
     console = get_console()
+    settings = _settings(ctx)
+    config = _config(ctx)
+    results: list[CheckResult] = []
 
+    console.print("[bold cyan]Database[/bold cyan]")
+    db_ok = run_db_check(resolve_db_path(ctx, db_path), config_path_from_ctx(ctx))
     console.print()
-    console.print("[bold cyan]🔍 Checking All Platforms[/bold cyan]")
-    console.print()
-
-    # Get credentials from environment
-    telegram_api_id = os.getenv('TELEGRAM_API_ID')
-    telegram_api_hash = os.getenv('TELEGRAM_API_HASH')
-    telegram_phone = os.getenv('TELEGRAM_PHONE')
-    telegram_session = 'telegram_session'
-
-    instagram_username = os.getenv('INSTAGRAM_USERNAME')
-    instagram_password = os.getenv('INSTAGRAM_PASSWORD')
-    instagram_session = 'instagram_session'
-
-    # Load config and check database first
-    config_path = ctx.obj.get('config')
-    config = load_config(config_path)
-    db = get_database(config)
-
-    # Get database info
-    db_path = (
-        config.get('database.path')
-        or config.get('database.default_db_path', default='data/postparse.db')
-    )
+    results.append(CheckResult("db", "ok" if db_ok else "fail",
+                               "passed" if db_ok else "problems found"))
 
     try:
-        posts = db.get_instagram_posts(limit=10000)
-        messages = db.get_telegram_messages(limit=10000)
-        total_posts = len(posts)
-        total_messages = len(messages)
-        total_items = total_posts + total_messages
+        from postparse.media.options import TranscriptionOptions
 
-        # Show database status
-        db_table = Table(show_header=False, box=None, padding=(0, 2))
-        db_table.add_column("Item", style="cyan", width=20)
-        db_table.add_column("Value", style="green")
+        options = TranscriptionOptions.from_config(config)
+        results.append(transcription_status(options))
+    except ValueError as exc:
+        results.append(CheckResult("transcription", "fail", f"invalid config: {exc}"))
+    print_result(results[-1])
 
-        db_table.add_row("Database location", str(db_path))
-        db_table.add_row("Instagram posts", f"{total_posts:,}")
-        db_table.add_row("Telegram messages", f"{total_messages:,}")
-        db_table.add_row("Total items", f"{total_items:,}")
+    tg = telegram_status(settings)
+    if _not_configured(tg):
+        tg.status, tg.summary = "skip", "not configured"
+    results.append(tg)
+    print_result(tg)
+    if login and tg.status in ("ok", "warn"):
+        results.append(telegram_login(settings, config, None))
+        print_result(results[-1])
 
-        if total_items == 0:
-            db_status = "empty"
-            db_style = "yellow"
-            db_icon = "⚠"
-        else:
-            db_status = "has data"
-            db_style = "green"
-            db_icon = "✓"
+    ig = instagram_status(settings)
+    if _not_configured(ig):
+        ig.status, ig.summary = "skip", "not configured"
+    results.append(ig)
+    print_result(ig)
+    if login and ig.status in ("ok", "warn"):
+        results.append(instagram_login(settings, config, None, None))
+        print_result(results[-1])
 
-        db_panel = Panel(
-            db_table,
-            title=f"[bold {db_style}]{db_icon} Database Status: {db_status.upper()}[/bold {db_style}]",
-            border_style=db_style,
-            padding=(1, 2)
-        )
+    if not skip_llm:
+        results.append(llm_status(config))
+        print_result(results[-1])
 
-        console.print(db_panel)
-        console.print()
-
-    except Exception as e:
-        print_warning(f"Could not read database: {e}")
-        console.print()
-
-    # Check LLM providers
-    print_info("Checking LLM providers...")
-    provider_statuses, ready_provider = _check_llm_providers(
-        config_path=config_path,
-        verbose=ctx.obj.get('verbose') if ctx.obj else False,
-    )
-    _display_llm_status_panel(provider_statuses, ready_provider, show_details=True)
-    console.print()
-
-    results = {
-        'telegram': {'checked': False, 'has_new': False, 'error': None},
-        'instagram': {'checked': False, 'has_new': False, 'error': None},
-    }
-
-    # Check Telegram if credentials provided
-    if telegram_api_id and telegram_api_hash:
-        print_info("Checking Telegram...")
-        try:
-            ctx.invoke(
-                telegram,
-                api_id=telegram_api_id,
-                api_hash=telegram_api_hash,
-                phone=telegram_phone,
-                session=telegram_session
-            )
-            results['telegram']['checked'] = True
-            results['telegram']['has_new'] = True  # Assume yes if no error
-        except Exception as e:
-            results['telegram']['error'] = str(e)
-            if ctx.obj.get('verbose'):
-                print_error(f"Telegram check failed: {e}")
+    summary = Table(title="Summary", show_header=True, header_style="bold cyan",
+                    title_justify="left")
+    summary.add_column("Check", style="cyan")
+    summary.add_column("Status")
+    summary.add_column("Details", overflow="fold")
+    for result in results:
+        style = _STYLE[result.status]
+        summary.add_row(result.name, f"[{style}]{_ICON[result.status]} {result.status}[/{style}]",
+                        escape(result.summary))
+    console.print(summary)
+    failed = [r.name for r in results if r.status == "fail"]
+    if failed:
+        print_error(f"Problems: {', '.join(failed)}")
+    elif any(r.status == "warn" for r in results):
+        print_warning("All checks passed with warnings")
     else:
-        print_warning("Skipping Telegram (no credentials). Set TELEGRAM_API_ID and TELEGRAM_API_HASH.")
-    
-    console.print()
-    
-    # Check Instagram if credentials provided
-    if instagram_username and instagram_password:
-        print_info("Checking Instagram...")
-        try:
-            ctx.invoke(
-                instagram,
-                username=instagram_username,
-                password=instagram_password,
-                session=instagram_session
-            )
-            results['instagram']['checked'] = True
-            results['instagram']['has_new'] = True  # Assume yes if no error
-        except Exception as e:
-            results['instagram']['error'] = str(e)
-            if ctx.obj.get('verbose'):
-                print_error(f"Instagram check failed: {e}")
-    else:
-        print_warning("Skipping Instagram (no credentials). Set INSTAGRAM_USERNAME and INSTAGRAM_PASSWORD.")
-    
-    # Summary
-    console.print()
-    console.print("[bold cyan]═══════════════════════════════[/bold cyan]")
-    
-    checked_count = sum(1 for r in results.values() if r['checked'])
-    
-    if checked_count == 0:
-        print_warning("No platforms checked. Please set credentials via environment variables.")
-        console.print()
-        console.print("  [dim]# Telegram[/dim]")
-        console.print("  export TELEGRAM_API_ID=12345678")
-        console.print("  export TELEGRAM_API_HASH=abc123def456")
-        console.print()
-        console.print("  [dim]# Instagram[/dim]")
-        console.print("  export INSTAGRAM_USERNAME=myuser")
-        console.print("  export INSTAGRAM_PASSWORD=mypass")
-    else:
-        print_success(f"Checked {checked_count} platform(s)")
-        
-        # Show next steps
-        has_new = any(r['has_new'] for r in results.values() if r['checked'])
-        if has_new:
-            console.print()
-            print_info("To extract new content:")
-            if results['telegram']['has_new']:
-                console.print("  [cyan]postparse extract telegram[/cyan]")
-            if results['instagram']['has_new']:
-                console.print("  [cyan]postparse extract instagram[/cyan]")
-    
-    console.print()
-
+        print_success("All checks passed")
+    _finish(ctx, results)

@@ -2,7 +2,7 @@
 Unit tests for CLI utility functions.
 
 This module tests the helper functions in the CLI utils module, including
-console output, config loading, database access, and async operations.
+console output, config loading, schema v2 database access and async operations.
 """
 
 from datetime import datetime
@@ -14,11 +14,13 @@ import pytest
 from rich.console import Console
 
 from postparse.cli.utils import (
+    config_path_from_ctx,
+    emit_json,
+    legacy_db_key_warning,
+    open_database,
+    resolve_db_path,
     create_progress,
-    format_message,
-    format_post,
     get_console,
-    get_database,
     load_config,
     parse_date,
     print_error,
@@ -29,7 +31,6 @@ from postparse.cli.utils import (
     print_warning,
     run_async,
     truncate_text,
-    validate_config,
     validate_credentials,
 )
 
@@ -198,180 +199,6 @@ path = "test.db"
 
             assert result is mock_config_instance
 
-    def test_validate_config_with_valid_config(self) -> None:
-        """Test config validation with valid configuration."""
-        with patch("postparse.cli.utils.load_config") as mock_load:
-            mock_config = MagicMock()
-            mock_config.get.side_effect = lambda key, default=None: {
-                "database.path": "data/test.db",
-                "database.default_db_path": "data/test.db",
-            }.get(key, default)
-            mock_config.get_section.return_value = {"providers": [{"name": "test"}]}
-            mock_load.return_value = mock_config
-
-            issues = validate_config()
-
-            # Should return empty list for valid config
-            assert isinstance(issues, list)
-
-    def test_validate_config_with_missing_database_path(self) -> None:
-        """Test config validation detects missing database path."""
-        with patch("postparse.cli.utils.load_config") as mock_load:
-            mock_config = MagicMock()
-            mock_config.get.return_value = None
-            mock_config.get_section.return_value = {"providers": []}
-            mock_load.return_value = mock_config
-
-            issues = validate_config()
-
-            assert isinstance(issues, list)
-            assert len(issues) > 0
-            # Check that database path issue is detected
-            assert any("Database path" in issue.get("check", "") for issue in issues)
-
-
-class TestDatabaseAccess:
-    """Test database access functions."""
-
-    def test_get_database_returns_instance(self) -> None:
-        """
-        Test that get_database returns SocialMediaDatabase instance.
-
-        Mocks the database class at the boundary to test that the function
-        correctly instantiates and returns a database object.
-        """
-        with patch("postparse.core.data.database.SocialMediaDatabase") as mock_db_class:
-            mock_config = MagicMock()
-            mock_config.get.return_value = "data/test.db"
-
-            mock_db_instance = MagicMock()
-            mock_db_class.return_value = mock_db_instance
-
-            result = get_database(mock_config)
-
-            mock_db_class.assert_called_once_with("data/test.db")
-            assert result is mock_db_instance
-
-    def test_get_database_with_default_path(self) -> None:
-        """Test that get_database uses default path when not configured."""
-        with patch("postparse.core.data.database.SocialMediaDatabase") as mock_db_class:
-            mock_config = MagicMock()
-            mock_config.get.side_effect = lambda key, default=None: {
-                "database.path": None,
-                "database.default_db_path": "data/postparse.db"
-            }.get(key, default)
-
-            mock_db_instance = MagicMock()
-            mock_db_class.return_value = mock_db_instance
-
-            result = get_database(mock_config)
-
-            # Should use default path
-            assert mock_db_class.called
-            call_args = mock_db_class.call_args[0][0]
-            assert "postparse.db" in call_args
-
-
-class TestFormatting:
-    """Test data formatting functions."""
-
-    def test_format_post_with_complete_data(self) -> None:
-        """
-        Test formatting Instagram post with all fields.
-
-        Uses real data structure to verify formatting logic works correctly.
-        """
-        post = {
-            "id": 123,
-            "owner_username": "testuser",
-            "caption": "This is a test post with a caption",
-            "content_type": "image",
-            "likes": 42,
-            "date": "2024-01-15T10:30:00Z",
-        }
-
-        result = format_post(post)
-
-        assert result["id"] == "123"
-        assert result["username"] == "testuser"
-        assert result["caption_preview"] == "This is a test post with a caption"
-        assert result["type"] == "image"
-        assert result["likes"] == "42"
-        assert result["date"] == "2024-01-15"
-
-    def test_format_post_truncates_long_caption(self) -> None:
-        """Test that format_post truncates long captions."""
-        post = {
-            "id": 123,
-            "caption": "A" * 100,  # Very long caption
-            "content_type": "image",
-            "likes": 10,
-            "date": "2024-01-15T10:30:00Z",
-        }
-
-        result = format_post(post)
-
-        assert len(result["caption_preview"]) == 53  # 50 + "..."
-        assert result["caption_preview"].endswith("...")
-
-    def test_format_post_handles_missing_fields(self) -> None:
-        """Test that format_post handles missing fields gracefully."""
-        post: Dict[str, Any] = {"id": 123}
-
-        result = format_post(post)
-
-        assert result["id"] == "123"
-        assert result["username"] == ""
-        assert result["caption_preview"] == ""
-        assert result["type"] == ""
-        assert result["likes"] == "0"
-        assert result["date"] == ""
-
-    def test_format_message_with_complete_data(self) -> None:
-        """Test formatting Telegram message with all fields."""
-        message = {
-            "id": 456,
-            "text": "This is a test message",
-            "media_type": "photo",
-            "views": 100,
-            "date": "2024-01-20T15:45:00Z",
-        }
-
-        result = format_message(message)
-
-        assert result["id"] == "456"
-        assert result["content_preview"] == "This is a test message"
-        assert result["type"] == "photo"
-        assert result["views"] == "100"
-        assert result["date"] == "2024-01-20"
-
-    def test_format_message_uses_caption_when_no_text(self) -> None:
-        """Test that format_message uses caption when text is absent."""
-        message = {
-            "id": 456,
-            "caption": "Photo caption",
-            "media_type": "photo",
-            "views": 50,
-        }
-
-        result = format_message(message)
-
-        assert result["content_preview"] == "Photo caption"
-
-    def test_format_message_truncates_long_content(self) -> None:
-        """Test that format_message truncates long content."""
-        message = {
-            "id": 456,
-            "text": "B" * 100,
-            "media_type": "text",
-            "views": 25,
-        }
-
-        result = format_message(message)
-
-        assert len(result["content_preview"]) == 53  # 50 + "..."
-        assert result["content_preview"].endswith("...")
-
 
 class TestUtilityFunctions:
     """Test utility helper functions."""
@@ -514,3 +341,66 @@ class TestAsyncOperations:
         # Progress should have console set
         assert hasattr(progress, "console")
 
+
+
+class TestDatabaseHelpers:
+    """Schema v2 database helpers (``--db`` / ``Settings.db_path``)."""
+
+    def test_config_path_from_ctx(self) -> None:
+        assert config_path_from_ctx(None) is None
+        assert config_path_from_ctx(Mock(obj={"config": "c.toml"})) == "c.toml"
+
+    def test_resolve_db_path_prefers_explicit_value(self, tmp_path: Path) -> None:
+        assert resolve_db_path(None, str(tmp_path / "x.db")) == (tmp_path / "x.db").resolve()
+
+    def test_resolve_db_path_uses_settings_not_legacy_key(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from postparse.config import clear_settings_cache
+
+        clear_settings_cache()
+        path = resolve_db_path(Mock(obj={}))
+        # The test config only has the v1 key default_db_path = data/social_media.db.
+        assert path.name == "postparse.db"
+        monkeypatch.setenv("POSTPARSE_DB_PATH", str(tmp_path / "env.db"))
+        clear_settings_cache()
+        assert resolve_db_path(Mock(obj={})) == tmp_path / "env.db"
+        clear_settings_cache()
+
+    def test_open_database_requires_existing_file(self, tmp_path: Path) -> None:
+        import click
+
+        with pytest.raises(click.ClickException, match="Database not found"):
+            open_database(None, str(tmp_path / "missing.db"))
+        assert not (tmp_path / "missing.db").exists()
+
+    def test_open_database_rejects_old_schema(self, tmp_path: Path) -> None:
+        import sqlite3
+
+        import click
+
+        path = tmp_path / "v0.db"
+        sqlite3.connect(path).close()
+        with pytest.raises(click.ClickException, match="db migrate"):
+            open_database(None, str(path))
+
+    def test_open_database_does_not_migrate(self, v2_db: tuple[Path, dict[str, int]]) -> None:
+        path, _ = v2_db
+        db = open_database(None, str(path))
+        assert db._migrate is False
+        with db.read() as conn:
+            assert conn.execute("SELECT count(*) FROM items").fetchone()[0] == 4
+
+    def test_legacy_db_key_warning(self, tmp_path: Path) -> None:
+        legacy = tmp_path / "legacy.toml"
+        legacy.write_text('[database]\ndefault_db_path = "data/social_media.db"\n')
+        warning = legacy_db_key_warning(str(legacy))
+        assert warning is not None and "migrate-v1" in warning
+        new = tmp_path / "new.toml"
+        new.write_text('[database]\ndefault_db_path = "a.db"\ndb_path = "b.db"\n')
+        assert legacy_db_key_warning(str(new)) is None
+        assert legacy_db_key_warning(str(tmp_path / "missing.toml")) is None
+
+    def test_emit_json(self, capsys: pytest.CaptureFixture) -> None:
+        emit_json({"a": "ä", "n": 1})
+        assert '"a": "ä"' in capsys.readouterr().out

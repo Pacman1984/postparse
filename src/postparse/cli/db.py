@@ -1,331 +1,288 @@
-"""
-Database commands for PostParse CLI.
+"""Database commands for the PostParse CLI (schema v2).
 
-This module provides commands for database operations and statistics.
+- ``stats``: counts per source/kind, tags, transcription queue, links,
+  classification coverage, summaries, size and schema version
+  (also available as the top-level ``postparse stats``)
+- ``export``: items as JSON or CSV with the search filters
+- ``migrate`` / ``check`` / ``reindex`` / ``migrate-v1``: maintenance
+
+The database is ``--db`` or ``Settings.db_path`` (default ``data/postparse.db``).
+The schema v1 key ``[database] default_db_path`` is ignored.
 
 Example:
-    $ postparse db stats
-    $ postparse db export data.json
+    $ postparse stats
+    $ postparse db stats --detailed --top 20
+    $ postparse db export items.json
+    $ postparse db export recipes.csv --format csv --label topics:recipe
 """
 
-import json
-import csv
+from __future__ import annotations
+
+import sys
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import TYPE_CHECKING
 
 import rich_click as click
-from rich.table import Table
 from rich.panel import Panel
+from rich.table import Table
 
+from postparse.cli.filters import build_item_filter, filter_options
 from postparse.cli.utils import (
+    config_path_from_ctx,
+    emit_json,
+    format_duration,
     get_console,
-    load_config,
-    get_database,
-    print_success,
+    legacy_db_key_warning,
+    open_database,
     print_error,
     print_info,
+    print_success,
     print_warning,
-    create_progress,
+    resolve_db_path,
 )
+
+if TYPE_CHECKING:
+    from postparse.services.stats import DatabaseStats
+
+_DB_OPTION_HELP = 'Schema v2 database file (default: Settings.db_path)'
 
 
 @click.group()
-def db():
-    """💾 Database operations and exports."""
-    pass
+def db() -> None:
+    """💾 Database statistics, exports and maintenance (schema v2)."""
+
+
+def _human_size(size: int) -> str:
+    """Format a byte count."""
+    value = float(size)
+    for unit in ('B', 'KB', 'MB', 'GB'):
+        if value < 1024 or unit == 'GB':
+            return f'{value:,.1f} {unit}' if unit != 'B' else f'{int(value)} B'
+        value /= 1024
+    return f'{value:.1f} GB'  # pragma: no cover
+
+
+def _max_attempts(ctx: click.Context) -> int:
+    """Return ``[transcription] max_attempts`` (default 5)."""
+    try:
+        from postparse.core.utils.config import ConfigManager
+        from postparse.media.options import TranscriptionOptions
+
+        return TranscriptionOptions.from_config(
+            ConfigManager(config_path_from_ctx(ctx))
+        ).max_attempts
+    except (FileNotFoundError, ValueError):
+        return 5
+
+
+def _metric_table(title: str) -> Table:
+    """Return an empty two-column metric table."""
+    table = Table(title=title, show_header=True, header_style='bold cyan', title_justify='left')
+    table.add_column('Metric', style='cyan')
+    table.add_column('Value', style='green', justify='right')
+    return table
+
+
+def _print_stats(stats: DatabaseStats, *, detailed: bool) -> None:
+    """Render the statistics as tables."""
+    console = get_console()
+    overview = Table.grid(padding=(0, 3))
+    for _ in range(4):
+        overview.add_column(justify='center')
+    counts = {s.source: s.items for s in stats.sources}
+    overview.add_row('📸 Instagram', '📱 Telegram', '📊 Total', '💾 Size / schema')
+    overview.add_row(
+        f"[bold green]{counts.get('instagram', 0):,}[/bold green]",
+        f"[bold blue]{counts.get('telegram', 0):,}[/bold blue]",
+        f'[bold yellow]{stats.items_total:,}[/bold yellow]',
+        f'{_human_size(stats.size_bytes)} / v{stats.schema_version}',
+    )
+    console.print(Panel(overview, title='[bold cyan]📊 Database Overview[/bold cyan]',
+                        subtitle=f'[dim]{stats.path}[/dim]', border_style='cyan',
+                        padding=(1, 2)))
+    if stats.schema_version < stats.latest_schema_version:
+        print_warning(f'Schema v{stats.schema_version} < v{stats.latest_schema_version}: '
+                      'run `postparse db migrate`')
+    if stats.items_total == 0:
+        print_warning('Database is empty. Run `postparse extract telegram` / '
+                      '`postparse extract instagram` (or `postparse db migrate-v1`).')
+        return
+
+    items = Table(title='Items', show_header=True, header_style='bold cyan', title_justify='left')
+    items.add_column('Source', style='cyan')
+    items.add_column('Kind')
+    items.add_column('Items', justify='right', style='green')
+    items.add_column('Oldest', style='dim')
+    items.add_column('Newest', style='dim')
+    for source in stats.sources:
+        items.add_row(source.source, 'all', f'{source.items:,}',
+                      (source.oldest or '')[:10], (source.newest or '')[:10])
+        for kind, n in source.kinds.items():
+            items.add_row('', f'└─ {kind}', f'{n:,}', '', '')
+    console.print(items)
+
+    media = _metric_table('Media & transcripts')
+    media.add_row('Media', ', '.join(f'{k} {v:,}' for k, v in stats.media.items()) or '0')
+    for source, states in stats.transcript_status.items():
+        relevant = {k: v for k, v in states.items() if k != 'none'}
+        if relevant:
+            media.add_row(f'Transcript status ({source})',
+                          ', '.join(f'{k} {v:,}' for k, v in relevant.items()))
+    due = sum(stats.transcription_due.values())
+    exhausted = sum(stats.transcription_exhausted.values())
+    media.add_row('Queue: due now / gave up', f'{due:,} / {exhausted:,}')
+    media.add_row('Transcripts (items)', f'{stats.transcripts:,} ({stats.items_with_transcript:,})')
+    media.add_row('Transcribed audio', format_duration(stats.transcribed_seconds))
+    media.add_row('Summaries (items)', f'{stats.summaries:,} ({stats.items_with_summary:,})')
+    console.print(media)
+
+    links = _metric_table('Links')
+    links.add_row('Links (items with links)', f'{stats.links:,} ({stats.items_with_links:,})')
+    links.add_row('Newest fetch status',
+                  ', '.join(f'{k} {v:,}' for k, v in stats.link_status.items()) or '-')
+    if stats.link_fetchers:
+        links.add_row('Newest fetch by fetcher',
+                      ', '.join(f'{k} {v:,}' for k, v in stats.link_fetchers.items()))
+    console.print(links)
+
+    if stats.taxonomies:
+        tax = Table(title='Classification', show_header=True, header_style='bold cyan',
+                    title_justify='left')
+        tax.add_column('Taxonomy', style='cyan')
+        tax.add_column('Mode')
+        tax.add_column('Classified', justify='right', style='green')
+        tax.add_column('Pending (default / backfill)', justify='right', style='yellow')
+        tax.add_column('Errors', justify='right')
+        tax.add_column('Top labels', overflow='fold')
+        for info in stats.taxonomies:
+            name = info.name + (' (legacy)' if info.is_legacy else '') + f' v{info.version}'
+            tax.add_row(
+                name, info.mode, f'{info.classified_items:,}',
+                f'{info.pending_default:,} / {info.pending_backfill:,}',
+                f"{info.results.get('error', 0):,}",
+                ', '.join(f'{label} {n:,}' for label, n in info.top_labels) or '-',
+            )
+        console.print(tax)
+    else:
+        print_info('No classifications yet (`postparse classify run --taxonomy topics`)')
+
+    if detailed:
+        for title, pairs in (('Top hashtags', stats.top_hashtags),
+                             ('Top mentions', stats.top_mentions)):
+            if not pairs:
+                continue
+            table = Table(title=title, show_header=True, header_style='bold cyan',
+                          title_justify='left')
+            table.add_column('#', justify='right', style='dim')
+            table.add_column('Tag', style='green')
+            table.add_column('Items', justify='right', style='yellow')
+            for rank, (tag, n) in enumerate(pairs, 1):
+                table.add_row(str(rank), tag, f'{n:,}')
+            console.print(table)
+        print_info(f'Distinct tags in use: {stats.tags_distinct:,}')
+    elif stats.top_hashtags:
+        print_info('Top hashtags: ' + ', '.join(f'{t} ({n:,})' for t, n in stats.top_hashtags[:5])
+                   + '  [dim](--detailed for more)[/dim]')
 
 
 @db.command()
-@click.option(
-    '--detailed',
-    is_flag=True,
-    help='Include hashtag distribution',
-)
+@click.option('--detailed', is_flag=True, help='Also list top hashtags and mentions')
+@click.option('--top', type=click.IntRange(1, 200), default=10, show_default=True,
+              help='Number of tags / labels to list')
+@click.option('--no-pending', is_flag=True,
+              help='Skip the pending classification counts (faster on large databases)')
+@click.option('--json', 'as_json', is_flag=True, help='Print JSON instead of tables')
+@click.option('--db', 'db_path', type=click.Path(dir_okay=False), help=_DB_OPTION_HELP)
 @click.pass_context
-def stats(ctx, detailed):
-    """📊 Show database statistics and overview."""
-    console = get_console()
-    
-    try:
-        # Load config
-        config_path = ctx.obj.get('config')
-        config = load_config(config_path)
-        
-        # Get database
-        db = get_database(config)
-        
-        print_info("Computing database statistics...")
-        console.print()
-        
-        # Get basic counts
-        posts = db.get_instagram_posts(limit=100000)
-        messages = db.get_telegram_messages(limit=100000)
-        
-        total_posts = len(posts)
-        total_messages = len(messages)
-        total_items = total_posts + total_messages
-        
-        # Create a nice summary box at the top
-        summary_table = Table.grid(padding=(0, 3))
-        summary_table.add_column(style="bold cyan", justify="center", width=15)
-        summary_table.add_column(style="bold cyan", justify="center", width=15)
-        summary_table.add_column(style="bold cyan", justify="center", width=15)
-        summary_table.add_row("📸 Instagram", "📱 Telegram", "📊 Total")
-        summary_table.add_row(
-            f"[bold green]{total_posts:,}[/bold green]",
-            f"[bold blue]{total_messages:,}[/bold blue]",
-            f"[bold yellow]{total_items:,}[/bold yellow]"
-        )
-        
-        summary_panel = Panel(
-            summary_table,
-            title="[bold cyan]📊 Database Overview[/bold cyan]",
-            border_style="cyan",
-            padding=(1, 2)
-        )
-        console.print(summary_panel)
-        console.print()
-        
-        # Show help message if database is empty
-        if total_items == 0:
-            help_message = """[bold yellow]Database is empty![/bold yellow]
+def stats(ctx: click.Context, detailed: bool, top: int, no_pending: bool, as_json: bool,
+          db_path: str | None) -> None:
+    """📊 Show database statistics (counts, queues, coverage, size).
 
-To populate your database with data:
+    Examples:
+        postparse stats
+        postparse db stats --detailed --top 20
+        postparse stats --json
+    """
+    from postparse.services.stats import collect_stats
 
-[bold cyan]1. Extract from Telegram:[/bold cyan]
-   [dim]$[/dim] postparse extract telegram --api-id YOUR_ID --api-hash YOUR_HASH
+    database = open_database(ctx, db_path)
+    result = collect_stats(database, top_tags=top, top_labels=top,
+                           max_attempts=_max_attempts(ctx), with_pending=not no_pending)
+    if as_json:
+        emit_json(result.to_dict())
+        return
+    _print_stats(result, detailed=detailed)
 
-[bold cyan]2. Extract from Instagram:[/bold cyan]
-   [dim]$[/dim] postparse extract instagram --username YOUR_USER --password YOUR_PASS
 
-[bold]Need help?[/bold]
-   [dim]$[/dim] postparse extract --help
-   [dim]$[/dim] postparse info
-"""
-            console.print(Panel(
-                help_message,
-                title="[bold cyan]💡 Getting Started[/bold cyan]",
-                border_style="yellow",
-                padding=(1, 2)
-            ))
-            console.print()
-            return
-        
-        # Instagram statistics
-        if posts:
-            insta_table = Table(title="📸 Instagram Posts", show_header=True, box=None)
-            insta_table.add_column("Metric", style="cyan", width=20)
-            insta_table.add_column("Value", style="green", justify="right")
-            
-            insta_table.add_row("Total Posts", f"{total_posts:,}")
-            
-            # Date range
-            post_dates = [p.get('date', '') for p in posts if p.get('date')]
-            if post_dates:
-                post_dates.sort()
-                insta_table.add_row("Oldest Post", post_dates[0].split('T')[0])
-                insta_table.add_row("Newest Post", post_dates[-1].split('T')[0])
-            
-            # Content types
-            content_types = {}
-            for post in posts:
-                ct = post.get('content_type', 'unknown')
-                content_types[ct] = content_types.get(ct, 0) + 1
-            
-            for ct, count in sorted(content_types.items(), key=lambda x: x[1], reverse=True):
-                insta_table.add_row(f"  └─ {ct.title()}", f"{count:,}")
-            
-            console.print(insta_table)
-            console.print()
-        else:
-            print_warning("No Instagram posts found in database")
-            console.print()
-        
-        # Telegram statistics
-        if messages:
-            telegram_table = Table(title="📱 Telegram Messages", show_header=True, box=None)
-            telegram_table.add_column("Metric", style="cyan", width=20)
-            telegram_table.add_column("Value", style="blue", justify="right")
-            
-            telegram_table.add_row("Total Messages", f"{total_messages:,}")
-            
-            # Date range
-            message_dates = [m.get('date', '') for m in messages if m.get('date')]
-            if message_dates:
-                message_dates.sort()
-                telegram_table.add_row("Oldest Message", message_dates[0].split('T')[0])
-                telegram_table.add_row("Newest Message", message_dates[-1].split('T')[0])
-            
-            # Media types
-            media_types = {}
-            for message in messages:
-                mt = message.get('media_type', 'text')
-                media_types[mt] = media_types.get(mt, 0) + 1
-            
-            for mt, count in sorted(media_types.items(), key=lambda x: x[1], reverse=True):
-                telegram_table.add_row(f"  └─ {mt.title()}", f"{count:,}")
-            
-            console.print(telegram_table)
-            console.print()
-        else:
-            print_warning("No Telegram messages found in database")
-            console.print()
-        
-        # Detailed statistics
-        if detailed:
-            print_info("Computing detailed statistics...")
-            
-            # Get all hashtags
-            all_hashtags = db.get_all_hashtags()
-            
-            if all_hashtags:
-                console.print()
-                hashtag_table = Table(title="Top Hashtags", show_header=True)
-                hashtag_table.add_column("Rank", style="cyan", justify="right", width=6)
-                hashtag_table.add_column("Hashtag", style="green", width=20)
-                hashtag_table.add_column("Count", style="yellow", justify="right")
-                
-                # Count hashtags
-                hashtag_counts: Dict[str, int] = {}
-                for tag in all_hashtags:
-                    hashtag_counts[tag] = hashtag_counts.get(tag, 0) + 1
-                
-                # Show top 20
-                sorted_hashtags = sorted(
-                    hashtag_counts.items(),
-                    key=lambda x: x[1],
-                    reverse=True
-                )[:20]
-                
-                for i, (tag, count) in enumerate(sorted_hashtags, 1):
-                    hashtag_table.add_row(str(i), tag, str(count))
-                
-                console.print(hashtag_table)
-            else:
-                print_warning("No hashtags found in database")
-        
-        print_success("Statistics computed successfully!")
-        
-    except click.Abort:
-        pass
-    except Exception as e:
-        print_error(f"Failed to compute statistics: {e}")
-        if ctx.obj.get('verbose'):
-            console.print_exception()
-        raise click.Abort()
+_SOURCE_ALIASES = {'posts': 'instagram', 'messages': 'telegram', 'all': 'all',
+                   'instagram': 'instagram', 'telegram': 'telegram'}
 
 
 @db.command()
-@click.argument('output', type=click.Path())
-@click.option(
-    '--format',
-    type=click.Choice(['json', 'csv']),
-    default='json',
-    help='Export format',
-)
-@click.option(
-    '--source',
-    type=click.Choice(['posts', 'messages', 'all']),
-    default='all',
-    help='What to export',
-)
-@click.option(
-    '--limit',
-    type=int,
-    help='Maximum records',
-)
+@click.argument('output', type=click.Path(dir_okay=False, allow_dash=True))
+@click.option('--format', 'fmt', type=click.Choice(['json', 'csv']), default=None,
+              help='Export format (default: from the file extension, else json)')
+@click.option('--source', type=click.Choice(sorted(_SOURCE_ALIASES)), default='all',
+              show_default=True, help='What to export (posts = instagram, messages = telegram)')
+@click.option('--query', '-q', help='Full-text query')
+@filter_options(source=False)
+@click.option('--limit', type=click.IntRange(min=1), help='Maximum number of items (newest first)')
+@click.option('--db', 'db_path', type=click.Path(dir_okay=False), help=_DB_OPTION_HELP)
 @click.pass_context
-def export(ctx, output, format, source, limit):
-    """💾 Export database to JSON or CSV file."""
-    console = get_console()
-    
-    try:
-        # Load config
-        config_path = ctx.obj.get('config')
-        config = load_config(config_path)
-        
-        # Get database
-        db = get_database(config)
-        
-        output_path = Path(output)
-        
-        print_info(f"Exporting data to {output_path}...")
-        
-        # Collect data
-        data: Dict[str, List[Dict[str, Any]]] = {}
-        
-        if source in ['posts', 'all']:
-            print_info("Fetching Instagram posts...")
-            posts = db.get_instagram_posts(limit=limit)
-            data['instagram_posts'] = posts
-            print_success(f"Fetched {len(posts)} Instagram posts")
-        
-        if source in ['messages', 'all']:
-            print_info("Fetching Telegram messages...")
-            messages = db.get_telegram_messages(limit=limit)
-            data['telegram_messages'] = messages
-            print_success(f"Fetched {len(messages)} Telegram messages")
-        
-        # Export data
-        print_info(f"Writing to {output_path}...")
-        
-        if format == 'json':
-            with open(output_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2, default=str, ensure_ascii=False)
-        
-        elif format == 'csv':
-            # Export to CSV (separate files for posts and messages)
-            if source == 'all':
-                print_warning("CSV format exports to separate files for posts and messages")
-            
-            if 'instagram_posts' in data:
-                posts_path = output_path.with_stem(output_path.stem + '_posts')
-                with open(posts_path, 'w', newline='', encoding='utf-8') as f:
-                    if data['instagram_posts']:
-                        writer = csv.DictWriter(f, fieldnames=data['instagram_posts'][0].keys())
-                        writer.writeheader()
-                        writer.writerows(data['instagram_posts'])
-                print_success(f"Exported posts to {posts_path}")
-            
-            if 'telegram_messages' in data:
-                messages_path = output_path.with_stem(output_path.stem + '_messages')
-                with open(messages_path, 'w', newline='', encoding='utf-8') as f:
-                    if data['telegram_messages']:
-                        writer = csv.DictWriter(f, fieldnames=data['telegram_messages'][0].keys())
-                        writer.writeheader()
-                        writer.writerows(data['telegram_messages'])
-                print_success(f"Exported messages to {messages_path}")
-        
-        # Summary
-        total_records = sum(len(v) for v in data.values())
-        print_success(f"Export completed! {total_records} records written to {output_path}")
-        
-    except click.Abort:
-        pass
-    except Exception as e:
-        print_error(f"Export failed: {e}")
-        if ctx.obj.get('verbose'):
-            console.print_exception()
-        raise click.Abort()
+def export(
+    ctx: click.Context,
+    output: str,
+    fmt: str | None,
+    source: str,
+    query: str | None,
+    tags: tuple[str, ...],
+    authors: tuple[str, ...],
+    kinds: tuple[str, ...],
+    labels: tuple[str, ...],
+    date_from: str | None,
+    date_to: str | None,
+    has_transcript: bool | None,
+    limit: int | None,
+    db_path: str | None,
+) -> None:
+    """💾 Export items to a JSON array or a CSV file (`-` writes to stdout).
 
+    One row per item with tags and current labels; filters as in `search items`.
+
+    Examples:
+        postparse db export items.json
+        postparse db export posts.csv --source posts
+        postparse db export recipes.json --label topics:recipe --from 2024-01-01
+        postparse db export - --format csv --tag pasta --limit 100
+    """
+    from postparse.services.query import QueryService
+
+    if fmt is None:
+        fmt = 'csv' if output.lower().endswith('.csv') else 'json'
+    flt = build_item_filter(
+        q=query, source=_SOURCE_ALIASES[source], tags=tags, authors=authors, kinds=kinds,
+        labels=labels, date_from=date_from, date_to=date_to, has_transcript=has_transcript,
+    )
+    service = QueryService(open_database(ctx, db_path))
+    if output == '-':
+        service.export(flt, fmt, sys.stdout, limit=limit)  # type: ignore[arg-type]
+        return
+    path = Path(output)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        count = service.export(flt, fmt, path, limit=limit)  # type: ignore[arg-type]
+    except OSError as exc:
+        raise click.ClickException(f'Could not write {path}: {exc}') from exc
+    print_success(f'Exported {count:,} item(s) to {path} ({fmt})')
 
 
 # ---------------------------------------------------------------------------
 # Schema v2 database maintenance (postparse.core.db)
 # ---------------------------------------------------------------------------
 
-_DB_OPTION_HELP = 'Schema v2 database file (default: Settings.db_path)'
-
-
 def _v2_db_path(ctx: click.Context, db_path: str | None) -> Path:
     """Resolve the schema v2 database path from ``--db`` or the settings."""
-    if db_path:
-        return Path(db_path).resolve()
-    from postparse.config import get_settings
-
-    settings = get_settings(ctx.obj.get('config') if ctx.obj else None)
-    assert settings.db_path is not None
-    return settings.db_path
+    return resolve_db_path(ctx, db_path)
 
 
 @db.command()
@@ -356,20 +313,29 @@ def migrate(ctx: click.Context, db_path: str | None) -> None:
     print_info(f'Schema version: {version}')
 
 
-@db.command()
-@click.option('--db', 'db_path', type=click.Path(dir_okay=False), help=_DB_OPTION_HELP)
-@click.pass_context
-def check(ctx: click.Context, db_path: str | None) -> None:
-    """🩺 Verify integrity, foreign keys, schema version and the search index."""
+def run_db_check(path: Path, config_path: str | None = None) -> bool:
+    """Verify integrity, foreign keys, schema version and the search index.
+
+    Prints the findings; a schema v1 database key in the config is reported
+    as a warning.
+
+    Args:
+        path: Database file.
+        config_path: Config file for the legacy-key warning.
+
+    Returns:
+        ``True`` when no problems were found.
+    """
     from postparse.core.db import MigrationError, connect
     from postparse.core.db.migrate import discover_migrations, pending_migrations
     from postparse.core.db.repos import SearchRepo
 
-    path = _v2_db_path(ctx, db_path)
-    if not path.exists():
+    warning = legacy_db_key_warning(config_path)
+    if warning:
+        print_warning(warning)
+    if not path.is_file():
         print_error(f'Database not found: {path} (run `postparse db migrate`)')
-        ctx.exit(1)
-        return
+        return False
 
     problems: list[str] = []
     conn = connect(path)
@@ -416,9 +382,18 @@ def check(ctx: click.Context, db_path: str | None) -> None:
     if problems:
         for problem in problems:
             print_error(problem)
-        ctx.exit(1)
-        return
+        return False
     print_success('Database check passed')
+    return True
+
+
+@db.command()
+@click.option('--db', 'db_path', type=click.Path(dir_okay=False), help=_DB_OPTION_HELP)
+@click.pass_context
+def check(ctx: click.Context, db_path: str | None) -> None:
+    """🩺 Verify integrity, foreign keys, schema version and the search index."""
+    if not run_db_check(_v2_db_path(ctx, db_path), config_path_from_ctx(ctx)):
+        ctx.exit(1)
 
 
 @db.command()
@@ -513,7 +488,7 @@ def migrate_v1_command(
     else:
         from postparse.config import get_settings
 
-        settings = get_settings(ctx.obj.get('config') if ctx.obj else None)
+        settings = get_settings(config_path_from_ctx(ctx))
         assert settings.downloads_dir is not None
         downloads = settings.downloads_dir
 

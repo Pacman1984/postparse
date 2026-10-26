@@ -37,12 +37,23 @@ CREDS = TelegramCredentials(api_id=1, api_hash="hash-secret", phone="+490000")
 
 
 async def collect(
-    db: Database, settings: Settings, client: FakeTelegramClient, *, interactive: bool = True,
-    options: TelegramOptions | None = None, sleep=no_sleep, **kwargs,
+    db: Database,
+    settings: Settings,
+    client: FakeTelegramClient,
+    *,
+    interactive: bool = True,
+    options: TelegramOptions | None = None,
+    sleep=no_sleep,
+    **kwargs,
 ):
     collector = TelegramCollector(
-        db, settings, CREDS, options or TelegramOptions(batch_size=2),
-        interactive=interactive, client_factory=client_factory(client), sleep=sleep,
+        db,
+        settings,
+        CREDS,
+        options or TelegramOptions(batch_size=2),
+        interactive=interactive,
+        client_factory=client_factory(client),
+        sleep=sleep,
     )
     async with collector:
         return await collector.collect(**kwargs)
@@ -77,7 +88,9 @@ async def test_text_with_url_entities_and_tags(db: Database, settings: Settings)
     assert detail.chat_id == ME and detail.message_id == 1
     assert media == []
     assert links == [
-        "https://example.com/a", "https://hidden.example/page", "https://plain.org/x",
+        "https://example.com/a",
+        "https://hidden.example/page",
+        "https://plain.org/x",
     ]
     assert set(tags) == {"#rezept", "@koch"}
 
@@ -115,9 +128,7 @@ async def test_photo_is_downloaded_with_hash(db: Database, settings: Settings) -
     assert (row.media_type, row.mime, row.transcript_status) == ("image", "image/jpeg", "none")
 
 
-async def test_document_name_from_attribute_is_sanitized(
-    db: Database, settings: Settings
-) -> None:
+async def test_document_name_from_attribute_is_sanitized(db: Database, settings: Settings) -> None:
     client = FakeTelegramClient([tg_document(8, filename="../Mein Rezept (fïnal).pdf")])
     await collect(db, settings, client)
 
@@ -154,9 +165,7 @@ async def test_voice_and_video_are_recorded_without_download(
     assert video_media[0].size_bytes == 10_000_000
 
 
-async def test_files_over_max_size_are_not_downloaded(
-    db: Database, settings: Settings
-) -> None:
+async def test_files_over_max_size_are_not_downloaded(db: Database, settings: Settings) -> None:
     client = FakeTelegramClient([tg_document(12, size=3 * 1024 * 1024)])
     stats = await collect(
         db, settings, client, options=TelegramOptions(batch_size=5, max_download_mb=2)
@@ -208,8 +217,9 @@ async def test_full_reread_updates_stored_messages(db: Database, settings: Setti
     await collect(db, settings, FakeTelegramClient([tg_text(1, "old"), tg_text(2, "two")]))
 
     stats = await collect(
-        db, settings, FakeTelegramClient([tg_text(1, "edited"), tg_text(2, "two"),
-                                          tg_text(3, "three")]),
+        db,
+        settings,
+        FakeTelegramClient([tg_text(1, "edited"), tg_text(2, "two"), tg_text(3, "three")]),
         full=True,
     )
 
@@ -241,8 +251,12 @@ async def test_batches_survive_a_failed_batch(
     monkeypatch.setattr(ItemsRepo, "upsert", upsert)
     client = FakeTelegramClient([tg_text(i, "x") for i in range(1, 6)])
     collector = TelegramCollector(
-        db, settings, CREDS, TelegramOptions(batch_size=2),
-        client_factory=client_factory(client), sleep=no_sleep,
+        db,
+        settings,
+        CREDS,
+        TelegramOptions(batch_size=2),
+        client_factory=client_factory(client),
+        sleep=no_sleep,
     )
     with pytest.raises(RuntimeError, match="disk I/O"):
         async with collector:
@@ -254,13 +268,15 @@ async def test_batches_survive_a_failed_batch(
     assert collector.stats.new == 2
 
 
-async def test_connection_loss_keeps_messages_read_so_far(
-    db: Database, settings: Settings
-) -> None:
+async def test_connection_loss_keeps_messages_read_so_far(db: Database, settings: Settings) -> None:
     client = FakeTelegramClient([tg_text(i, "x") for i in range(1, 8)], fail_after=5)
     collector = TelegramCollector(
-        db, settings, CREDS, TelegramOptions(batch_size=2),
-        client_factory=client_factory(client), sleep=no_sleep,
+        db,
+        settings,
+        CREDS,
+        TelegramOptions(batch_size=2),
+        client_factory=client_factory(client),
+        sleep=no_sleep,
     )
     with pytest.raises(RuntimeError, match="connection lost"):
         async with collector:
@@ -273,12 +289,17 @@ async def test_connection_loss_keeps_messages_read_so_far(
 
 async def test_flood_wait_stops_with_rate_limited(db: Database, settings: Settings) -> None:
     client = FakeTelegramClient(
-        [tg_text(i, "x") for i in range(1, 6)], fail_after=3,
+        [tg_text(i, "x") for i in range(1, 6)],
+        fail_after=3,
         fail_with=FloodWaitError(request=None, capture=600),
     )
     collector = TelegramCollector(
-        db, settings, CREDS, TelegramOptions(batch_size=2),
-        client_factory=client_factory(client), sleep=no_sleep,
+        db,
+        settings,
+        CREDS,
+        TelegramOptions(batch_size=2),
+        client_factory=client_factory(client),
+        sleep=no_sleep,
     )
     with pytest.raises(TelegramRateLimited) as info:
         async with collector:
@@ -310,12 +331,8 @@ async def test_unauthorized_interactive_starts_login(db: Database, settings: Set
     assert stats.new == 1
 
 
-async def test_failed_interactive_login_is_auth_required(
-    db: Database, settings: Settings
-) -> None:
-    client = FakeTelegramClient(
-        authorized=False, start_error=PhoneCodeInvalidError(request=None)
-    )
+async def test_failed_interactive_login_is_auth_required(db: Database, settings: Settings) -> None:
+    client = FakeTelegramClient(authorized=False, start_error=PhoneCodeInvalidError(request=None))
     with pytest.raises(TelegramAuthRequired, match="PhoneCodeInvalidError"):
         await collect(db, settings, client)
 
@@ -346,7 +363,10 @@ async def test_collector_uses_resolved_session(db: Database, settings: Settings)
     legacy.write_bytes(b"")
     sessions: list[Path] = []
     collector = TelegramCollector(
-        db, settings, CREDS, client_factory=client_factory(FakeTelegramClient(), sessions),
+        db,
+        settings,
+        CREDS,
+        client_factory=client_factory(FakeTelegramClient(), sessions),
         sleep=no_sleep,
     )
     async with collector:

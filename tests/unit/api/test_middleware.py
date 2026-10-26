@@ -7,7 +7,7 @@ conservative masking for non-JSON payloads on non-sensitive routes.
 """
 
 import json
-from typing import Any, Dict, Optional
+from typing import Any
 
 import pytest
 from fastapi import FastAPI
@@ -20,7 +20,7 @@ from postparse.api.middleware import RequestLoggingMiddleware
 class _StaticConfig:
     """Simple config stub for middleware unit tests."""
 
-    def __init__(self, values: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(self, values: dict[str, Any] | None = None) -> None:
         """
         Initialize static config values.
 
@@ -32,8 +32,8 @@ class _StaticConfig:
     def get(
         self,
         key: str,
-        default: Optional[Any] = None,
-        env_var: Optional[str] = None,
+        default: Any | None = None,
+        env_var: str | None = None,
     ) -> Any:
         """
         Return a configured value for a key.
@@ -219,7 +219,9 @@ def test_json_log_format_uses_python_json_logger(monkeypatch: pytest.MonkeyPatch
 
     from postparse.api import middleware as middleware_module
 
-    monkeypatch.setattr(middleware_module.logger, "handlers", list(middleware_module.logger.handlers))
+    monkeypatch.setattr(
+        middleware_module.logger, "handlers", list(middleware_module.logger.handlers)
+    )
     config = _StaticConfig({"api.log_level": "info", "api.log_format": "json"})
     mw = RequestLoggingMiddleware(FastAPI(), config)  # type: ignore[arg-type]
     assert mw.log_format == "json"

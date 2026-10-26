@@ -350,9 +350,7 @@ class TranscriptionService:
             report.stopped_reason = "done"
             report.duration_s = time.perf_counter() - started
             return report
-        logger.info(
-            "Transcribing %d media with %s (%s)", len(candidates), asr.name, asr.model
-        )
+        logger.info("Transcribing %d media with %s (%s)", len(candidates), asr.name, asr.model)
 
         fetcher = self._fetcher(refetch)
         self._refetch_failures = 0
@@ -386,9 +384,15 @@ class TranscriptionService:
                 logger.info(
                     "Transcription %s: transcribed=%d no_audio=%d skipped=%d failed=%d "
                     "deferred=%d refetched=%d audio=%.0fs in %.1fs",
-                    report.stopped_reason, report.transcribed, report.no_audio,
-                    report.skipped, report.failed, report.deferred, report.refetched,
-                    report.audio_seconds, report.duration_s,
+                    report.stopped_reason,
+                    report.transcribed,
+                    report.no_audio,
+                    report.skipped,
+                    report.failed,
+                    report.deferred,
+                    report.refetched,
+                    report.audio_seconds,
+                    report.duration_s,
                 )
         return report
 
@@ -488,7 +492,9 @@ class TranscriptionService:
         self._sample(report, media, message)
         logger.warning(
             "Transcription of media %d failed (retry after %s): %s",
-            media.id, next_at.isoformat(timespec="minutes"), message,
+            media.id,
+            next_at.isoformat(timespec="minutes"),
+            message,
         )
         return "failed"
 

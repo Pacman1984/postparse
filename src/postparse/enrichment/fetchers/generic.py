@@ -75,8 +75,16 @@ def _trafilatura(html: str, url: str) -> tuple[str, dict[str, Any]]:
     meta: dict[str, Any] = {}
     document = trafilatura.extract_metadata(html, default_url=url)
     if document is not None:
-        for key in ("title", "author", "date", "sitename", "description", "hostname",
-                    "image", "language"):
+        for key in (
+            "title",
+            "author",
+            "date",
+            "sitename",
+            "description",
+            "hostname",
+            "image",
+            "language",
+        ):
             value = getattr(document, key, None)
             if value:
                 meta[key] = value

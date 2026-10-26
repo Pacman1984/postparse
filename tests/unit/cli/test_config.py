@@ -48,16 +48,24 @@ class TestShow:
         assert "Configuration file" in result.output
 
     def test_missing_config_file(self, tmp_path: Path) -> None:
-        result = CliRunner().invoke(
-            cli, ["--config", str(tmp_path / "x.toml"), "config", "show"]
-        )
+        result = CliRunner().invoke(cli, ["--config", str(tmp_path / "x.toml"), "config", "show"])
         assert result.exit_code != 0
 
     def test_mask_secrets(self) -> None:
-        data = {"api_key": "abc", "api_key_env": "OPENAI_API_KEY", "nested": [{"password": "p"}],
-                "token": "", "name": "x"}
-        assert mask_secrets(data) == {"api_key": "***", "api_key_env": "OPENAI_API_KEY",
-                                      "nested": [{"password": "***"}], "token": "", "name": "x"}
+        data = {
+            "api_key": "abc",
+            "api_key_env": "OPENAI_API_KEY",
+            "nested": [{"password": "p"}],
+            "token": "",
+            "name": "x",
+        }
+        assert mask_secrets(data) == {
+            "api_key": "***",
+            "api_key_env": "OPENAI_API_KEY",
+            "nested": [{"password": "***"}],
+            "token": "",
+            "name": "x",
+        }
 
 
 class TestValidate:
@@ -81,10 +89,15 @@ class TestValidate:
         [
             ('[transcription]\nbackend = "cloud"\n', "Transcription"),
             ("[enrichment]\nconcurrency = 0\n", "Enrichment"),
-            ('[[classification.taxonomies]]\nname = "t"\nmode = "weird"\nlabels = ["a"]\n',
-             "Taxonomies"),
-            ('[llm]\ndefault_provider = "a"\n[[llm.providers]]\nname = "a"\nmodel = "m"\n'
-             'api_base = "http://x"\n[summarization]\nprovider = "missing"\n', "Summarization"),
+            (
+                '[[classification.taxonomies]]\nname = "t"\nmode = "weird"\nlabels = ["a"]\n',
+                "Taxonomies",
+            ),
+            (
+                '[llm]\ndefault_provider = "a"\n[[llm.providers]]\nname = "a"\nmodel = "m"\n'
+                'api_base = "http://x"\n[summarization]\nprovider = "missing"\n',
+                "Summarization",
+            ),
             ("[api]\nport = 80\n", "API port"),
         ],
     )
@@ -95,8 +108,9 @@ class TestValidate:
         assert check in result.output
         assert "Validation failed" in result.output
 
-    def test_reports_existing_database(self, tmp_path: Path,
-                                       v2_db: tuple[Path, dict[str, int]]) -> None:
+    def test_reports_existing_database(
+        self, tmp_path: Path, v2_db: tuple[Path, dict[str, int]]
+    ) -> None:
         path, _ = v2_db
         cfg = _write_config(tmp_path, f'[database]\ndb_path = "{path.as_posix()}"\n')
         result = CliRunner().invoke(cli, ["--config", str(cfg), "config", "validate"])
@@ -106,11 +120,14 @@ class TestValidate:
 
     def test_display_validation_results(self) -> None:
         console = Console(record=True, width=120)
-        display_validation_results(console, [
-            {"check": "A", "status": "pass", "message": "ok"},
-            {"check": "B", "status": "warning", "message": "hm"},
-            {"check": "C", "status": "fail", "message": "[bad]"},
-        ])
+        display_validation_results(
+            console,
+            [
+                {"check": "A", "status": "pass", "message": "ok"},
+                {"check": "B", "status": "warning", "message": "hm"},
+                {"check": "C", "status": "fail", "message": "[bad]"},
+            ],
+        )
         text = console.export_text()
         assert "Pass" in text and "Warning" in text and "Fail" in text
         assert "[bad]" in text
@@ -122,8 +139,13 @@ class TestEnv:
         monkeypatch.setenv("POSTPARSE_DB_PATH", "/some/where.db")
         result = CliRunner().invoke(cli, ["config", "env"])
         assert result.exit_code == 0, result.output
-        for name in ("TELEGRAM_API_ID", "INSTAGRAM_PASSWORD", "OPENAI_API_KEY",
-                     "POSTPARSE_DATA_DIR", "JWT_SECRET_KEY"):
+        for name in (
+            "TELEGRAM_API_ID",
+            "INSTAGRAM_PASSWORD",
+            "OPENAI_API_KEY",
+            "POSTPARSE_DATA_DIR",
+            "JWT_SECRET_KEY",
+        ):
             assert name in result.output
         assert "supersecretvalue" not in result.output
         assert "where.db" not in result.output

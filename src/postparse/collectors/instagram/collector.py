@@ -317,8 +317,12 @@ def translate_error(exc: BaseException) -> BaseException:
     if name == "BadCredentialsException":
         return InstagramAuthRequired("Instagram rejected the password or 2FA code.")
     if name in ("LoginRequiredException", "LoginException") or (
-        name in ("ConnectionException", "QueryReturnedBadRequestException",
-                 "QueryReturnedForbiddenException")
+        name
+        in (
+            "ConnectionException",
+            "QueryReturnedBadRequestException",
+            "QueryReturnedForbiddenException",
+        )
         and any(marker in text for marker in _CHALLENGE_MARKERS)
     ):
         return InstagramAuthRequired("Instagram requires a confirmation or a new login.")
@@ -421,9 +425,7 @@ class InstagramCollector:
         else:
             logger.info("No Instagram session file at %s", self.load_path)
         if not self.credentials.password:
-            raise InstagramAuthRequired(
-                "No valid session and INSTAGRAM_PASSWORD is not set."
-            )
+            raise InstagramAuthRequired("No valid session and INSTAGRAM_PASSWORD is not set.")
         self._password_login()
 
     def _password_login(self) -> None:
@@ -561,7 +563,8 @@ class InstagramCollector:
                 stats.stopped_reason = "auth_required"
             logger.warning(
                 "Instagram collection stopped after %d feed posts (last stored: %s)",
-                seen, stats.last_external_id,
+                seen,
+                stats.last_external_id,
             )
             if translated is exc:
                 raise
@@ -571,7 +574,10 @@ class InstagramCollector:
         emit(progress, stats, seen=seen, message="done")
         logger.info(
             "Instagram: %d new, %d updated, %d known skipped (%s)",
-            stats.new, stats.updated, stats.known_skipped, reason,
+            stats.new,
+            stats.updated,
+            stats.known_skipped,
+            reason,
         )
         return stats
 
@@ -604,15 +610,14 @@ class InstagramCollector:
         refreshed = 0
         for index, (item_id, shortcode) in enumerate(todo):
             if index:
-                self._sleep(
-                    jitter(self.options.refresh_min_delay, self.options.refresh_max_delay)
-                )
+                self._sleep(jitter(self.options.refresh_min_delay, self.options.refresh_max_delay))
             try:
                 post = self._post_from_shortcode(self.loader, shortcode)
                 created = post_date_utc(post)
             except Exception as exc:
                 if type(exc).__name__ in (
-                    "QueryReturnedNotFoundException", "ProfileNotExistsException",
+                    "QueryReturnedNotFoundException",
+                    "ProfileNotExistsException",
                 ):
                     with self.db.transaction() as conn:
                         ItemsRepo(conn).set_instagram_date(item_id, None, "unavailable")
@@ -631,7 +636,5 @@ class InstagramCollector:
                 ItemsRepo(conn).set_instagram_date(item_id, created, "verified")
             refreshed += 1
             self.stats.dates_refreshed = refreshed
-            emit(
-                progress, self.stats, phase="refresh_dates", seen=index + 1, total=len(todo)
-            )
+            emit(progress, self.stats, phase="refresh_dates", seen=index + 1, total=len(todo))
         return refreshed

@@ -38,13 +38,22 @@ def db(settings: Settings) -> Database:
     return Database.open(settings.db_path)
 
 
-def service(db: Database, settings: Settings, fetcher: Any = None, **options: Any
-            ) -> tuple[EnrichmentService, ScriptedFetcher]:
+def service(
+    db: Database, settings: Settings, fetcher: Any = None, **options: Any
+) -> tuple[EnrichmentService, ScriptedFetcher]:
     fetcher = fetcher or ScriptedFetcher()
-    opts = EnrichmentOptions(**{"min_domain_interval": 0, "backoff_minutes": 60,
-                                "max_backoff_hours": 24, "max_attempts": 3, **options})
-    svc = EnrichmentService(db, settings, options=opts, router_factory=router_factory(fetcher),
-                            clock=lambda: NOW)
+    opts = EnrichmentOptions(
+        **{
+            "min_domain_interval": 0,
+            "backoff_minutes": 60,
+            "max_backoff_hours": 24,
+            "max_attempts": 3,
+            **options,
+        }
+    )
+    svc = EnrichmentService(
+        db, settings, options=opts, router_factory=router_factory(fetcher), clock=lambda: NOW
+    )
     return svc, fetcher
 
 
@@ -52,7 +61,8 @@ def fetches(db: Database, url: str) -> list[tuple[str, str]]:
     with db.read() as conn:
         rows = conn.execute(
             "SELECT lf.fetcher, lf.status FROM link_fetches AS lf JOIN links AS l "
-            "ON l.id = lf.link_id WHERE l.url = ? ORDER BY lf.id", (url,)
+            "ON l.id = lf.link_id WHERE l.url = ? ORDER BY lf.id",
+            (url,),
         ).fetchall()
     return [(row[0], row[1]) for row in rows]
 
@@ -75,9 +85,7 @@ def test_new_links_are_fetched_and_stored(db: Database, settings: Settings) -> N
     assert svc.run().candidates == 0
 
 
-def test_legacy_links_are_refreshed_and_legacy_fetch_kept(
-    db: Database, settings: Settings
-) -> None:
+def test_legacy_links_are_refreshed_and_legacy_fetch_kept(db: Database, settings: Settings) -> None:
     item = add_item(db, "1:2", ["https://blog.example/old"])
     add_legacy_fetch(db, "https://blog.example/old", "Alter gescrapter Text")
     assert fts_ids(db, "gescrapter") == [item]
@@ -93,8 +101,9 @@ def test_legacy_links_are_refreshed_and_legacy_fetch_kept(
 def test_failed_refresh_keeps_legacy_text_searchable(db: Database, settings: Settings) -> None:
     item = add_item(db, "1:3", ["https://blog.example/gone"])
     add_legacy_fetch(db, "https://blog.example/gone", "Alter gescrapter Text")
-    fetcher = ScriptedFetcher({"https://blog.example/gone": FetchResult.failed("HTTP 404",
-                                                                               http_status=404)})
+    fetcher = ScriptedFetcher(
+        {"https://blog.example/gone": FetchResult.failed("HTTP 404", http_status=404)}
+    )
     report = service(db, settings, fetcher)[0].run()
     assert report.errors_count == 1 and "HTTP 404" in report.errors[0]
     assert fts_ids(db, "gescrapter") == [item]
@@ -119,17 +128,23 @@ def test_new_links_come_before_legacy_links(db: Database, settings: Settings) ->
 def test_legacy_expanded_text_removed_once_all_links_are_fresh(
     db: Database, settings: Settings
 ) -> None:
-    item = add_item(db, "1:6", ["https://a.example/1", "https://b.example/2",
-                                "https://www.instagram.com/p/XYZ/"])
+    item = add_item(
+        db,
+        "1:6",
+        ["https://a.example/1", "https://b.example/2", "https://www.instagram.com/p/XYZ/"],
+    )
     other = add_item(db, "1:7", ["https://a.example/1", "https://c.example/3"])
     with db.transaction() as conn:
         ItemsRepo(conn).set_legacy_expanded_text(item, "Erweiterter Alttext")
         ItemsRepo(conn).set_legacy_expanded_text(other, "Noch ein Alttext")
-    fetcher = ScriptedFetcher({
-        "https://www.instagram.com/p/XYZ/": FetchResult("skipped", fetcher="instagram",
-                                                        error="Instagram"),
-        "https://c.example/3": FetchResult.failed("timeout"),
-    })
+    fetcher = ScriptedFetcher(
+        {
+            "https://www.instagram.com/p/XYZ/": FetchResult(
+                "skipped", fetcher="instagram", error="Instagram"
+            ),
+            "https://c.example/3": FetchResult.failed("timeout"),
+        }
+    )
     report = service(db, settings, fetcher)[0].run()
     assert report.ok == 2 and report.skipped == 1 and report.errors_count == 1
     assert report.legacy_texts_removed == 1
@@ -143,8 +158,16 @@ def test_legacy_expanded_text_removed_once_all_links_are_fresh(
 def test_errors_are_retried_with_backoff_until_max_attempts(
     db: Database, settings: Settings
 ) -> None:
-    add_item(db, "1:8", ["https://a.example/recent", "https://a.example/old",
-                         "https://a.example/dead", "https://a.example/skip"])
+    add_item(
+        db,
+        "1:8",
+        [
+            "https://a.example/recent",
+            "https://a.example/old",
+            "https://a.example/dead",
+            "https://a.example/skip",
+        ],
+    )
     # One failure 30 min ago (backoff 60 min -> not due), one 2 h ago (due),
     # three failures (max_attempts=3 -> gave up), one skipped (final).
     add_fetch(db, "https://a.example/recent", "error", at=NOW - timedelta(minutes=30))
@@ -187,8 +210,13 @@ def test_source_and_domain_filters(db: Database, settings: Settings) -> None:
 
 def test_text_is_capped_and_metadata_records_it(db: Database, settings: Settings) -> None:
     add_item(db, "1:11", ["https://a.example/long"])
-    fetcher = ScriptedFetcher({"https://a.example/long": FetchResult(
-        "ok", fetcher="generic", title="T" * 2000, text="x" * 500, metadata={"k": 1})})
+    fetcher = ScriptedFetcher(
+        {
+            "https://a.example/long": FetchResult(
+                "ok", fetcher="generic", title="T" * 2000, text="x" * 500, metadata={"k": 1}
+            )
+        }
+    )
     service(db, settings, fetcher, max_text_chars=100)[0].run()
     with db.read() as conn:
         fetch = LinksRepo(conn).latest_ok_fetch(link_id(db, "https://a.example/long"))
@@ -217,7 +245,10 @@ def test_status_counts(db: Database, settings: Settings) -> None:
     add_fetch(db, "https://b.example/3", "ok", at=NOW, text="neu")
     stats = service(db, settings)[0].status()
     assert stats["links"] == 3
-    assert stats["by_state"] == {("-", "never"): 1, ("legacy_v1", "legacy"): 1,
-                                 ("generic", "ok"): 1}
+    assert stats["by_state"] == {
+        ("-", "never"): 1,
+        ("legacy_v1", "legacy"): 1,
+        ("generic", "ok"): 1,
+    }
     assert stats["domains"][0] == ("a.example", {"never": 1, "legacy": 1})
     assert stats["due"] == 2

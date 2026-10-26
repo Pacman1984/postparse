@@ -81,8 +81,11 @@ def add_video_item(
                 text=caption,
                 media=tuple(
                     MediaInput(
-                        position=p, media_type="video", remote_url=remote_url,
-                        local_path=local_path, transcript_status="pending",
+                        position=p,
+                        media_type="video",
+                        remote_url=remote_url,
+                        local_path=local_path,
+                        transcript_status="pending",
                     )
                     for p in positions
                 ),
@@ -142,8 +145,12 @@ class FakeBackend:
         words = self.text.split()
         segments = [Segment(float(i), float(i) + 1.0, w) for i, w in enumerate(words)]
         return Transcript(
-            text=self.text, language="de", segments=segments, duration=float(len(words)),
-            backend=self.name, model=self.model,
+            text=self.text,
+            language="de",
+            segments=segments,
+            duration=float(len(words)),
+            backend=self.name,
+            model=self.model,
         )
 
     def close(self) -> None:

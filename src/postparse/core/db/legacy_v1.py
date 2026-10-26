@@ -76,22 +76,40 @@ DEFAULT_TEST_CHAT_IDS: tuple[int, ...] = (123456,)
 _UTC = ZoneInfo("UTC")
 
 _IG_KIND = {"GraphVideo": "video", "GraphSidecar": "carousel", "GraphImage": "image"}
-_TG_KIND = {"text": "text", "image": "image", "photo": "image", "video": "video",
-            "document": "document", "audio": "audio", "voice": "audio"}
+_TG_KIND = {
+    "text": "text",
+    "image": "image",
+    "photo": "image",
+    "video": "video",
+    "document": "document",
+    "audio": "audio",
+    "voice": "audio",
+}
 _MIME = {
-    ".jpg": ("image", "image/jpeg"), ".jpeg": ("image", "image/jpeg"),
-    ".png": ("image", "image/png"), ".gif": ("image", "image/gif"),
-    ".webp": ("image", "image/webp"), ".heic": ("image", "image/heic"),
-    ".mp4": ("video", "video/mp4"), ".mov": ("video", "video/quicktime"),
-    ".webm": ("video", "video/webm"), ".mkv": ("video", "video/x-matroska"),
-    ".mp3": ("audio", "audio/mpeg"), ".m4a": ("audio", "audio/mp4"),
-    ".ogg": ("audio", "audio/ogg"), ".oga": ("audio", "audio/ogg"),
-    ".opus": ("audio", "audio/opus"), ".wav": ("audio", "audio/wav"),
-    ".pdf": ("document", "application/pdf"), ".txt": ("document", "text/plain"),
+    ".jpg": ("image", "image/jpeg"),
+    ".jpeg": ("image", "image/jpeg"),
+    ".png": ("image", "image/png"),
+    ".gif": ("image", "image/gif"),
+    ".webp": ("image", "image/webp"),
+    ".heic": ("image", "image/heic"),
+    ".mp4": ("video", "video/mp4"),
+    ".mov": ("video", "video/quicktime"),
+    ".webm": ("video", "video/webm"),
+    ".mkv": ("video", "video/x-matroska"),
+    ".mp3": ("audio", "audio/mpeg"),
+    ".m4a": ("audio", "audio/mp4"),
+    ".ogg": ("audio", "audio/ogg"),
+    ".oga": ("audio", "audio/ogg"),
+    ".opus": ("audio", "audio/opus"),
+    ".wav": ("audio", "audio/wav"),
+    ".pdf": ("document", "application/pdf"),
+    ".txt": ("document", "text/plain"),
     ".zip": ("document", "application/zip"),
     ".doc": ("document", "application/msword"),
-    ".docx": ("document",
-              "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+    ".docx": (
+        "document",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ),
 }
 _ORPHAN_RE = re.compile(r"^telegram/(\d{4})/(\d{2})/(\d{2})/(\d+)_[^/]+$")
 _URL_LINE_RE = re.compile(r"^https?://\S+$", re.IGNORECASE)
@@ -107,9 +125,21 @@ _CLASSIFIERS: dict[str, tuple[str, str, bool, tuple[str, ...]]] = {
 #: Columns that legitimately differ between two runs (wall-clock defaults).
 _VOLATILE_COLUMNS = {("taxonomies", "created_at"), ("taxonomies", "updated_at")}
 _DIGEST_TABLES = (
-    "items", "instagram_posts", "telegram_messages", "tags", "item_tags", "media",
-    "links", "item_links", "link_fetches", "legacy_expanded_text", "taxonomies",
-    "classification_runs", "classification_results", "result_labels", "search_docs",
+    "items",
+    "instagram_posts",
+    "telegram_messages",
+    "tags",
+    "item_tags",
+    "media",
+    "links",
+    "item_links",
+    "link_fetches",
+    "legacy_expanded_text",
+    "taxonomies",
+    "classification_runs",
+    "classification_results",
+    "result_labels",
+    "search_docs",
 )
 
 _N_SAMPLES = 20
@@ -520,16 +550,29 @@ class _Migrator:
                     "INSERT INTO items (source, external_id, kind, text, author, url, "
                     "created_at, collected_at, updated_at) VALUES "
                     "('instagram', ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
-                    (row["shortcode"], kind, row["caption"], row["owner_username"],
-                     f"https://www.instagram.com/p/{row['shortcode']}/", created, collected,
-                     collected),
+                    (
+                        row["shortcode"],
+                        kind,
+                        row["caption"],
+                        row["owner_username"],
+                        f"https://www.instagram.com/p/{row['shortcode']}/",
+                        created,
+                        collected,
+                        collected,
+                    ),
                 ).fetchone()[0]
             )
             self.dst.execute(
                 "INSERT INTO instagram_posts (item_id, shortcode, owner_id, typename, likes, "
                 "comments) VALUES (?, ?, ?, ?, ?, ?)",
-                (item_id, row["shortcode"], row["owner_id"], typename, row["likes"],
-                 row["comments"]),
+                (
+                    item_id,
+                    row["shortcode"],
+                    row["owner_id"],
+                    typename,
+                    row["likes"],
+                    row["comments"],
+                ),
             )
             self.state.ig_items[int(row["id"])] = item_id
             self.state.item_text[item_id] = row["caption"]
@@ -577,8 +620,9 @@ class _Migrator:
                 mention_links += self._link_item_tags(item_id, "mention", [name])
         self.report.tags["instagram_hashtag_links"] = hashtag_links
         self.report.tags["instagram_mention_links"] = mention_links
-        self._ig_expanded = [(self.state.ig_items[r["id"]], r["expanded"]) for r in rows
-                             if r["expanded"]]
+        self._ig_expanded = [
+            (self.state.ig_items[r["id"]], r["expanded"]) for r in rows if r["expanded"]
+        ]
 
     def telegram(self) -> None:
         if not self._has("telegram_messages"):
@@ -624,12 +668,20 @@ class _Migrator:
             self.dst.execute(
                 "INSERT INTO telegram_messages (item_id, chat_id, message_id, views, forwards, "
                 "reply_to_msg_id) VALUES (?, ?, ?, ?, ?, ?)",
-                (item_id, chat_id, int(row["message_id"]), row["views"], row["forwards"],
-                 row["reply_to_msg_id"]),
+                (
+                    item_id,
+                    chat_id,
+                    int(row["message_id"]),
+                    row["views"],
+                    row["forwards"],
+                    row["reply_to_msg_id"],
+                ),
             )
             self.state.tg_items[int(row["id"])] = item_id
             self.state.tg_by_message[int(row["message_id"])] = (
-                int(row["id"]), item_id, row["created_at"]
+                int(row["id"]),
+                item_id,
+                row["created_at"],
             )
             self.state.item_text[item_id] = row["content"]
             self.state.item_collected[item_id] = collected
@@ -765,9 +817,16 @@ class _Migrator:
         self.report.media["orphans_recovered"] = recovered
         self.report.media["orphans_unmatched"] = len(unmatched)
         self.report.media["orphans_ambiguous"] = len(ambiguous)
-        for key in ("unmatched_no_message", "unmatched_out_of_window", "unmatched_bad_date",
-                    "unmatched_no_created_at", "ambiguous_message_has_media",
-                    "ambiguous_several_files", "unreferenced_other", "files_on_disk"):
+        for key in (
+            "unmatched_no_message",
+            "unmatched_out_of_window",
+            "unmatched_bad_date",
+            "unmatched_no_created_at",
+            "ambiguous_message_has_media",
+            "ambiguous_several_files",
+            "unreferenced_other",
+            "files_on_disk",
+        ):
             self.report.media[f"files_{key}" if key != "files_on_disk" else key] = stats[key]
         self.report.unmatched_files = sorted(unmatched)
         self.report.ambiguous_files = sorted(ambiguous)
@@ -896,10 +955,9 @@ class _Migrator:
         ).fetchall()
         stats: Counter[str] = Counter()
         # run key -> item -> v1 run_id group -> rows
-        grouped: dict[tuple[str, str | None, str | None],
-                      dict[int, dict[str, list[sqlite3.Row]]]] = defaultdict(
-            lambda: defaultdict(lambda: defaultdict(list))
-        )
+        grouped: dict[
+            tuple[str, str | None, str | None], dict[int, dict[str, list[sqlite3.Row]]]
+        ] = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
         run_rows: dict[tuple[str, str | None, str | None], list[sqlite3.Row]] = defaultdict(list)
         labels_seen: dict[str, set[str]] = defaultdict(set)
         for row in rows:
@@ -912,8 +970,10 @@ class _Migrator:
             if source == "telegram" and content_id in self.state.test_tg_ids:
                 stats["rows_test_dropped"] += 1
                 continue
-            mapping = self.state.ig_items if source == "instagram" else (
-                self.state.tg_items if source == "telegram" else {}
+            mapping = (
+                self.state.ig_items
+                if source == "instagram"
+                else (self.state.tg_items if source == "telegram" else {})
             )
             item_id = mapping.get(content_id)
             if item_id is None:
@@ -935,8 +995,13 @@ class _Migrator:
             )
 
         ordered = sorted(
-            grouped, key=lambda k: (min(r["analyzed_at"] or "" for r in run_rows[k]), k[0],
-                                    k[1] or "", k[2] or "")
+            grouped,
+            key=lambda k: (
+                min(r["analyzed_at"] or "" for r in run_rows[k]),
+                k[0],
+                k[1] or "",
+                k[2] or "",
+            ),
         )
         for key in ordered:
             classifier, provider, model = key
@@ -953,7 +1018,11 @@ class _Migrator:
             started = _utc_ts(min(times)) if times else None
             finished = _utc_ts(max(times)) if times else None
             run_id = repo.create_run(
-                taxonomy.id, provider=provider, model=model, params=params, status="legacy",
+                taxonomy.id,
+                provider=provider,
+                model=model,
+                params=params,
+                status="legacy",
                 started_at=started,
             )
             n_results = n_labels = superseded = duplicates = conflicts = 0
@@ -961,12 +1030,15 @@ class _Migrator:
                 groups = grouped[key][item_id]
                 chosen_key = max(
                     groups,
-                    key=lambda g: (max(r["analyzed_at"] or "" for r in groups[g]),
-                                   max(int(r["id"]) for r in groups[g])),
+                    key=lambda g: (
+                        max(r["analyzed_at"] or "" for r in groups[g]),
+                        max(int(r["id"]) for r in groups[g]),
+                    ),
                 )
                 superseded += sum(len(v) for g, v in groups.items() if g != chosen_key)
-                chosen = sorted(groups[chosen_key], key=lambda r: (r["analyzed_at"] or "",
-                                                                  int(r["id"])))
+                chosen = sorted(
+                    groups[chosen_key], key=lambda r: (r["analyzed_at"] or "", int(r["id"]))
+                )
                 best: dict[str, float | None] = {}
                 for r in chosen:
                     conf = _confidence(r["confidence"])
@@ -984,8 +1056,7 @@ class _Migrator:
                 confidence = max(known) if known else None
                 reasoning = next((r["reasoning"] for r in chosen if r["reasoning"]), None)
                 details: str | None = None
-                raw_details = next((r["details_json"] for r in chosen if r["details_json"]),
-                                   None)
+                raw_details = next((r["details_json"] for r in chosen if r["details_json"]), None)
                 if raw_details is not None:
                     try:
                         details = json.dumps(json.loads(raw_details), ensure_ascii=False)
@@ -1006,9 +1077,7 @@ class _Migrator:
                 )
                 n_results += 1
                 n_labels += len(best)
-            finished_dt = (
-                datetime.fromisoformat(finished[:-1] + "+00:00") if finished else None
-            )
+            finished_dt = datetime.fromisoformat(finished[:-1] + "+00:00") if finished else None
             repo.finish_run(run_id, status="legacy", finished_at=finished_dt)
             cls["runs"].append(
                 {
@@ -1069,16 +1138,27 @@ class _Migrator:
         exp_ig = _scalar(src, "SELECT count(*) FROM instagram_posts") if has_ig else 0
         exp_tg = (
             _scalar(src, f"SELECT count(*) FROM telegram_messages WHERE {test_sql}", test_params)
-            if has_tg else 0
+            if has_tg
+            else 0
         )
-        expect("items.instagram", exp_ig,
-               _scalar(dst, "SELECT count(*) FROM items WHERE source = 'instagram'"))
-        expect("items.telegram", exp_tg,
-               _scalar(dst, "SELECT count(*) FROM items WHERE source = 'telegram'"))
-        expect("detail.instagram_posts", exp_ig,
-               _scalar(dst, "SELECT count(*) FROM instagram_posts"))
-        expect("detail.telegram_messages", exp_tg,
-               _scalar(dst, "SELECT count(*) FROM telegram_messages"))
+        expect(
+            "items.instagram",
+            exp_ig,
+            _scalar(dst, "SELECT count(*) FROM items WHERE source = 'instagram'"),
+        )
+        expect(
+            "items.telegram",
+            exp_tg,
+            _scalar(dst, "SELECT count(*) FROM items WHERE source = 'telegram'"),
+        )
+        expect(
+            "detail.instagram_posts", exp_ig, _scalar(dst, "SELECT count(*) FROM instagram_posts")
+        )
+        expect(
+            "detail.telegram_messages",
+            exp_tg,
+            _scalar(dst, "SELECT count(*) FROM telegram_messages"),
+        )
 
         def ig_tag_counts(kind: str) -> tuple[int, int]:
             row = dst.execute(
@@ -1160,7 +1240,8 @@ class _Migrator:
         self.report.verification = checks
         self.report.mismatches = [
             f"{c['check']}: expected {c['expected']!r}, got {c['actual']!r}"
-            for c in checks if not c["ok"]
+            for c in checks
+            if not c["ok"]
         ] + sample_mismatches
 
     def _verify_classifications(self, expect: Callable[..., None]) -> None:
@@ -1223,13 +1304,24 @@ class _Migrator:
             run_id = actual_runs.get(key)
             label = f"{key[0]}/{key[2]}"
             actual_results = (
-                _scalar(self.dst, "SELECT count(*) FROM classification_results WHERE run_id = ?",
-                        (run_id,)) if run_id else 0
+                _scalar(
+                    self.dst,
+                    "SELECT count(*) FROM classification_results WHERE run_id = ?",
+                    (run_id,),
+                )
+                if run_id
+                else 0
             )
             actual_labels = (
-                _scalar(self.dst, "SELECT count(*) FROM result_labels AS rl "
-                        "JOIN classification_results AS cr ON cr.id = rl.result_id "
-                        "WHERE cr.run_id = ?", (run_id,)) if run_id else 0
+                _scalar(
+                    self.dst,
+                    "SELECT count(*) FROM result_labels AS rl "
+                    "JOIN classification_results AS cr ON cr.id = rl.result_id "
+                    "WHERE cr.run_id = ?",
+                    (run_id,),
+                )
+                if run_id
+                else 0
             )
             expect(f"classification.results[{label}]", expected_results, actual_results)
             expect(f"classification.labels[{label}]", labels.get(key, 0), actual_labels)
@@ -1252,24 +1344,36 @@ class _Migrator:
             if source == "instagram":
                 row = self.src.execute(
                     "SELECT caption AS text, owner_username AS author, created_at "
-                    "FROM instagram_posts WHERE id = ?", (v1_id,)
+                    "FROM instagram_posts WHERE id = ?",
+                    (v1_id,),
                 ).fetchone()
                 expected_created = _convert_ig_created(row["created_at"], self.instagram_tz)
-                hashtags = {
-                    normalize_tag_name(r[0]) for r in self.src.execute(
-                        "SELECT hashtag FROM instagram_hashtags WHERE post_id = ?", (v1_id,)
-                    ).fetchall()
-                } if self._has("instagram_hashtags") else set()
-                mentions = {
-                    normalize_tag_name(r[0]) for r in self.src.execute(
-                        "SELECT username FROM instagram_mentions WHERE post_id = ?", (v1_id,)
-                    ).fetchall()
-                } if self._has("instagram_mentions") else set()
+                hashtags = (
+                    {
+                        normalize_tag_name(r[0])
+                        for r in self.src.execute(
+                            "SELECT hashtag FROM instagram_hashtags WHERE post_id = ?", (v1_id,)
+                        ).fetchall()
+                    }
+                    if self._has("instagram_hashtags")
+                    else set()
+                )
+                mentions = (
+                    {
+                        normalize_tag_name(r[0])
+                        for r in self.src.execute(
+                            "SELECT username FROM instagram_mentions WHERE post_id = ?", (v1_id,)
+                        ).fetchall()
+                    }
+                    if self._has("instagram_mentions")
+                    else set()
+                )
                 item_id = self.state.ig_items[v1_id]
             else:
                 row = self.src.execute(
                     "SELECT content AS text, NULL AS author, created_at "
-                    "FROM telegram_messages WHERE id = ?", (v1_id,)
+                    "FROM telegram_messages WHERE id = ?",
+                    (v1_id,),
                 ).fetchone()
                 expected_created = _utc_ts(row["created_at"])
                 hashtags = set(extract_hashtags(row["text"]))
@@ -1282,9 +1386,11 @@ class _Migrator:
                 "SELECT text, author, created_at FROM items WHERE id = ?", (item_id,)
             ).fetchone()
             got_tags = {
-                (r[0], r[1]) for r in self.dst.execute(
+                (r[0], r[1])
+                for r in self.dst.execute(
                     "SELECT t.kind, t.name FROM item_tags AS it JOIN tags AS t "
-                    "ON t.id = it.tag_id WHERE it.item_id = ?", (item_id,)
+                    "ON t.id = it.tag_id WHERE it.item_id = ?",
+                    (item_id,),
                 ).fetchall()
             }
             for name, expected, actual in (
@@ -1375,7 +1481,11 @@ def migrate_v1(
             with _timed(report, "schema"):
                 run_migrations(dst)
             migrator = _Migrator(
-                src, dst, report, downloads_dir=downloads_dir, instagram_tz=instagram_tz,
+                src,
+                dst,
+                report,
+                downloads_dir=downloads_dir,
+                instagram_tz=instagram_tz,
                 test_chat_ids=test_chat_ids,
             )
             migrator.source_counts()
@@ -1436,7 +1546,9 @@ def migrate_v1(
     report.timings_s["total"] = round(time.perf_counter() - total_start, 3)
     logger.info(
         "Migrated v1 %s -> %s (%d instagram, %d telegram items)",
-        source, target, report.items.get("instagram", 0), report.items.get("telegram", 0),
+        source,
+        target,
+        report.items.get("instagram", 0),
+        report.items.get("telegram", 0),
     )
     return report
-

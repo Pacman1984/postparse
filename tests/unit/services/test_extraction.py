@@ -40,11 +40,19 @@ def db(settings: Settings) -> Database:
 
 def service(db, settings, env, client=None, feed=None, loader=None, **ig) -> ExtractionService:
     return ExtractionService(
-        db, settings, env=env,
-        telegram_overrides={"client_factory": client_factory(client or FakeTelegramClient()),
-                            "sleep": no_sleep},
-        instagram_overrides={"loader_factory": loader_factory(loader or FakeLoader()),
-                             "saved_posts": feed or Feed([]), "sleep": SleepRecorder(), **ig},
+        db,
+        settings,
+        env=env,
+        telegram_overrides={
+            "client_factory": client_factory(client or FakeTelegramClient()),
+            "sleep": no_sleep,
+        },
+        instagram_overrides={
+            "loader_factory": loader_factory(loader or FakeLoader()),
+            "saved_posts": feed or Feed([]),
+            "sleep": SleepRecorder(),
+            **ig,
+        },
     )
 
 
@@ -54,7 +62,10 @@ def test_telegram_report(db: Database, settings: Settings) -> None:
     report = service(db, settings, TG_ENV, client=client).telegram(progress=events.append)
 
     assert (report.new, report.updated, report.stopped_reason, report.ok) == (
-        3, 0, "end_of_feed", True,
+        3,
+        0,
+        "end_of_feed",
+        True,
     )
     assert report.processed == 3 and report.duration_s >= 0
     assert events and events[-1].new == 3
@@ -68,15 +79,16 @@ def test_telegram_missing_credentials(db: Database, settings: Settings) -> None:
 
 
 def test_telegram_not_authorized_non_interactive(db: Database, settings: Settings) -> None:
-    report = service(
-        db, settings, TG_ENV, client=FakeTelegramClient(authorized=False)
-    ).telegram(interactive=False)
+    report = service(db, settings, TG_ENV, client=FakeTelegramClient(authorized=False)).telegram(
+        interactive=False
+    )
     assert report.stopped_reason == "auth_required"
 
 
 def test_instagram_rate_limit_gives_partial_report(db: Database, settings: Settings) -> None:
-    feed = Feed([ig_post(ig_node(c)) for c in "abcd"], fail_at=3,
-                error=TooManyRequestsException("429"))
+    feed = Feed(
+        [ig_post(ig_node(c)) for c in "abcd"], fail_at=3, error=TooManyRequestsException("429")
+    )
     report = service(db, settings, IG_ENV, feed=feed).instagram(batch_size=2)
 
     assert report.stopped_reason == "rate_limited"
@@ -89,12 +101,20 @@ def test_instagram_refresh_dates_keeps_collect_reason(db: Database, settings: Se
     from postparse.core.db.repos import ItemsRepo
 
     with db.transaction() as conn:
-        ItemsRepo(conn).upsert(ItemUpsert(
-            source="instagram", external_id="old", kind="image",
-            created_at="2020-01-01T00:00:00+00:00", detail=InstagramDetail(shortcode="old"),
-        ))
+        ItemsRepo(conn).upsert(
+            ItemUpsert(
+                source="instagram",
+                external_id="old",
+                kind="image",
+                created_at="2020-01-01T00:00:00+00:00",
+                detail=InstagramDetail(shortcode="old"),
+            )
+        )
     svc = service(
-        db, settings, IG_ENV, feed=Feed([ig_post(ig_node("new"))]),
+        db,
+        settings,
+        IG_ENV,
+        feed=Feed([ig_post(ig_node("new"))]),
         post_from_shortcode=lambda loader, code: ig_post(ig_node(code)),
     )
     report = svc.instagram(refresh_dates=True)

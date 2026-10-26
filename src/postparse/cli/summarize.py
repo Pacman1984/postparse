@@ -95,13 +95,18 @@ def run_summaries(
         def on_progress(update: SummarizationProgress) -> None:
             r = update.report
             progress.update(
-                task, total=update.total, completed=update.handled,
+                task,
+                total=update.total,
+                completed=update.handled,
                 description=f"ok {r.summarized} · empty {r.skipped_empty} · err {r.errors}",
             )
 
         try:
             report = service.run(
-                limit=limit, provider=provider, force=force, item_ids=item_ids,
+                limit=limit,
+                provider=provider,
+                force=force,
+                item_ids=item_ids,
                 progress=on_progress,
             )
         except ValueError as exc:
@@ -133,8 +138,14 @@ def summarize() -> None:
 @click.option("--item", "item_ids", type=int, multiple=True, help="Only this item (repeatable)")
 @click.option("--db", "db_path", type=click.Path(dir_okay=False), help=_DB_OPTION_HELP)
 @click.pass_context
-def run(ctx: click.Context, limit: int | None, provider: str | None, force: bool,
-        item_ids: tuple[int, ...], db_path: str | None) -> None:
+def run(
+    ctx: click.Context,
+    limit: int | None,
+    provider: str | None,
+    force: bool,
+    item_ids: tuple[int, ...],
+    db_path: str | None,
+) -> None:
     """Summarize items with a transcript and no summary newer than it.
 
     Examples:
@@ -144,7 +155,11 @@ def run(ctx: click.Context, limit: int | None, provider: str | None, force: bool
     """
     service = _build_service(ctx, db_path)
     report = run_summaries(
-        ctx, service, limit=limit, provider=provider, force=force,
+        ctx,
+        service,
+        limit=limit,
+        provider=provider,
+        force=force,
         item_ids=list(item_ids) or None,
     )
     if report.errors and not report.summarized:

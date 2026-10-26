@@ -172,9 +172,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 from pythonjsonlogger.json import JsonFormatter
 
                 json_handler = logging.StreamHandler()
-                formatter = JsonFormatter(
-                    '%(asctime)s %(name)s %(levelname)s %(message)s'
-                )
+                formatter = JsonFormatter("%(asctime)s %(name)s %(levelname)s %(message)s")
                 json_handler.setFormatter(formatter)
                 logger.handlers = [json_handler]
             except ImportError:
@@ -196,8 +194,16 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             Output: {"user": {"token": "***REDACTED***"}, "tags": [{"api_key": "***REDACTED***"}]}
         """
         sensitive_fields = {
-            "password", "token", "secret", "api_key", "apikey", "api_hash",
-            "authorization", "auth", "credential", "private_key"
+            "password",
+            "token",
+            "secret",
+            "api_key",
+            "apikey",
+            "api_hash",
+            "authorization",
+            "auth",
+            "credential",
+            "private_key",
         }
 
         normalized_sensitive_fields = {
@@ -210,9 +216,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 # Convert camelCase/PascalCase keys into tokenizable snake_case.
                 key_snake = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", str(key))
                 key_normalized = key_snake.lower()
-                key_parts = [
-                    part for part in re.split(r"[^a-z0-9]+", key_normalized) if part
-                ]
+                key_parts = [part for part in re.split(r"[^a-z0-9]+", key_normalized) if part]
                 compact_key = re.sub(r"[^a-z0-9]", "", key_normalized)
                 if (
                     key_normalized in sensitive_fields
@@ -255,10 +259,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             True when payload should be treated as JSON.
         """
         content_type_lower = content_type.lower()
-        return (
-            "application/json" in content_type_lower
-            or "+json" in content_type_lower
-        )
+        return "application/json" in content_type_lower or "+json" in content_type_lower
 
     def _is_sensitive_non_json_endpoint(self, path: str) -> bool:
         """
@@ -378,8 +379,14 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
         # Common filter fields
         filter_fields = {
-            "hashtags", "date_range", "content_type", "owner_username",
-            "channel_username", "limit", "cursor", "offset"
+            "hashtags",
+            "date_range",
+            "content_type",
+            "owner_username",
+            "channel_username",
+            "limit",
+            "cursor",
+            "offset",
         }
 
         for field in filter_fields:
@@ -431,7 +438,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 "status": response.status_code,
                 "duration": round(processing_time, 3),
                 "client_ip": client_ip,
-                "user_agent": user_agent
+                "user_agent": user_agent,
             }
 
             if filters:
@@ -485,7 +492,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 "client_ip": client_ip,
                 "user_agent": user_agent,
                 "error": str(e),
-                "error_type": type(e).__name__
+                "error_type": type(e).__name__,
             }
 
             if filters:
@@ -504,7 +511,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 logger.error(
                     f"[{request_id}] {request.method} {request.url.path} - "
                     f"Error: {str(e)} - Time: {processing_time:.3f}s",
-                    exc_info=True
+                    exc_info=True,
                 )
 
             # Re-raise the exception
@@ -531,8 +538,7 @@ def configure_cors(app, config: ConfigManager) -> None:
     """
     # Get CORS configuration
     allowed_origins = config.get(
-        "api.cors.allowed_origins",
-        ["http://localhost:3000", "http://localhost:3001"]
+        "api.cors.allowed_origins", ["http://localhost:3000", "http://localhost:3001"]
     )
     allow_credentials = config.get("api.cors.allow_credentials", True)
     allowed_methods = config.get("api.cors.allowed_methods", ["*"])
@@ -619,7 +625,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             if client_ip not in self._buckets:
                 self._buckets[client_ip] = {
                     "tokens": self.requests_per_minute + self.burst_size,
-                    "last_refill": current_time
+                    "last_refill": current_time,
                 }
 
             bucket = self._buckets[client_ip]
@@ -644,8 +650,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 return True
             else:
                 logger.warning(
-                    f"Rate limit exceeded for {client_ip} "
-                    f"(tokens: {bucket['tokens']:.2f})"
+                    f"Rate limit exceeded for {client_ip} (tokens: {bucket['tokens']:.2f})"
                 )
                 return False
 
@@ -663,18 +668,14 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         with self._lock:
             buckets_to_remove = [
-                ip for ip, bucket in self._buckets.items()
-                if bucket["last_refill"] < cutoff_time
+                ip for ip, bucket in self._buckets.items() if bucket["last_refill"] < cutoff_time
             ]
 
             for ip in buckets_to_remove:
                 del self._buckets[ip]
 
             if buckets_to_remove:
-                logger.info(
-                    f"Cleaned up {len(buckets_to_remove)} inactive "
-                    f"rate limit buckets"
-                )
+                logger.info(f"Cleaned up {len(buckets_to_remove)} inactive rate limit buckets")
 
         self._last_cleanup = current_time
 
@@ -710,11 +711,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 content={
                     "error_code": "RATE_LIMIT_EXCEEDED",
                     "message": "Too many requests. Please try again later.",
-                    "details": {
-                        "limit": self.requests_per_minute,
-                        "window": "1 minute"
-                    }
-                }
+                    "details": {"limit": self.requests_per_minute, "window": "1 minute"},
+                },
             )
 
         # Periodic cleanup of old buckets
@@ -723,4 +721,3 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             self._cleanup_old_buckets()
 
         return await call_next(request)
-

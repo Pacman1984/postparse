@@ -304,9 +304,7 @@ class MediaRepo:
         )
         return next_at
 
-    def set_remote_url(
-        self, media_id: int, url: str, seen_at: datetime | None = None
-    ) -> None:
+    def set_remote_url(self, media_id: int, url: str, seen_at: datetime | None = None) -> None:
         """Store a (fresh) remote URL and when it was observed."""
         seen = to_db_ts(seen_at) if seen_at is not None else utcnow_ts()
         self.conn.execute(

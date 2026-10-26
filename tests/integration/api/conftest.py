@@ -78,51 +78,105 @@ def seeded(db: Database) -> dict[str, int]:
         def add(key: str, **kwargs: Any) -> None:
             ids[key], _ = items.upsert(ItemUpsert(**kwargs))
 
-        add("pasta", source="instagram", external_id="SC_PASTA", kind="video",
+        add(
+            "pasta",
+            source="instagram",
+            external_id="SC_PASTA",
+            kind="video",
             text="Creamy pasta carbonara rezept https://example.com/carbonara",
-            author="chef", url="https://www.instagram.com/p/SC_PASTA/",
-            created_at="2024-03-10T12:00:00Z", hashtags=("pasta", "dinner"),
+            author="chef",
+            url="https://www.instagram.com/p/SC_PASTA/",
+            created_at="2024-03-10T12:00:00Z",
+            hashtags=("pasta", "dinner"),
             mentions=("friend",),
-            detail=InstagramDetail("SC_PASTA", owner_id=7, typename="GraphVideo",
-                                   likes=120, comments=4),
-            media=(MediaInput(0, "video", remote_url="https://cdn.example/pasta.mp4"),))
-        add("cake", source="instagram", external_id="SC_CAKE", kind="image",
-            text="Chocolate cake recipe", author="baker",
-            created_at="2024-02-01T08:00:00Z", hashtags=("dessert",),
+            detail=InstagramDetail(
+                "SC_PASTA", owner_id=7, typename="GraphVideo", likes=120, comments=4
+            ),
+            media=(MediaInput(0, "video", remote_url="https://cdn.example/pasta.mp4"),),
+        )
+        add(
+            "cake",
+            source="instagram",
+            external_id="SC_CAKE",
+            kind="image",
+            text="Chocolate cake recipe",
+            author="baker",
+            created_at="2024-02-01T08:00:00Z",
+            hashtags=("dessert",),
             detail=InstagramDetail("SC_CAKE", likes=10, comments=1),
-            media=(MediaInput(0, "image", remote_url="https://cdn.example/cake.jpg"),))
-        add("carousel", source="instagram", external_id="SC_TRIP", kind="carousel",
-            text="Beach trip photos", author="chef",
-            created_at="2023-07-01T10:00:00Z", hashtags=("travel",),
-            detail=InstagramDetail("SC_TRIP"))
-        add("python", source="telegram", external_id="100:1", kind="text",
-            text="New Python release notes #python", author="pychannel",
-            created_at="2024-03-31T23:59:59Z", hashtags=("python",),
-            detail=TelegramDetail(100, 1, views=50))
-        add("undated", source="telegram", external_id="100:2", kind="document",
-            text="Undated pasta document", author="pychannel",
-            collected_at="2024-01-15T00:00:00Z", hashtags=("pasta",),
-            detail=TelegramDetail(100, 2))
-        add("undated2", source="telegram", external_id="100:3", kind="text",
-            text="Another undated note", author="other",
+            media=(MediaInput(0, "image", remote_url="https://cdn.example/cake.jpg"),),
+        )
+        add(
+            "carousel",
+            source="instagram",
+            external_id="SC_TRIP",
+            kind="carousel",
+            text="Beach trip photos",
+            author="chef",
+            created_at="2023-07-01T10:00:00Z",
+            hashtags=("travel",),
+            detail=InstagramDetail("SC_TRIP"),
+        )
+        add(
+            "python",
+            source="telegram",
+            external_id="100:1",
+            kind="text",
+            text="New Python release notes #python",
+            author="pychannel",
+            created_at="2024-03-31T23:59:59Z",
+            hashtags=("python",),
+            detail=TelegramDetail(100, 1, views=50),
+        )
+        add(
+            "undated",
+            source="telegram",
+            external_id="100:2",
+            kind="document",
+            text="Undated pasta document",
+            author="pychannel",
             collected_at="2024-01-15T00:00:00Z",
-            detail=TelegramDetail(100, 3))
+            hashtags=("pasta",),
+            detail=TelegramDetail(100, 2),
+        )
+        add(
+            "undated2",
+            source="telegram",
+            external_id="100:3",
+            kind="text",
+            text="Another undated note",
+            author="other",
+            collected_at="2024-01-15T00:00:00Z",
+            detail=TelegramDetail(100, 3),
+        )
 
         media_id = MediaRepo(conn).for_item(ids["pasta"])[0].id
         TranscriptsRepo(conn).add(
-            media_id, backend="whisper", model="small", text="stir the guanciale",
-            language="it", segments=[{"start": 0.0, "end": 1.5, "text": "stir the guanciale"}],
+            media_id,
+            backend="whisper",
+            model="small",
+            text="stir the guanciale",
+            language="it",
+            segments=[{"start": 0.0, "end": 1.5, "text": "stir the guanciale"}],
             duration_s=1.5,
         )
         MediaRepo(conn).mark_transcribed(media_id)
         SummariesRepo(conn).add(
-            ids["pasta"], "A carbonara video.\n\n- Use guanciale\n- No cream",
-            provider="fake", model="fake-model",
+            ids["pasta"],
+            "A carbonara video.\n\n- Use guanciale\n- No cream",
+            provider="fake",
+            model="fake-model",
         )
         links = LinksRepo(conn)
         link_id = links.for_items([ids["pasta"]])[ids["pasta"]][0].id
-        links.add_fetch(link_id, fetcher="generic", status="ok", http_status=200,
-                        title="Carbonara", text="The classic recipe")
+        links.add_fetch(
+            link_id,
+            fetcher="generic",
+            status="ok",
+            http_status=200,
+            title="Carbonara",
+            text="The classic recipe",
+        )
 
         repo = ClassificationRepo(conn)
         tax = repo.ensure_taxonomy("topics", "multi", ["recipe", "tech", "travel"])
@@ -140,7 +194,10 @@ def classification(
 ) -> ClassificationService:
     """Classification service with the ``topics`` taxonomy and the fake keyword model."""
     return ClassificationService(
-        db, settings, config=config, taxonomies={"topics": TOPICS},
+        db,
+        settings,
+        config=config,
+        taxonomies={"topics": TOPICS},
         classifier_factory=fake_classifier_factory(),
     )
 

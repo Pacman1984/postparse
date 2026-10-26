@@ -53,9 +53,21 @@ TranscriptResult = tuple[str, str, bool]
 YtDlpExtract = Callable[[str], dict[str, Any] | None]
 TranscriptFetcher = Callable[[str, Sequence[str]], TranscriptResult | None]
 
-_YTDLP_FIELDS = ("title", "channel", "channel_id", "uploader", "upload_date", "duration",
-                 "view_count", "like_count", "categories", "tags", "language", "is_live",
-                 "availability")
+_YTDLP_FIELDS = (
+    "title",
+    "channel",
+    "channel_id",
+    "uploader",
+    "upload_date",
+    "duration",
+    "view_count",
+    "like_count",
+    "categories",
+    "tags",
+    "language",
+    "is_live",
+    "availability",
+)
 
 
 def youtube_video_id(url: str) -> str | None:
@@ -119,9 +131,7 @@ def default_ytdlp_extract(url: str, *, timeout: float = 15.0) -> dict[str, Any] 
         return ydl.sanitize_info(info) if info else None
 
 
-def default_transcript_fetcher(
-    video_id: str, languages: Sequence[str]
-) -> TranscriptResult | None:
+def default_transcript_fetcher(video_id: str, languages: Sequence[str]) -> TranscriptResult | None:
     """Fetch a transcript with youtube-transcript-api (preferred languages, then any)."""
     from youtube_transcript_api import NoTranscriptFound, YouTubeTranscriptApi
 
@@ -210,8 +220,11 @@ class YouTubeFetcher:
         title: str | None = None
         if oembed:
             title = oembed.get("title") or None
-            for key, target in (("author_name", "channel"), ("author_url", "channel_url"),
-                                ("thumbnail_url", "thumbnail")):
+            for key, target in (
+                ("author_name", "channel"),
+                ("author_url", "channel_url"),
+                ("thumbnail_url", "thumbnail"),
+            ):
                 if oembed.get(key):
                     metadata[target] = oembed[key]
 
@@ -269,9 +282,7 @@ class YouTubeFetcher:
         if chapters:
             parts.append(
                 "Chapters:\n"
-                + "\n".join(
-                    f"{_format_duration(c['start'] or 0)} {c['title']}" for c in chapters
-                )
+                + "\n".join(f"{_format_duration(c['start'] or 0)} {c['title']}" for c in chapters)
             )
         if transcript is not None:
             parts.append(f"Transcript ({transcript[0]}):\n{transcript[1]}")

@@ -240,4 +240,3 @@ def get_taxonomies(
 ) -> dict[str, TaxonomySpec]:
     """Return the configured taxonomies (``topics`` fallback included)."""
     return dict(service.taxonomies)
-

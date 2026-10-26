@@ -34,9 +34,7 @@ NEW_ROUTES = {
 def _routes(config, settings) -> set[str]:
     app = create_app(config=config, settings=settings)
     spec = app.openapi()
-    routes = {
-        f"{method.upper()} {path}" for path, ops in spec["paths"].items() for method in ops
-    }
+    routes = {f"{method.upper()} {path}" for path, ops in spec["paths"].items() for method in ops}
     # FastAPI >= 0.14x keeps included routers nested; iter_route_contexts flattens them.
     routes |= {
         f"WS {ctx.path}"

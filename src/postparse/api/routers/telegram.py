@@ -135,8 +135,12 @@ def get_job_status(
 )
 def get_messages(
     limit: int = Query(default=50, ge=1, le=100, description="Maximum results to return"),
-    offset: int = Query(default=0, ge=0, deprecated=True,
-                        description="Deprecated: number of results to skip; use cursor"),
+    offset: int = Query(
+        default=0,
+        ge=0,
+        deprecated=True,
+        description="Deprecated: number of results to skip; use cursor",
+    ),
     channel_username: str | None = Query(default=None, description="Filter by author/channel"),
     cursor: str | None = Query(default=None, description="next_cursor of the previous page"),
     tags: list[str] = Query(default=[], description="Tag filter (any of)"),
@@ -146,20 +150,27 @@ def get_messages(
 ) -> PaginatedResponse[TelegramMessageSchema]:
     """List messages."""
     item_filter = item_filter_or_400(
-        source="telegram", q=q, tags=tags,
+        source="telegram",
+        q=q,
+        tags=tags,
         authors=[channel_username.lstrip("@")] if channel_username else [],
     )
     position, exhausted = resolve_cursor(query, item_filter, cursor, offset)
     total = query.count(item_filter)
     if exhausted:
-        return PaginatedResponse(items=[], total=total, limit=limit, offset=offset,
-                                 next_cursor=None, has_more=False)
+        return PaginatedResponse(
+            items=[], total=total, limit=limit, offset=offset, next_cursor=None, has_more=False
+        )
     page = query.search(item_filter, cursor=position, limit=limit)
     details = query.source_details([v.id for v in page.items])
     messages = [telegram_message(v, details[v.id][1], details[v.id][2]) for v in page.items]
     return PaginatedResponse(
-        items=messages, total=total, limit=limit, offset=offset,
-        next_cursor=page.next_cursor, has_more=page.next_cursor is not None,
+        items=messages,
+        total=total,
+        limit=limit,
+        offset=offset,
+        next_cursor=page.next_cursor,
+        has_more=page.next_cursor is not None,
     )
 
 

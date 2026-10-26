@@ -24,17 +24,16 @@ import os
 import shutil
 import sqlite3
 import tempfile
-import pytest
 import warnings
-from pathlib import Path
 from contextlib import contextmanager
-from typing import List, Optional
+from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import urlparse
 
+import pytest
 
 # pytest-asyncio is configured in pyproject.toml (asyncio_mode, loop scopes).
-pytest_plugins = ('pytest_asyncio',)
+pytest_plugins = ("pytest_asyncio",)
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -56,10 +55,10 @@ _CREDENTIAL_ENV_VARS = (
     "_POSTPARSE_ENV_FILE",
 )
 
-_isolation_violations: List[str] = []
-_dotenv_violations: List[str] = []
+_isolation_violations: list[str] = []
+_dotenv_violations: list[str] = []
 _original_cwd: Path = Path.cwd()
-_session_dir: Optional[Path] = None
+_session_dir: Path | None = None
 _original_sqlite_connect = sqlite3.connect
 
 
@@ -76,7 +75,7 @@ def _is_inside(path: Path, parent: Path) -> bool:
         return False
 
 
-def _sqlite_target_path(database, uri: bool) -> Optional[Path]:
+def _sqlite_target_path(database, uri: bool) -> Path | None:
     """Return the filesystem path a sqlite3.connect() call would open, or None."""
     if isinstance(database, bytes):
         database = database.decode(errors="replace")
@@ -222,7 +221,8 @@ async def cleanup_tasks():
         if loop.is_running():
             # Get all tasks except current
             pending = [
-                task for task in asyncio.all_tasks(loop)
+                task
+                for task in asyncio.all_tasks(loop)
                 if not task.done() and task is not asyncio.current_task()
             ]
 
@@ -234,10 +234,9 @@ async def cleanup_tasks():
                 # Wait for all tasks to be cancelled with timeout
                 try:
                     await asyncio.wait_for(
-                        asyncio.gather(*pending, return_exceptions=True),
-                        timeout=5.0
+                        asyncio.gather(*pending, return_exceptions=True), timeout=5.0
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # Tasks didn't cancel in time, that's okay
                     pass
                 except Exception:
@@ -259,24 +258,16 @@ def suppress_telethon_warnings():
     """
     # Suppress ResourceWarnings from Telethon coroutines
     warnings.filterwarnings(
-        "ignore",
-        category=ResourceWarning,
-        message=".*coroutine.*was never awaited.*"
+        "ignore", category=ResourceWarning, message=".*coroutine.*was never awaited.*"
     )
 
     # Suppress RuntimeWarnings from asyncio during Telethon cleanup
     warnings.filterwarnings(
-        "ignore",
-        category=RuntimeWarning,
-        message=".*coroutine.*was never awaited.*"
+        "ignore", category=RuntimeWarning, message=".*coroutine.*was never awaited.*"
     )
 
     # Suppress RuntimeWarnings about event loop closure
-    warnings.filterwarnings(
-        "ignore",
-        category=RuntimeWarning,
-        message=".*Event loop is closed.*"
-    )
+    warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*Event loop is closed.*")
 
     yield
 
@@ -288,23 +279,23 @@ class IsolationGuard:
     credential_env_vars = tuple(name for name in _CREDENTIAL_ENV_VARS)
 
     @property
-    def violations(self) -> List[str]:
+    def violations(self) -> list[str]:
         """All isolation violations recorded so far."""
         return list(_isolation_violations)
 
     @property
-    def dotenv_violations(self) -> List[str]:
+    def dotenv_violations(self) -> list[str]:
         """Blocked attempts to locate or read a repository ``.env`` file."""
         return list(_dotenv_violations)
 
-    def forget(self, messages: List[str]) -> None:
+    def forget(self, messages: list[str]) -> None:
         """Drop expected entries (used by tests of the guard itself)."""
         for message in messages:
             _dotenv_violations.remove(message)
             _isolation_violations.remove(message)
 
     @staticmethod
-    def set_credential_env_vars() -> List[str]:
+    def set_credential_env_vars() -> list[str]:
         """Names (never values) of credential variables present in ``os.environ``."""
         return [name for name in _CREDENTIAL_ENV_VARS if name in os.environ]
 
@@ -365,8 +356,8 @@ def _clear_llm_caches():
 @pytest.fixture(autouse=True)
 def _clear_cached_config():
     """Reset lru-cached config singletons so each test sees a fresh config."""
-    from postparse.core.utils import config as config_module
     from postparse.config import clear_settings_cache
+    from postparse.core.utils import config as config_module
 
     config_module.get_config.cache_clear()
     clear_settings_cache()

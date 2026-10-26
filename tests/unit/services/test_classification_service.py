@@ -63,13 +63,27 @@ def db(tmp_path: Path) -> Database:
     return Database.open(tmp_path / "classify.db")
 
 
-def _add(conn, ext: str, text: str | None, *, collected_at: str | None = None,
-         kind: str = "text", media: tuple[MediaInput, ...] | None = None,
-         source: str = "instagram") -> int:
+def _add(
+    conn,
+    ext: str,
+    text: str | None,
+    *,
+    collected_at: str | None = None,
+    kind: str = "text",
+    media: tuple[MediaInput, ...] | None = None,
+    source: str = "instagram",
+) -> int:
     detail = InstagramDetail(ext) if source == "instagram" else None
     item_id, _ = ItemsRepo(conn).upsert(
-        ItemUpsert(source, ext if source == "instagram" else f"1:{ext}", kind,  # type: ignore[arg-type]
-                   text=text, collected_at=collected_at, media=media, detail=detail)
+        ItemUpsert(
+            source,
+            ext if source == "instagram" else f"1:{ext}",
+            kind,  # type: ignore[arg-type]
+            text=text,
+            collected_at=collected_at,
+            media=media,
+            detail=detail,
+        )
     )
     return item_id
 
@@ -80,21 +94,23 @@ def seeded(db: Database) -> dict[str, int]:
     with db.transaction() as conn:
         repo = ClassificationRepo(conn)
         tax = repo.ensure_taxonomy(TOPICS.name, TOPICS.mode, TOPICS.db_labels())
-        conn.execute("UPDATE taxonomies SET created_at = ? WHERE id = ?",
-                     (TAXONOMY_CREATED, tax.id))
+        conn.execute(
+            "UPDATE taxonomies SET created_at = ? WHERE id = ?", (TAXONOMY_CREATED, tax.id)
+        )
         other = repo.ensure_taxonomy("legacy_other", "multi", ["x"])
 
         ids["new"] = _add(conn, "new", "A pasta recipe with tomatoes")
         ids["old_classified"] = _add(conn, "oldc", "Old travel post", collected_at=OLD)
         ids["old_never"] = _add(conn, "oldn", "Old tech post", collected_at=OLD)
         ids["empty"] = _add(conn, "empty", "   ")
-        ids["video_pending"] = _add(conn, "vp", "Watch this", kind="video",
-                                    media=(MediaInput(0, "video"),))
-        ids["video_done"] = _add(conn, "vd", None, kind="video",
-                                 media=(MediaInput(0, "video"),))
+        ids["video_pending"] = _add(
+            conn, "vp", "Watch this", kind="video", media=(MediaInput(0, "video"),)
+        )
+        ids["video_done"] = _add(conn, "vd", None, kind="video", media=(MediaInput(0, "video"),))
         media = MediaRepo(conn).for_item(ids["video_done"])[0]
-        TranscriptsRepo(conn).add(media.id, backend="whisper", model="small",
-                                  text="today we cook a recipe")
+        TranscriptsRepo(conn).add(
+            media.id, backend="whisper", model="small", text="today we cook a recipe"
+        )
         MediaRepo(conn).mark_transcribed(media.id)
 
         run = repo.create_run(other.id)
@@ -104,11 +120,18 @@ def seeded(db: Database) -> dict[str, int]:
 
 def make_service(db: Database, llm: FakeLLM, **kwargs) -> ClassificationService:
     def factory(spec: TaxonomySpec, provider: str | None) -> TaxonomyClassifier:
-        return TaxonomyClassifier(spec, FunctionModel(llm), "native", max_concurrency=2,
-                                  provider_name=provider or "fake", model_name="fake-model")
+        return TaxonomyClassifier(
+            spec,
+            FunctionModel(llm),
+            "native",
+            max_concurrency=2,
+            provider_name=provider or "fake",
+            model_name="fake-model",
+        )
 
-    return ClassificationService(db, taxonomies={"topics": TOPICS}, classifier_factory=factory,
-                                 **kwargs)
+    return ClassificationService(
+        db, taxonomies={"topics": TOPICS}, classifier_factory=factory, **kwargs
+    )
 
 
 def _results(db: Database) -> dict[int, tuple[str, tuple[str, ...]]]:
@@ -151,9 +174,7 @@ def test_backfill_includes_old_classified_items(db, seeded, llm) -> None:
 def test_reprocess_classifies_done_items_again(db, seeded, llm) -> None:
     service = make_service(db, llm)
     service.classify_pending("topics")
-    report = service.classify_pending(
-        "topics", scope="reprocess", filters=ItemFilter(q="pasta")
-    )
+    report = service.classify_pending("topics", scope="reprocess", filters=ItemFilter(q="pasta"))
     assert report.candidates == 1
     assert report.ok == 1
     with db.read() as conn:
@@ -300,22 +321,26 @@ def test_unknown_taxonomy_and_db_fallback(db, seeded, llm) -> None:
 
 def test_compose_inputs_sections_and_budget(db) -> None:
     with db.transaction() as conn:
-        item = _add(conn, "c", "Caption text https://example.com/a", kind="video",
-                    media=(MediaInput(0, "video"),))
+        item = _add(
+            conn,
+            "c",
+            "Caption text https://example.com/a",
+            kind="video",
+            media=(MediaInput(0, "video"),),
+        )
         media = MediaRepo(conn).for_item(item)[0]
         TranscriptsRepo(conn).add(media.id, backend="w", model="m", text="spoken words")
         MediaRepo(conn).mark_transcribed(media.id)
         SummariesRepo(conn).add(item, "short summary")
         link = LinksRepo(conn).for_items([item])[item][0]
-        LinksRepo(conn).add_fetch(link.id, fetcher="http", status="ok", title="Page",
-                                  text="page body " * 50)
+        LinksRepo(conn).add_fetch(
+            link.id, fetcher="http", status="ok", title="Page", text="page body " * 50
+        )
         ItemsRepo(conn).set_legacy_expanded_text(item, "expanded legacy")
     with db.read() as conn:
         composed = compose_inputs(conn, [item], max_chars=8000)[item]
         tight = compose_inputs(conn, [item], max_chars=120)[item]
-    assert composed.sections == (
-        "text", "transcript", "summary", "link", "legacy_expanded_text"
-    )
+    assert composed.sections == ("text", "transcript", "summary", "link", "legacy_expanded_text")
     assert composed.text.startswith("[Caption]\nCaption text")
     assert "[Transcript]\nspoken words" in composed.text
     assert "[Summary]\nshort summary" in composed.text

@@ -12,8 +12,14 @@ from postparse.core.db.repos import ClassificationRepo, ItemsRepo
 OLD = "2020-01-01T00:00:00.000Z"
 
 
-def _item(conn: sqlite3.Connection, ext: str, *, collected_at: str | None = None,
-          source: str = "telegram", text: str = "x") -> int:
+def _item(
+    conn: sqlite3.Connection,
+    ext: str,
+    *,
+    collected_at: str | None = None,
+    source: str = "telegram",
+    text: str = "x",
+) -> int:
     item_id, _ = ItemsRepo(conn).upsert(
         ItemUpsert(source, ext, "text", text=text, collected_at=collected_at)  # type: ignore[arg-type]
     )
@@ -59,8 +65,9 @@ def test_add_result_validation(conn: sqlite3.Connection) -> None:
     with pytest.raises(ValueError):
         repo.add_result(run, item_id, "no_labels", ["recipe"])
 
-    result_id = repo.add_result(run, item_id, "ok", [("recipe", 0.9)], confidence=0.9,
-                                reasoning="flour", details={"raw": 1})
+    result_id = repo.add_result(
+        run, item_id, "ok", [("recipe", 0.9)], confidence=0.9, reasoning="flour", details={"raw": 1}
+    )
     result = repo.get_result(result_id)
     assert result is not None
     assert result.labels == (("recipe", 0.9),)
@@ -70,9 +77,12 @@ def test_add_result_validation(conn: sqlite3.Connection) -> None:
     replaced = repo.get_result(repo.add_result(run, item_id, "no_labels"))
     assert replaced is not None
     assert (replaced.status, replaced.labels) == ("no_labels", ())
-    assert conn.execute(
-        "SELECT count(*) FROM classification_results WHERE run_id = ?", (run,)
-    ).fetchone()[0] == 1
+    assert (
+        conn.execute(
+            "SELECT count(*) FROM classification_results WHERE run_id = ?", (run,)
+        ).fetchone()[0]
+        == 1
+    )
 
     finished = repo.finish_run(run)
     assert (finished.status, finished.n_ok, finished.n_failed) == ("done", 1, 0)

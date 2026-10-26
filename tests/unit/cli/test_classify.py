@@ -33,8 +33,9 @@ def fake_llm(monkeypatch: pytest.MonkeyPatch, prompts: list[str]) -> None:
     model = keyword_model(calls=prompts)
 
     def from_provider(cls, spec, provider, **kwargs):
-        return TaxonomyClassifier(spec, model, "native", provider_name=provider.name,
-                                  model_name="fake-model")
+        return TaxonomyClassifier(
+            spec, model, "native", provider_name=provider.name, model_name="fake-model"
+        )
 
     monkeypatch.setattr(TaxonomyClassifier, "from_provider", classmethod(from_provider))
 
@@ -50,8 +51,11 @@ def db_path(tmp_path: Path) -> Path:
         def add(ext: str, text: str | None, source: str = "instagram", **kwargs) -> int:
             external = ext if source == "instagram" else f"1:{ext}"
             detail = InstagramDetail(ext) if source == "instagram" else None
-            item_id, _ = items.upsert(ItemUpsert(source, external, kwargs.pop("kind", "text"),
-                                                 text=text, detail=detail, **kwargs))
+            item_id, _ = items.upsert(
+                ItemUpsert(
+                    source, external, kwargs.pop("kind", "text"), text=text, detail=detail, **kwargs
+                )
+            )
             return item_id
 
         add("p1", "Pasta recipe with tomato sauce", hashtags=("food",))
@@ -128,21 +132,27 @@ def test_run_errors(db_path: Path, tmp_path: Path) -> None:
     assert "Database not found" in missing.output
     unknown = CliRunner().invoke(cli, ["classify", "run", "-t", "nope", "--db", str(db_path)])
     assert unknown.exit_code != 0 and "Unknown taxonomy" in unknown.output
-    both = CliRunner().invoke(cli, ["classify", "run", "--backfill", "--reprocess",
-                                    "--db", str(db_path)])
+    both = CliRunner().invoke(
+        cli, ["classify", "run", "--backfill", "--reprocess", "--db", str(db_path)]
+    )
     assert both.exit_code != 0
-    bad_date = CliRunner().invoke(cli, ["classify", "run", "--since", "yesterday",
-                                        "--db", str(db_path)])
+    bad_date = CliRunner().invoke(
+        cli, ["classify", "run", "--since", "yesterday", "--db", str(db_path)]
+    )
     assert bad_date.exit_code != 0
-    bad_provider = CliRunner().invoke(cli, ["classify", "run", "--provider", "missing",
-                                            "--db", str(db_path)])
+    bad_provider = CliRunner().invoke(
+        cli, ["classify", "run", "--provider", "missing", "--db", str(db_path)]
+    )
     assert bad_provider.exit_code != 0 and "not found" in bad_provider.output
 
 
 def test_run_reports_llm_errors(db_path: Path) -> None:
     with Database.open(db_path).transaction() as conn:
-        ItemsRepo(conn).upsert(ItemUpsert("instagram", "boom", "text", text=FAIL_MARKER,
-                                          detail=InstagramDetail("boom")))
+        ItemsRepo(conn).upsert(
+            ItemUpsert(
+                "instagram", "boom", "text", text=FAIL_MARKER, detail=InstagramDetail("boom")
+            )
+        )
     result = invoke("run", "--db", str(db_path))
     assert result.exit_code == 0
     assert _labels(db_path)["boom"] == ("error",)
@@ -154,16 +164,18 @@ def test_run_reports_llm_errors(db_path: Path) -> None:
 
 def test_text_with_labels_multi_and_single(prompts: list[str]) -> None:
     text = "Spaghetti Carbonara recipe on a beach trip"
-    multi = invoke("text", text, "--labels", "recipe,travel,tech", "--mode", "multi",
-                   "--output", "json")
+    multi = invoke(
+        "text", text, "--labels", "recipe,travel,tech", "--mode", "multi", "--output", "json"
+    )
     assert multi.exit_code == 0, multi.output
     data = json.loads(multi.output)
     assert data["labels"] == ["recipe", "travel"]
     assert data["mode"] == "multi"
     assert data["model"] == "fake-model"
     assert data["provider"] == "lm_studio"
-    single = invoke("text", text, "--labels", "recipe,travel,tech", "--mode", "single",
-                    "--output", "json")
+    single = invoke(
+        "text", text, "--labels", "recipe,travel,tech", "--mode", "single", "--output", "json"
+    )
     assert json.loads(single.output)["label"] == "recipe"
     assert "Carbonara" in prompts[0]
 
@@ -190,11 +202,11 @@ def test_text_empty_input_does_not_call_llm(prompts: list[str]) -> None:
 def test_text_errors() -> None:
     failed = CliRunner().invoke(cli, ["classify", "text", FAIL_MARKER, "--labels", "a,b"])
     assert failed.exit_code != 0 and "Classification failed" in failed.output
-    combo = CliRunner().invoke(cli, ["classify", "text", "x", "--taxonomy", "topics",
-                                     "--labels", "a,b"])
+    combo = CliRunner().invoke(
+        cli, ["classify", "text", "x", "--taxonomy", "topics", "--labels", "a,b"]
+    )
     assert combo.exit_code != 0
-    single = CliRunner().invoke(cli, ["classify", "text", "x", "--labels", "a",
-                                      "--mode", "single"])
+    single = CliRunner().invoke(cli, ["classify", "text", "x", "--labels", "a", "--mode", "single"])
     assert single.exit_code != 0 and "two labels" in single.output
     provider = CliRunner().invoke(cli, ["classify", "text", "x", "--provider", "missing"])
     assert provider.exit_code != 0 and "not found" in provider.output
@@ -203,11 +215,19 @@ def test_text_errors() -> None:
 def test_text_deprecated_classifier_options() -> None:
     recipe = invoke("text", "Boil pasta", "--classifier", "recipe", "--output", "json")
     assert "deprecated" in recipe.output
-    payload = recipe.output[recipe.output.index("{"):]
+    payload = recipe.output[recipe.output.index("{") :]
     assert json.loads(payload)["label"] == "recipe"
-    classes = invoke("text", "pip install x", "--classifier", "multiclass", "--classes",
-                     '{"python_package": "Python", "movie_review": "Films"}', "--output", "json")
-    data = json.loads(classes.output[classes.output.index("{"):])
+    classes = invoke(
+        "text",
+        "pip install x",
+        "--classifier",
+        "multiclass",
+        "--classes",
+        '{"python_package": "Python", "movie_review": "Films"}',
+        "--output",
+        "json",
+    )
+    data = json.loads(classes.output[classes.output.index("{") :])
     assert data["mode"] == "single" and data["label"] == "python_package"
 
 
@@ -231,8 +251,7 @@ def test_taxonomies_lists_config_and_db(db_path: Path) -> None:
 
 
 def test_db_alias_maps_to_run(db_path: Path) -> None:
-    result = invoke("db", "--classifier", "recipe", "--source", "instagram",
-                    "--db", str(db_path))
+    result = invoke("db", "--classifier", "recipe", "--source", "instagram", "--db", str(db_path))
     assert result.exit_code == 0, result.output
     assert "deprecated" in result.output.lower()
     assert "--classifier recipe is ignored" in result.output

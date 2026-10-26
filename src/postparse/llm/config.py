@@ -1,7 +1,7 @@
 """Configuration models for LLM providers using Pydantic."""
 
 import os
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -55,23 +55,25 @@ class ProviderConfig(BaseModel):
 
     name: str = Field(..., description="Provider identifier")
     model: str = Field(..., description="Model name/identifier")
-    api_key: Optional[str] = Field(default=None, description="API key for authentication")
-    api_base: Optional[str] = Field(default=None, description="Custom API endpoint")
+    api_key: str | None = Field(default=None, description="API key for authentication")
+    api_base: str | None = Field(default=None, description="Custom API endpoint")
     timeout: int = Field(default=30, description="Request timeout in seconds")
     max_retries: int = Field(default=3, description="Maximum retry attempts")
     temperature: float = Field(default=0.7, description="Sampling temperature")
-    max_tokens: Optional[int] = Field(default=None, description="Maximum tokens in response")
-    custom_params: Dict[str, Any] = Field(default_factory=dict, description="Provider-specific parameters")
-    api_type: Optional[Literal["openai", "anthropic"]] = Field(
+    max_tokens: int | None = Field(default=None, description="Maximum tokens in response")
+    custom_params: dict[str, Any] = Field(
+        default_factory=dict, description="Provider-specific parameters"
+    )
+    api_type: Literal["openai", "anthropic"] | None = Field(
         default=None, description="Client protocol (derived from name when unset)"
     )
-    output_mode: Optional[Literal["native", "tool", "prompted"]] = Field(
+    output_mode: Literal["native", "tool", "prompted"] | None = Field(
         default=None, description="Structured output strategy (auto when unset)"
     )
-    max_concurrency: Optional[int] = Field(
+    max_concurrency: int | None = Field(
         default=None, ge=1, description="Maximum parallel requests (auto when unset)"
     )
-    discover_model: Optional[bool] = Field(
+    discover_model: bool | None = Field(
         default=None, description="Discover the served model (auto when unset)"
     )
 
@@ -133,7 +135,7 @@ class LLMConfig(BaseModel):
         ```
     """
 
-    providers: List[ProviderConfig] = Field(..., description="List of provider configurations")
+    providers: list[ProviderConfig] = Field(..., description="List of provider configurations")
     default_provider: str = Field(..., description="Name of the default provider")
     enable_fallback: bool = Field(default=True, description="Enable automatic fallback")
     cache_responses: bool = Field(default=False, description="Enable response caching")
@@ -149,7 +151,7 @@ class LLMConfig(BaseModel):
             )
         return self
 
-    def get_provider(self, name: str) -> Optional[ProviderConfig]:
+    def get_provider(self, name: str) -> ProviderConfig | None:
         """Get provider configuration by name.
 
         Args:
@@ -261,4 +263,3 @@ def get_provider_config(llm_config: LLMConfig, provider_name: str) -> ProviderCo
             f"Available providers: {available}"
         )
     return provider
-

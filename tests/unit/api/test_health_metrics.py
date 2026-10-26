@@ -27,8 +27,11 @@ def test_counts_items_and_index(tmp_path: Path) -> None:
     db = Database.open(tmp_path / "h.db")
     with db.transaction() as conn:
         for n in range(3):
-            ItemsRepo(conn).upsert(ItemUpsert(source="telegram", external_id=f"1:{n}",
-                                              kind="text", text=f"message {n}"))
+            ItemsRepo(conn).upsert(
+                ItemUpsert(
+                    source="telegram", external_id=f"1:{n}", kind="text", text=f"message {n}"
+                )
+            )
     result = database_check(_services(db))
     assert (result["items"], result["fts_indexed"]) == (3, 3)
 

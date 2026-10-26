@@ -148,8 +148,12 @@ def get_job_status(
 )
 def get_posts(
     limit: int = Query(default=50, ge=1, le=100, description="Maximum results to return"),
-    offset: int = Query(default=0, ge=0, deprecated=True,
-                        description="Deprecated: number of results to skip; use cursor"),
+    offset: int = Query(
+        default=0,
+        ge=0,
+        deprecated=True,
+        description="Deprecated: number of results to skip; use cursor",
+    ),
     owner_username: str | None = Query(default=None, description="Filter by owner"),
     cursor: str | None = Query(default=None, description="next_cursor of the previous page"),
     tags: list[str] = Query(default=[], description="Tag filter (any of)"),
@@ -164,14 +168,19 @@ def get_posts(
     position, exhausted = resolve_cursor(query, item_filter, cursor, offset)
     total = query.count(item_filter)
     if exhausted:
-        return PaginatedResponse(items=[], total=total, limit=limit, offset=offset,
-                                 next_cursor=None, has_more=False)
+        return PaginatedResponse(
+            items=[], total=total, limit=limit, offset=offset, next_cursor=None, has_more=False
+        )
     page = query.search(item_filter, cursor=position, limit=limit)
     details = query.source_details([v.id for v in page.items])
     posts = [instagram_post(v, details[v.id][0], details[v.id][2]) for v in page.items]
     return PaginatedResponse(
-        items=posts, total=total, limit=limit, offset=offset,
-        next_cursor=page.next_cursor, has_more=page.next_cursor is not None,
+        items=posts,
+        total=total,
+        limit=limit,
+        offset=offset,
+        next_cursor=page.next_cursor,
+        has_more=page.next_cursor is not None,
     )
 
 

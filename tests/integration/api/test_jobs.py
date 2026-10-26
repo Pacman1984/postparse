@@ -53,8 +53,9 @@ class FakeExtraction:
         if self.outcome == "rate":
             raise InstagramRateLimited("429")
         if self.outcome == "rate_report":
-            return ExtractionReport(source=source, new=2, processed=2,
-                                    stopped_reason="rate_limited", error="FloodWait")
+            return ExtractionReport(
+                source=source, new=2, processed=2, stopped_reason="rate_limited", error="FloodWait"
+            )
         if self.outcome == "boom":
             raise RuntimeError("collector exploded")
         return ExtractionReport(source=source, new=3, processed=3, stopped_reason="end_of_feed")
@@ -88,8 +89,11 @@ class FakeTranscription:
         report = TranscriptionReport(source=kwargs["source"], backend="fake", candidates=3)
         for index in (1, 2, 3):
             report.transcribed += 1
-            kwargs["progress"](SimpleNamespace(index=index, total=3, media_id=index,
-                                               status="transcribed", report=report))
+            kwargs["progress"](
+                SimpleNamespace(
+                    index=index, total=3, media_id=index, status="transcribed", report=report
+                )
+            )
         if self.outcome == "block":
             report.stopped_reason = "suspected_block"
             report.error = "Instagram stopped serving videos"
@@ -116,8 +120,11 @@ class FakeSummarization:
             raise ValueError("Provider 'x' not found")
         report = SummarizationReport(candidates=2, summarized=2, provider="fake")
         for handled in (1, 2):
-            kwargs["progress"](SimpleNamespace(item_id=handled, status="summarized",
-                                               handled=handled, total=2, report=report))
+            kwargs["progress"](
+                SimpleNamespace(
+                    item_id=handled, status="summarized", handled=handled, total=2, report=report
+                )
+            )
         return report
 
 
@@ -131,9 +138,16 @@ class FakeEnrichment:
         if self.outcome == "boom":
             raise RuntimeError("router failed")
         report = EnrichmentReport(source=source, candidates=1, ok=1, stopped_reason="done")
-        kwargs["progress"](SimpleNamespace(link=SimpleNamespace(domain="example.com"),
-                                           fetcher="generic", status="ok", index=1, total=1,
-                                           report=report))
+        kwargs["progress"](
+            SimpleNamespace(
+                link=SimpleNamespace(domain="example.com"),
+                fetcher="generic",
+                status="ok",
+                index=1,
+                total=1,
+                report=report,
+            )
+        )
         return report
 
 
@@ -154,8 +168,11 @@ class TestTelegramExtraction:
     ) -> None:
         fake = FakeExtraction()
         client = make_client(extraction=fake)
-        job_id = _start(client, "/api/v1/telegram/extract",
-                        {**TELEGRAM_BODY, "phone": "+4912345", "force_update": True})
+        job_id = _start(
+            client,
+            "/api/v1/telegram/extract",
+            {**TELEGRAM_BODY, "phone": "+4912345", "force_update": True},
+        )
         job = wait_for_job(client, job_id)
         assert job["status"] == "completed", job
         assert job["job_type"] == "telegram_extract"
@@ -223,8 +240,12 @@ class TestInstagramExtraction:
 
     @pytest.mark.parametrize(
         ("outcome", "code"),
-        [("missing", "credentials_missing"), ("rate", "rate_limited"),
-         ("auth", "auth_required"), ("boom", "internal_error")],
+        [
+            ("missing", "credentials_missing"),
+            ("rate", "rate_limited"),
+            ("auth", "auth_required"),
+            ("boom", "internal_error"),
+        ],
     )
     def test_failures(self, make_client, seeded, outcome, code) -> None:
         client = make_client(extraction=FakeExtraction(outcome))
@@ -233,8 +254,9 @@ class TestInstagramExtraction:
 
     def test_platform_api_is_rejected(self, make_client, seeded) -> None:
         client = make_client(extraction=FakeExtraction())
-        response = client.post("/api/v1/instagram/extract",
-                               json={"username": "tester", "use_api": True})
+        response = client.post(
+            "/api/v1/instagram/extract", json={"username": "tester", "use_api": True}
+        )
         assert response.status_code == 400
 
 
@@ -247,8 +269,10 @@ class TestTranscriptionJob:
     def test_success(self, make_client, seeded) -> None:
         fake = FakeTranscription()
         client = make_client(transcription=fake)
-        response = client.post("/api/v1/transcription/run",
-                               json={"source": "all", "limit": 3, "item_ids": [seeded["pasta"]]})
+        response = client.post(
+            "/api/v1/transcription/run",
+            json={"source": "all", "limit": 3, "item_ids": [seeded["pasta"]]},
+        )
         assert response.status_code == 202
         body = response.json()
         assert body["status_url"] == f"/api/v1/jobs/{body['job_id']}"
@@ -262,8 +286,12 @@ class TestTranscriptionJob:
 
     @pytest.mark.parametrize(
         ("outcome", "code"),
-        [("block", "suspected_block"), ("backend", "backend_unavailable"),
-         ("auth", "auth_required"), ("boom", "internal_error")],
+        [
+            ("block", "suspected_block"),
+            ("backend", "backend_unavailable"),
+            ("auth", "auth_required"),
+            ("boom", "internal_error"),
+        ],
     )
     def test_stop_reasons_fail_the_job(self, make_client, seeded, outcome, code) -> None:
         client = make_client(transcription=FakeTranscription(outcome))
@@ -277,8 +305,9 @@ class TestSummarizationJob:
     def test_success(self, make_client, seeded) -> None:
         fake = FakeSummarization()
         client = make_client(summarization=fake)
-        job = wait_for_job(client, _start(client, "/api/v1/summaries/run",
-                                          {"limit": 2, "force": True}))
+        job = wait_for_job(
+            client, _start(client, "/api/v1/summaries/run", {"limit": 2, "force": True})
+        )
         assert job["status"] == "completed"
         assert job["result"]["summarized"] == 2
         assert fake.calls[0]["force"] is True
@@ -293,8 +322,12 @@ class TestEnrichmentJob:
     def test_success(self, make_client, seeded) -> None:
         fake = FakeEnrichment()
         client = make_client(enrichment=fake)
-        job = wait_for_job(client, _start(client, "/api/v1/enrichment/run",
-                                          {"source": "telegram", "domains": ["example.com"]}))
+        job = wait_for_job(
+            client,
+            _start(
+                client, "/api/v1/enrichment/run", {"source": "telegram", "domains": ["example.com"]}
+            ),
+        )
         assert job["status"] == "completed"
         assert job["message"] == "example.com: ok"
         assert fake.calls[0]["source"] == "telegram"
@@ -308,10 +341,16 @@ class TestEnrichmentJob:
 
 class TestClassifyRunJob:
     def test_reprocess_stores_results(self, client: TestClient, seeded) -> None:
-        job_id = _start(client, "/api/v1/classify/run", {
-            "taxonomy": "topics", "scope": "reprocess",
-            "filters": {"source": "telegram"}, "wait_for_transcripts": False,
-        })
+        job_id = _start(
+            client,
+            "/api/v1/classify/run",
+            {
+                "taxonomy": "topics",
+                "scope": "reprocess",
+                "filters": {"source": "telegram"},
+                "wait_for_transcripts": False,
+            },
+        )
         job = wait_for_job(client, job_id)
         assert job["status"] == "completed", job
         assert job["result"]["taxonomy"] == "topics"
@@ -323,13 +362,17 @@ class TestClassifyRunJob:
         assert client.post("/api/v1/classify/run", json={"taxonomy": "nope"}).status_code == 404
 
     def test_invalid_filter_is_400(self, client: TestClient) -> None:
-        response = client.post("/api/v1/classify/run", json={
-            "taxonomy": "topics", "filters": {"date_from": "yesterday"}})
+        response = client.post(
+            "/api/v1/classify/run",
+            json={"taxonomy": "topics", "filters": {"date_from": "yesterday"}},
+        )
         assert response.status_code == 400
 
     def test_unknown_provider_fails_job(self, client: TestClient) -> None:
-        job = wait_for_job(client, _start(client, "/api/v1/classify/run",
-                                          {"taxonomy": "topics", "provider": "missing"}))
+        job = wait_for_job(
+            client,
+            _start(client, "/api/v1/classify/run", {"taxonomy": "topics", "provider": "missing"}),
+        )
         assert (job["status"], job["error_code"]) == ("failed", "invalid_request")
 
 
@@ -341,8 +384,12 @@ class TestClassifyRunJob:
 class TestWebSocketProgress:
     @pytest.mark.parametrize(
         "path",
-        ["/api/v1/jobs/{id}/ws", "/api/v1/jobs/ws/progress/{id}",
-         "/api/v1/telegram/ws/progress/{id}", "/api/v1/instagram/ws/progress/{id}"],
+        [
+            "/api/v1/jobs/{id}/ws",
+            "/api/v1/jobs/ws/progress/{id}",
+            "/api/v1/telegram/ws/progress/{id}",
+            "/api/v1/instagram/ws/progress/{id}",
+        ],
     )
     def test_events_arrive_in_order(self, make_client, seeded, path: str) -> None:
         gate = threading.Event()

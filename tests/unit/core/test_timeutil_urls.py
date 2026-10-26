@@ -22,8 +22,10 @@ class TestTimeutil:
             ("2024-01-15T12:00:00+02:00", "2024-01-15T10:00:00.000Z"),
             ("2024-01-15T10:00:00.123456z", "2024-01-15T10:00:00.123Z"),
             (datetime(2024, 1, 15, 10, tzinfo=UTC), "2024-01-15T10:00:00.000Z"),
-            (datetime(2024, 1, 15, 5, tzinfo=timezone(timedelta(hours=-5))),
-             "2024-01-15T10:00:00.000Z"),
+            (
+                datetime(2024, 1, 15, 5, tzinfo=timezone(timedelta(hours=-5))),
+                "2024-01-15T10:00:00.000Z",
+            ),
         ],
     )
     def test_aware_inputs(self, value: object, expected: str) -> None:
@@ -67,7 +69,10 @@ class TestUrls:
             "https://ex.com/d?x=1. Done! http://plain.org"
         )
         assert extract_urls(text) == [
-            "https://ex.com/a", "https://ex.com/b_(c)", "https://ex.com/d?x=1", "http://plain.org"
+            "https://ex.com/a",
+            "https://ex.com/b_(c)",
+            "https://ex.com/d?x=1",
+            "http://plain.org",
         ]
         assert extract_urls(None) == []
         assert extract_urls("ftp://nope.org and https:// nothing") == []
@@ -76,8 +81,10 @@ class TestUrls:
         assert extract_urls("https://a.com https://a.com") == ["https://a.com"]
 
     def test_normalize(self) -> None:
-        url = ("HTTPS://WWW.Example.COM:443/Path/To?utm_source=ig&b=2&igsh=xyz&a=1&si=s"
-               "&fbclid=f&gclid=g&ref_src=r&igshid=i&a=0#frag")
+        url = (
+            "HTTPS://WWW.Example.COM:443/Path/To?utm_source=ig&b=2&igsh=xyz&a=1&si=s"
+            "&fbclid=f&gclid=g&ref_src=r&igshid=i&a=0#frag"
+        )
         assert normalize_url(url) == "https://www.example.com/Path/To?a=1&a=0&b=2"
         assert normalize_url("http://ex.com") == "http://ex.com/"
         assert normalize_url("http://ex.com:8080/x") == "http://ex.com:8080/x"

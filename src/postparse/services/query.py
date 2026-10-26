@@ -334,16 +334,12 @@ class QueryService:
             if item is None:
                 return None
             tags = TagsRepo(conn).for_item(item_id)
-            classifications = ClassificationRepo(conn).current_for_items([item_id]).get(
-                item_id, []
-            )
+            classifications = ClassificationRepo(conn).current_for_items([item_id]).get(item_id, [])
             transcripts = {
                 t.media_id: t
                 for t in TranscriptsRepo(conn).current_for_items([item_id]).get(item_id, [])
             }
-            media = [
-                MediaView(m, transcripts.get(m.id)) for m in MediaRepo(conn).for_item(item_id)
-            ]
+            media = [MediaView(m, transcripts.get(m.id)) for m in MediaRepo(conn).for_item(item_id)]
             links_repo = LinksRepo(conn)
             links = links_repo.for_items([item_id]).get(item_id, [])
             fetches = links_repo.latest_ok_fetches([link.id for link in links])
@@ -409,8 +405,13 @@ class QueryService:
                 params,
             ).fetchall()
         return [
-            {"kind": r[0], "tag": r[1], "count": r[2], "instagram": r[3] or 0,
-             "telegram": r[4] or 0}
+            {
+                "kind": r[0],
+                "tag": r[1],
+                "count": r[2],
+                "instagram": r[3] or 0,
+                "telegram": r[4] or 0,
+            }
             for r in rows
         ]
 
@@ -434,9 +435,7 @@ class QueryService:
             row = conn.execute(sql + " ORDER BY item_id DESC LIMIT 1", params).fetchone()
         return int(row[0]) if row else None
 
-    def cursor_after(
-        self, item_filter: ItemFilter | None, offset: int
-    ) -> tuple[str | None, bool]:
+    def cursor_after(self, item_filter: ItemFilter | None, offset: int) -> tuple[str | None, bool]:
         """Translate a (deprecated) row offset into a keyset cursor.
 
         Args:
@@ -539,15 +538,33 @@ class QueryService:
             return count
         writer = csv.writer(handle)
         writer.writerow(
-            ["id", "source", "external_id", "kind", "created_at", "collected_at", "author",
-             "url", "text", "tags", "labels"]
+            [
+                "id",
+                "source",
+                "external_id",
+                "kind",
+                "created_at",
+                "collected_at",
+                "author",
+                "url",
+                "text",
+                "tags",
+                "labels",
+            ]
         )
         for view in self._limited(item_filter, limit):
             data = view.to_dict()
             writer.writerow(
                 [
-                    view.id, view.source, view.external_id, view.kind, data["created_at"] or "",
-                    data["collected_at"], view.author or "", view.url or "", view.text or "",
+                    view.id,
+                    view.source,
+                    view.external_id,
+                    view.kind,
+                    data["created_at"] or "",
+                    data["collected_at"],
+                    view.author or "",
+                    view.url or "",
+                    view.text or "",
                     " ".join(view.tags),
                     "; ".join(f"{tx}:{'|'.join(lbs)}" for tx, lbs in view.labels.items()),
                 ]

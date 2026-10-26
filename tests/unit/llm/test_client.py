@@ -37,20 +37,23 @@ ANTHROPIC = ProviderConfig(name="anthropic", model="claude-x", api_key="sk-ant-t
         (ANTHROPIC, "anthropic", "tool", 4),
     ],
 )
-def test_defaults_per_provider(cfg: ProviderConfig, api_type: str, mode: str,
-                               concurrency: int) -> None:
+def test_defaults_per_provider(
+    cfg: ProviderConfig, api_type: str, mode: str, concurrency: int
+) -> None:
     assert api_type_for(cfg) == api_type
     assert output_mode_for(cfg) == mode
     assert max_concurrency_for(cfg) == concurrency
 
 
 def test_explicit_settings_win() -> None:
-    cfg = LLAMA.model_copy(update={"output_mode": "tool", "max_concurrency": 3,
-                                   "api_type": "openai"})
+    cfg = LLAMA.model_copy(
+        update={"output_mode": "tool", "max_concurrency": 3, "api_type": "openai"}
+    )
     assert output_mode_for(cfg) == "tool"
     assert max_concurrency_for(cfg) == 3
-    gateway = ProviderConfig(name="claude_gateway", model="m", api_type="openai",
-                             api_base="https://gw.example.com/v1")
+    gateway = ProviderConfig(
+        name="claude_gateway", model="m", api_type="openai", api_base="https://gw.example.com/v1"
+    )
     assert api_type_for(gateway) == "openai"
     assert output_mode_for(gateway) == "native"
     assert max_concurrency_for(gateway) == 4
@@ -75,11 +78,23 @@ def test_self_hosted_detection(url: str | None, expected: bool) -> None:
 
 
 def test_model_settings() -> None:
-    cfg = LLAMA.model_copy(update={"temperature": 0.1, "timeout": 60, "max_retries": 2,
-                                   "max_tokens": 256, "custom_params": {"top_k": 20}})
+    cfg = LLAMA.model_copy(
+        update={
+            "temperature": 0.1,
+            "timeout": 60,
+            "max_retries": 2,
+            "max_tokens": 256,
+            "custom_params": {"top_k": 20},
+        }
+    )
     settings = model_settings_for(cfg)
-    assert settings == {"temperature": 0.1, "timeout": 60, "max_retries": 2,
-                        "max_tokens": 256, "extra_body": {"top_k": 20}}
+    assert settings == {
+        "temperature": 0.1,
+        "timeout": 60,
+        "max_retries": 2,
+        "max_tokens": 256,
+        "extra_body": {"top_k": 20},
+    }
     assert "max_tokens" not in model_settings_for(OPENAI)
 
 

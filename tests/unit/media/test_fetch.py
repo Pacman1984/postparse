@@ -35,9 +35,12 @@ VIDEO = b"\x00\x00\x00\x18ftypmp42" + b"v" * 4000
 class FakeCollector:
     """Stand-in for an InstagramCollector (context manager + fetch_post)."""
 
-    def __init__(self, posts: dict[str, Any] | None = None,
-                 errors: dict[str, BaseException] | None = None,
-                 enter_error: BaseException | None = None) -> None:
+    def __init__(
+        self,
+        posts: dict[str, Any] | None = None,
+        errors: dict[str, BaseException] | None = None,
+        enter_error: BaseException | None = None,
+    ) -> None:
         self.posts = posts or {}
         self.errors = errors or {}
         self.enter_error = enter_error
@@ -79,9 +82,15 @@ class Cdn:
         return httpx.Response(200, content=value) if isinstance(value, bytes) else value
 
 
-def make_fetcher(db: Database, cdn: Cdn, collector: FakeCollector | None = None,
-                 *, refetch: bool = True, sleeps: list[float] | None = None,
-                 **options: Any) -> InstagramVideoFetcher:
+def make_fetcher(
+    db: Database,
+    cdn: Cdn,
+    collector: FakeCollector | None = None,
+    *,
+    refetch: bool = True,
+    sleeps: list[float] | None = None,
+    **options: Any,
+) -> InstagramVideoFetcher:
     opts = TranscriptionOptions(refetch_min_delay=20, refetch_max_delay=60, **options)
     factory_calls: list[int] = []
 
@@ -91,17 +100,22 @@ def make_fetcher(db: Database, cdn: Cdn, collector: FakeCollector | None = None,
         return collector
 
     fetcher = InstagramVideoFetcher(
-        db, opts, collector_factory=factory if collector is not None else None,
-        refetch=refetch, http_client=httpx.Client(transport=httpx.MockTransport(cdn)),
-        sleep=(sleeps.append if sleeps is not None else (lambda s: None)), clock=lambda: NOW,
+        db,
+        opts,
+        collector_factory=factory if collector is not None else None,
+        refetch=refetch,
+        http_client=httpx.Client(transport=httpx.MockTransport(cdn)),
+        sleep=(sleeps.append if sleeps is not None else (lambda s: None)),
+        clock=lambda: NOW,
     )
     fetcher.factory_calls = factory_calls  # type: ignore[attr-defined]
     return fetcher
 
 
 def test_fresh_url_is_downloaded_without_refetch(db: Database, tmp_path: Path) -> None:
-    _, (mid,) = add_video_item(db, "FRESH", remote_url="https://cdn.test/fresh.mp4",
-                               seen_at=fresh(30))
+    _, (mid,) = add_video_item(
+        db, "FRESH", remote_url="https://cdn.test/fresh.mp4", seen_at=fresh(30)
+    )
     cdn = Cdn({"https://cdn.test/fresh.mp4": VIDEO})
     collector = FakeCollector()
     with make_fetcher(db, cdn, collector) as fetcher:
@@ -112,8 +126,9 @@ def test_fresh_url_is_downloaded_without_refetch(db: Database, tmp_path: Path) -
 
 
 def test_stale_url_triggers_refetch_and_stores_fresh_url(db: Database, tmp_path: Path) -> None:
-    _, (mid,) = add_video_item(db, "STALE", remote_url="https://cdn.test/old.mp4",
-                               seen_at=NOW - timedelta(hours=7))
+    _, (mid,) = add_video_item(
+        db, "STALE", remote_url="https://cdn.test/old.mp4", seen_at=NOW - timedelta(hours=7)
+    )
     cdn = Cdn({"https://cdn.test/new.mp4": VIDEO})
     collector = FakeCollector({"STALE": video_post("https://cdn.test/new.mp4")})
     with make_fetcher(db, cdn, collector) as fetcher:
@@ -128,16 +143,16 @@ def test_stale_url_triggers_refetch_and_stores_fresh_url(db: Database, tmp_path:
 
 def test_missing_url_refetch_disabled(db: Database, tmp_path: Path) -> None:
     _, (mid,) = add_video_item(db, "NOURL")
-    with make_fetcher(db, Cdn({}), FakeCollector(), refetch=False) as fetcher, \
-            pytest.raises(RefetchDisabled):
+    with (
+        make_fetcher(db, Cdn({}), FakeCollector(), refetch=False) as fetcher,
+        pytest.raises(RefetchDisabled),
+    ):
         fetcher.fetch(get_media(db, mid), "NOURL", tmp_path)
 
 
 def test_fresh_url_refused_falls_back_to_refetch(db: Database, tmp_path: Path) -> None:
-    _, (mid,) = add_video_item(db, "EXP", remote_url="https://cdn.test/exp.mp4",
-                               seen_at=fresh(10))
-    cdn = Cdn({"https://cdn.test/exp.mp4": httpx.Response(403),
-               "https://cdn.test/exp2.mp4": VIDEO})
+    _, (mid,) = add_video_item(db, "EXP", remote_url="https://cdn.test/exp.mp4", seen_at=fresh(10))
+    cdn = Cdn({"https://cdn.test/exp.mp4": httpx.Response(403), "https://cdn.test/exp2.mp4": VIDEO})
     collector = FakeCollector({"EXP": video_post("https://cdn.test/exp2.mp4")})
     with make_fetcher(db, cdn, collector) as fetcher:
         result = fetcher.fetch(get_media(db, mid), "EXP", tmp_path)
@@ -161,11 +176,14 @@ def test_refetches_share_one_login_and_are_throttled(db: Database, tmp_path: Pat
 
 
 @pytest.mark.parametrize("error", [InstagramRateLimited("429"), InstagramAuthRequired("nope")])
-def test_rate_limit_and_auth_errors_propagate(db: Database, tmp_path: Path,
-                                              error: BaseException) -> None:
+def test_rate_limit_and_auth_errors_propagate(
+    db: Database, tmp_path: Path, error: BaseException
+) -> None:
     _, (mid,) = add_video_item(db, "RL")
-    with make_fetcher(db, Cdn({}), FakeCollector(errors={"RL": error})) as fetcher, \
-            pytest.raises(type(error)):
+    with (
+        make_fetcher(db, Cdn({}), FakeCollector(errors={"RL": error})) as fetcher,
+        pytest.raises(type(error)),
+    ):
         fetcher.fetch(get_media(db, mid), "RL", tmp_path)
     assert get_media(db, mid).remote_url is None
 
@@ -177,41 +195,51 @@ def test_login_failure_propagates(db: Database, tmp_path: Path) -> None:
         fetcher.fetch(get_media(db, mid), "X", tmp_path)
 
 
-@pytest.mark.parametrize("error", [
-    QueryReturnedNotFoundException("404 not found"),
-    ProfileNotExistsException("profile gone"),
-])
+@pytest.mark.parametrize(
+    "error",
+    [
+        QueryReturnedNotFoundException("404 not found"),
+        ProfileNotExistsException("profile gone"),
+    ],
+)
 def test_deleted_posts_are_unavailable(db: Database, tmp_path: Path, error: Exception) -> None:
     _, (mid,) = add_video_item(db, "GONE")
-    with make_fetcher(db, Cdn({}), FakeCollector(errors={"GONE": error})) as fetcher, \
-            pytest.raises(MediaUnavailable):
+    with (
+        make_fetcher(db, Cdn({}), FakeCollector(errors={"GONE": error})) as fetcher,
+        pytest.raises(MediaUnavailable),
+    ):
         fetcher.fetch(get_media(db, mid), "GONE", tmp_path)
 
 
 def test_post_without_video_is_unavailable(db: Database, tmp_path: Path) -> None:
     _, (mid,) = add_video_item(db, "IMG")
     post = SimpleNamespace(typename="GraphImage", is_video=False, video_url=None)
-    with make_fetcher(db, Cdn({}), FakeCollector({"IMG": post})) as fetcher, \
-            pytest.raises(MediaUnavailable, match="no video"):
+    with (
+        make_fetcher(db, Cdn({}), FakeCollector({"IMG": post})) as fetcher,
+        pytest.raises(MediaUnavailable, match="no video"),
+    ):
         fetcher.fetch(get_media(db, mid), "IMG", tmp_path)
 
 
 def test_other_refetch_errors_are_retryable(db: Database, tmp_path: Path) -> None:
     _, (mid,) = add_video_item(db, "ERR")
     collector = FakeCollector(errors={"ERR": RuntimeError("socket closed")})
-    with make_fetcher(db, Cdn({}), collector) as fetcher, \
-            pytest.raises(FetchError, match="socket closed"):
+    with (
+        make_fetcher(db, Cdn({}), collector) as fetcher,
+        pytest.raises(FetchError, match="socket closed"),
+    ):
         fetcher.fetch(get_media(db, mid), "ERR", tmp_path)
 
 
 def test_size_cap(db: Database, tmp_path: Path) -> None:
-    _, (mid,) = add_video_item(db, "BIG", remote_url="https://cdn.test/big.mp4",
-                               seen_at=fresh())
+    _, (mid,) = add_video_item(db, "BIG", remote_url="https://cdn.test/big.mp4", seen_at=fresh())
     cdn = Cdn({"https://cdn.test/big.mp4": b"x" * (2 * 1024 * 1024)})
     work = tmp_path / "work"
     work.mkdir()
-    with make_fetcher(db, cdn, max_download_mb=1) as fetcher, \
-            pytest.raises(FetchError, match="too large|size cap"):
+    with (
+        make_fetcher(db, cdn, max_download_mb=1) as fetcher,
+        pytest.raises(FetchError, match="too large|size cap"),
+    ):
         fetcher.fetch(get_media(db, mid), "BIG", work)
     assert list(work.iterdir()) == []  # partial file removed
 
@@ -226,7 +254,10 @@ def test_http_errors_are_fetch_errors(db: Database, tmp_path: Path) -> None:
         raise httpx.ReadTimeout("timed out", request=request)
 
     fetcher = InstagramVideoFetcher(
-        db, TranscriptionOptions(), refetch=False, clock=lambda: NOW,
+        db,
+        TranscriptionOptions(),
+        refetch=False,
+        clock=lambda: NOW,
         http_client=httpx.Client(transport=httpx.MockTransport(boom)),
     )
     work = tmp_path / "work"
@@ -240,11 +271,20 @@ def test_video_url_for_single_and_sidecar() -> None:
     single = ig_post(ig_node("V", "GraphVideo", video_url="https://cdn.test/v.mp4"))
     assert video_url_for(single, 0) == "https://cdn.test/v.mp4"
     assert video_url_for(single, 1) is None
-    sidecar = ig_post(ig_node("S", "GraphSidecar", children=[
-        {"is_video": False, "display_url": "https://cdn.test/0.jpg"},
-        {"is_video": True, "display_url": "https://cdn.test/1.jpg",
-         "video_url": "https://cdn.test/1.mp4"},
-    ]))
+    sidecar = ig_post(
+        ig_node(
+            "S",
+            "GraphSidecar",
+            children=[
+                {"is_video": False, "display_url": "https://cdn.test/0.jpg"},
+                {
+                    "is_video": True,
+                    "display_url": "https://cdn.test/1.jpg",
+                    "video_url": "https://cdn.test/1.mp4",
+                },
+            ],
+        )
+    )
     assert video_url_for(sidecar, 1) == "https://cdn.test/1.mp4"
     assert video_url_for(sidecar, 0) is None
     assert video_url_for(sidecar, 5) is None
@@ -253,9 +293,13 @@ def test_video_url_for_single_and_sidecar() -> None:
 def test_metadata_failed_is_retryable_not_unavailable(db: Database, tmp_path: Path) -> None:
     """Instagram answers soft-blocked sessions with "metadata failed" -> retry, never skip."""
     _, (mid,) = add_video_item(db, "SOFT")
-    collector = FakeCollector(errors={"SOFT": BadResponseException("Fetching Post metadata failed.")})
-    with make_fetcher(db, Cdn({}), collector) as fetcher, \
-            pytest.raises(RefetchError, match="metadata failed") as info:
+    collector = FakeCollector(
+        errors={"SOFT": BadResponseException("Fetching Post metadata failed.")}
+    )
+    with (
+        make_fetcher(db, Cdn({}), collector) as fetcher,
+        pytest.raises(RefetchError, match="metadata failed") as info,
+    ):
         fetcher.fetch(get_media(db, mid), "SOFT", tmp_path)
     assert isinstance(info.value, FetchError)
     assert not isinstance(info.value, MediaUnavailable)

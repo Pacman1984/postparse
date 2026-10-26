@@ -94,9 +94,7 @@ def _build_service(
     config = load_config(_config_path(ctx))
     path = _db_path(ctx, db_path)
     if require_db and not path.exists():
-        raise click.ClickException(
-            f"Database not found: {path} (run `postparse db migrate` first)"
-        )
+        raise click.ClickException(f"Database not found: {path} (run `postparse db migrate` first)")
     # Never create a database as a side effect of read-only commands.
     database = Database.open(path) if path.exists() else None
     try:
@@ -136,8 +134,9 @@ def _read_text_argument(content: str | None) -> str:
     return content
 
 
-def _outcome_panel(outcome: ClassificationOutcome, title: str, provider: str | None,
-                   model: str | None) -> None:
+def _outcome_panel(
+    outcome: ClassificationOutcome, title: str, provider: str | None, model: str | None
+) -> None:
     """Print one classification outcome."""
     if outcome.status == "empty":
         print_warning("Empty text: nothing to classify (the model was not called)")
@@ -159,8 +158,11 @@ def _outcome_panel(outcome: ClassificationOutcome, title: str, provider: str | N
 
 def _report_table(report: RunReport) -> Table:
     """Render a run report as a table."""
-    table = Table(title=f"Classification run · {report.taxonomy} (v{report.taxonomy_version})",
-                  show_header=True, header_style="bold cyan")
+    table = Table(
+        title=f"Classification run · {report.taxonomy} (v{report.taxonomy_version})",
+        show_header=True,
+        header_style="bold cyan",
+    )
     table.add_column("Metric")
     table.add_column("Value", justify="right")
     rows: list[tuple[str, Any]] = [
@@ -258,14 +260,28 @@ def _run_classification(
 
 
 @classify.command()
-@click.option("--taxonomy", "-t", default="topics", show_default=True,
-              help="Taxonomy to classify into (see `classify taxonomies`)")
-@click.option("--source", type=click.Choice(["all", "instagram", "telegram"]), default="all",
-              show_default=True, help="Restrict to one source")
-@click.option("--scope", type=click.Choice(["default", "backfill", "reprocess"]),
-              default="default", show_default=True,
-              help="default: new + never classified items; backfill: everything not yet "
-                   "classified for the current label set; reprocess: everything matching")
+@click.option(
+    "--taxonomy",
+    "-t",
+    default="topics",
+    show_default=True,
+    help="Taxonomy to classify into (see `classify taxonomies`)",
+)
+@click.option(
+    "--source",
+    type=click.Choice(["all", "instagram", "telegram"]),
+    default="all",
+    show_default=True,
+    help="Restrict to one source",
+)
+@click.option(
+    "--scope",
+    type=click.Choice(["default", "backfill", "reprocess"]),
+    default="default",
+    show_default=True,
+    help="default: new + never classified items; backfill: everything not yet "
+    "classified for the current label set; reprocess: everything matching",
+)
 @click.option("--backfill", "backfill_flag", is_flag=True, help="Alias for --scope backfill")
 @click.option("--reprocess", "reprocess_flag", is_flag=True, help="Alias for --scope reprocess")
 @click.option("--with-transcript", is_flag=True, help="Only items that have a transcript")
@@ -273,12 +289,26 @@ def _run_classification(
 @click.option("--limit", type=click.IntRange(min=1), help="Maximum items sent to the LLM")
 @click.option("--provider", help="LLM provider from [llm.providers] (default: default_provider)")
 @click.option("--db", "db_path", type=click.Path(dir_okay=False), help=_DB_OPTION_HELP)
-@click.option("--no-wait-transcripts", is_flag=True,
-              help="Also classify items whose video transcripts are still pending")
+@click.option(
+    "--no-wait-transcripts",
+    is_flag=True,
+    help="Also classify items whose video transcripts are still pending",
+)
 @click.pass_context
-def run(ctx: click.Context, taxonomy: str, source: str, scope: str, backfill_flag: bool,
-        reprocess_flag: bool, with_transcript: bool, since: str | None, limit: int | None,
-        provider: str | None, db_path: str | None, no_wait_transcripts: bool) -> None:
+def run(
+    ctx: click.Context,
+    taxonomy: str,
+    source: str,
+    scope: str,
+    backfill_flag: bool,
+    reprocess_flag: bool,
+    with_transcript: bool,
+    since: str | None,
+    limit: int | None,
+    provider: str | None,
+    db_path: str | None,
+    no_wait_transcripts: bool,
+) -> None:
     """Classify pending database items of a taxonomy and store the results.
 
     Old posts are never re-classified automatically: the default scope only
@@ -296,8 +326,15 @@ def run(ctx: click.Context, taxonomy: str, source: str, scope: str, backfill_fla
     elif reprocess_flag:
         scope = "reprocess"
     _run_classification(
-        ctx, taxonomy=taxonomy, source=source, scope=scope, with_transcript=with_transcript,
-        since=since, limit=limit, provider=provider, db_path=db_path,
+        ctx,
+        taxonomy=taxonomy,
+        source=source,
+        scope=scope,
+        with_transcript=with_transcript,
+        since=since,
+        limit=limit,
+        provider=provider,
+        db_path=db_path,
         wait_transcripts=not no_wait_transcripts,
     )
 
@@ -306,19 +343,45 @@ def run(ctx: click.Context, taxonomy: str, source: str, scope: str, backfill_fla
 @click.argument("content", required=False)
 @click.option("--taxonomy", "-t", help="Configured taxonomy (default: topics)")
 @click.option("--labels", help="Ad-hoc labels, comma separated (e.g. recipe,travel,tech)")
-@click.option("--mode", type=click.Choice(["single", "multi"]), default="multi",
-              show_default=True, help="Mode for --labels")
+@click.option(
+    "--mode",
+    type=click.Choice(["single", "multi"]),
+    default="multi",
+    show_default=True,
+    help="Mode for --labels",
+)
 @click.option("--provider", help="LLM provider from [llm.providers] (default: default_provider)")
-@click.option("--output", type=click.Choice(["text", "json"]), default="text",
-              show_default=True, help="Output format")
-@click.option("--classifier", type=click.Choice(["recipe", "multiclass", "multilabel"]),
-              hidden=True, help="Deprecated: use --labels/--mode or --taxonomy")
-@click.option("--classes", "classes_arg", hidden=True,
-              help="Deprecated: JSON object of labels → descriptions (or @file)")
+@click.option(
+    "--output",
+    type=click.Choice(["text", "json"]),
+    default="text",
+    show_default=True,
+    help="Output format",
+)
+@click.option(
+    "--classifier",
+    type=click.Choice(["recipe", "multiclass", "multilabel"]),
+    hidden=True,
+    help="Deprecated: use --labels/--mode or --taxonomy",
+)
+@click.option(
+    "--classes",
+    "classes_arg",
+    hidden=True,
+    help="Deprecated: JSON object of labels → descriptions (or @file)",
+)
 @click.pass_context
-def text(ctx: click.Context, content: str | None, taxonomy: str | None, labels: str | None,
-         mode: str, provider: str | None, output: str, classifier: str | None,
-         classes_arg: str | None) -> None:
+def text(
+    ctx: click.Context,
+    content: str | None,
+    taxonomy: str | None,
+    labels: str | None,
+    mode: str,
+    provider: str | None,
+    output: str,
+    classifier: str | None,
+    classes_arg: str | None,
+) -> None:
     """Classify free-form text (nothing is stored).
 
     Examples:
@@ -335,15 +398,23 @@ def text(ctx: click.Context, content: str | None, taxonomy: str | None, labels: 
     spec: TaxonomySpec | None = None
     try:
         if classifier is not None or classes_arg is not None:
-            print_warning("--classifier/--classes are deprecated; use --labels/--mode or "
-                          "--taxonomy")
+            print_warning(
+                "--classifier/--classes are deprecated; use --labels/--mode or --taxonomy"
+            )
             if classifier == "recipe" and not classes_arg:
                 spec = TaxonomySpec.adhoc(
-                    {"recipe": "Cooking instructions, ingredients or a dish to prepare",
-                     "not_recipe": "Anything else"}, mode="single", name="recipe")
+                    {
+                        "recipe": "Cooking instructions, ingredients or a dish to prepare",
+                        "not_recipe": "Anything else",
+                    },
+                    mode="single",
+                    name="recipe",
+                )
             elif classes_arg:
-                spec = TaxonomySpec.adhoc(_parse_classes(classes_arg),
-                                          mode="multi" if classifier == "multilabel" else "single")
+                spec = TaxonomySpec.adhoc(
+                    _parse_classes(classes_arg),
+                    mode="multi" if classifier == "multilabel" else "single",
+                )
         if spec is None and labels:
             spec = TaxonomySpec.adhoc(_parse_labels(labels), mode=mode)  # type: ignore[arg-type]
     except ValueError as exc:
@@ -376,38 +447,70 @@ def text(ctx: click.Context, content: str | None, taxonomy: str | None, labels: 
         )
         get_console().print_json(json.dumps(data, ensure_ascii=False))
         return
-    _outcome_panel(outcome, f"Classification · {spec.name} ({spec.mode})",
-                   clf.provider_name, clf.model_name)
+    _outcome_panel(
+        outcome, f"Classification · {spec.name} ({spec.mode})", clf.provider_name, clf.model_name
+    )
 
 
 @classify.command()
 @click.option("--db", "db_path", type=click.Path(dir_okay=False), help=_DB_OPTION_HELP)
-@click.option("--output", type=click.Choice(["text", "json"]), default="text",
-              show_default=True, help="Output format")
+@click.option(
+    "--output",
+    type=click.Choice(["text", "json"]),
+    default="text",
+    show_default=True,
+    help="Output format",
+)
 @click.pass_context
 def taxonomies(ctx: click.Context, db_path: str | None, output: str) -> None:
     """List configured and stored taxonomies with versions and result counts."""
     service = _build_service(ctx, db_path, require_db=False)
     infos = service.list_taxonomies()
     if output == "json":
-        get_console().print_json(json.dumps([
-            {
-                "name": i.name, "mode": i.mode, "labels": list(i.labels),
-                "configured": i.configured, "in_db": i.in_db, "version": i.version,
-                "is_legacy": i.is_legacy, "in_sync": i.in_sync, "runs": i.runs,
-                "results": dict(i.results), "classified_items": i.classified_items,
-            }
-            for i in infos
-        ], ensure_ascii=False))
+        get_console().print_json(
+            json.dumps(
+                [
+                    {
+                        "name": i.name,
+                        "mode": i.mode,
+                        "labels": list(i.labels),
+                        "configured": i.configured,
+                        "in_db": i.in_db,
+                        "version": i.version,
+                        "is_legacy": i.is_legacy,
+                        "in_sync": i.in_sync,
+                        "runs": i.runs,
+                        "results": dict(i.results),
+                        "classified_items": i.classified_items,
+                    }
+                    for i in infos
+                ],
+                ensure_ascii=False,
+            )
+        )
         return
     if not infos:
         print_warning("No taxonomies configured ([[classification.taxonomies]]) or stored")
         return
     table = Table(title="Taxonomies", show_header=True, header_style="bold cyan")
-    for column in ("Name", "Mode", "Labels", "Source", "Version", "Runs", "ok", "none",
-                   "errors", "Items"):
-        table.add_column(column, justify="right" if column in
-                         ("Version", "Runs", "ok", "none", "errors", "Items") else "left")
+    for column in (
+        "Name",
+        "Mode",
+        "Labels",
+        "Source",
+        "Version",
+        "Runs",
+        "ok",
+        "none",
+        "errors",
+        "Items",
+    ):
+        table.add_column(
+            column,
+            justify="right"
+            if column in ("Version", "Runs", "ok", "none", "errors", "Items")
+            else "left",
+        )
     for info in infos:
         origin = []
         if info.configured:
@@ -418,32 +521,63 @@ def taxonomies(ctx: click.Context, db_path: str | None, output: str) -> None:
             origin.append("[yellow]labels changed[/yellow]")
         labels = ", ".join(info.labels)
         table.add_row(
-            info.name, info.mode, labels if len(labels) <= 60 else labels[:57] + "...",
-            " + ".join(origin), str(info.version or "-"), str(info.runs),
-            str(info.results.get("ok", 0)), str(info.results.get("no_labels", 0)),
-            str(info.results.get("error", 0)), str(info.classified_items),
+            info.name,
+            info.mode,
+            labels if len(labels) <= 60 else labels[:57] + "...",
+            " + ".join(origin),
+            str(info.version or "-"),
+            str(info.runs),
+            str(info.results.get("ok", 0)),
+            str(info.results.get("no_labels", 0)),
+            str(info.results.get("error", 0)),
+            str(info.classified_items),
         )
     get_console().print(table)
 
 
 @classify.command(deprecated=True)
-@click.option("--source", type=click.Choice(["all", "instagram", "telegram"]), default="all",
-              help="Database source to classify (default: all)")
-@click.option("--classifier", type=click.Choice(["recipe", "multiclass", "multilabel"]),
-              default=None, help="Ignored (the generic 'topics' taxonomy is used)")
-@click.option("--classes", "classes_arg", default=None,
-              help="Ignored (configure [[classification.taxonomies]] instead)")
-@click.option("--limit", type=click.IntRange(min=1), default=None,
-              help="Maximum items sent to the LLM (default: 1000)")
+@click.option(
+    "--source",
+    type=click.Choice(["all", "instagram", "telegram"]),
+    default="all",
+    help="Database source to classify (default: all)",
+)
+@click.option(
+    "--classifier",
+    type=click.Choice(["recipe", "multiclass", "multilabel"]),
+    default=None,
+    help="Ignored (the generic 'topics' taxonomy is used)",
+)
+@click.option(
+    "--classes",
+    "classes_arg",
+    default=None,
+    help="Ignored (configure [[classification.taxonomies]] instead)",
+)
+@click.option(
+    "--limit",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Maximum items sent to the LLM (default: 1000)",
+)
 @click.option("--filter-hashtag", multiple=True, help="Only items with this hashtag")
 @click.option("--provider", help="LLM provider to use (default: from config)")
 @click.option("--force", is_flag=True, default=False, help="Reprocess already classified items")
 @click.option("--replace", is_flag=True, default=False, help="Ignored (results are versioned)")
 @click.option("--db", "db_path", type=click.Path(dir_okay=False), help=_DB_OPTION_HELP)
 @click.pass_context
-def db(ctx: click.Context, source: str, classifier: str | None, classes_arg: str | None,
-       limit: int | None, filter_hashtag: tuple[str, ...], provider: str | None, force: bool,
-       replace: bool, db_path: str | None) -> None:
+def db(
+    ctx: click.Context,
+    source: str,
+    classifier: str | None,
+    classes_arg: str | None,
+    limit: int | None,
+    filter_hashtag: tuple[str, ...],
+    provider: str | None,
+    force: bool,
+    replace: bool,
+    db_path: str | None,
+) -> None:
     """Deprecated: use `postparse classify run --taxonomy topics`.
 
     Maps to `classify run --taxonomy topics` (--force → --scope reprocess,
@@ -453,15 +587,24 @@ def db(ctx: click.Context, source: str, classifier: str | None, classes_arg: str
     if replace and not force:
         raise click.UsageError("--replace requires --force")
     if classifier is not None:
-        print_warning(f"--classifier {classifier} is ignored: the generic 'topics' taxonomy is "
-                      "used (recipe is a label there)")
+        print_warning(
+            f"--classifier {classifier} is ignored: the generic 'topics' taxonomy is "
+            "used (recipe is a label there)"
+        )
     if classes_arg is not None:
         print_warning("--classes is ignored: configure [[classification.taxonomies]] instead")
     if replace:
         print_warning("--replace is ignored: every run keeps its own results")
     _run_classification(
-        ctx, taxonomy="topics", source=source, scope="reprocess" if force else "default",
-        with_transcript=False, since=None, limit=limit or 1000, provider=provider,
-        db_path=db_path, wait_transcripts=True,
+        ctx,
+        taxonomy="topics",
+        source=source,
+        scope="reprocess" if force else "default",
+        with_transcript=False,
+        since=None,
+        limit=limit or 1000,
+        provider=provider,
+        db_path=db_path,
+        wait_transcripts=True,
         tags=tuple(f"#{tag.lstrip('#')}" for tag in filter_hashtag),
     )

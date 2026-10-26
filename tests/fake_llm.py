@@ -73,9 +73,9 @@ def keyword_model(
         multi = "labels" in props
         enum = props["labels"]["items"]["enum"] if multi else props["label"]["enum"]
         matches = [
-            label for label in enum
-            if label.lower() in lowered
-            or any(word in lowered for word in table.get(label, ()))
+            label
+            for label in enum
+            if label.lower() in lowered or any(word in lowered for word in table.get(label, ()))
         ]
         # "not_recipe" contains "recipe": prefer the more specific positive label.
         matches = [m for m in matches if not (m.startswith("not_") and m[4:] in matches)]
@@ -107,8 +107,12 @@ def fake_classifier_factory(
         if provider == "missing":
             raise ValueError("Provider 'missing' not found. Available: fake")
         return TaxonomyClassifier(
-            spec, shared, "native", max_concurrency=max_concurrency,
-            provider_name=provider or provider_name, model_name=model_name,
+            spec,
+            shared,
+            "native",
+            max_concurrency=max_concurrency,
+            provider_name=provider or provider_name,
+            model_name=model_name,
         )
 
     return factory

@@ -47,8 +47,12 @@ def test_derived_content_is_searchable(conn: sqlite3.Connection) -> None:
     items = ItemsRepo(conn)
     item_id, _ = items.upsert(
         ItemUpsert(
-            "instagram", "abc", "video", text="watch https://blog.example/post",
-            hashtags=("veggie",), media=(MediaInput(0, "video"),),
+            "instagram",
+            "abc",
+            "video",
+            text="watch https://blog.example/post",
+            hashtags=("veggie",),
+            media=(MediaInput(0, "video"),),
         )
     )
     media_id = conn.execute("SELECT id FROM media WHERE item_id = ?", (item_id,)).fetchone()[0]

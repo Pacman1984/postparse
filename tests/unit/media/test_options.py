@@ -30,14 +30,30 @@ def test_defaults() -> None:
 
 
 def test_config_values() -> None:
-    o = TranscriptionOptions.from_config(Cfg({"transcription": {
-        "backend": "API", "limit": 7, "refetch_min_delay": 1, "refetch_max_delay": 2,
-        "remote_url_max_age_hours": 1.5, "max_download_mb": 1, "language": "de",
-        "backoff_minutes": 5, "max_backoff_hours": 2,
-        "local": {"model": "small", "device": "CPU", "download_root": ""},
-        "api": {"base_url": "http://asr.test/v1", "model": "m", "api_key_env": "ASR_KEY",
-                "upload_format": "wav16k"},
-    }}))
+    o = TranscriptionOptions.from_config(
+        Cfg(
+            {
+                "transcription": {
+                    "backend": "API",
+                    "limit": 7,
+                    "refetch_min_delay": 1,
+                    "refetch_max_delay": 2,
+                    "remote_url_max_age_hours": 1.5,
+                    "max_download_mb": 1,
+                    "language": "de",
+                    "backoff_minutes": 5,
+                    "max_backoff_hours": 2,
+                    "local": {"model": "small", "device": "CPU", "download_root": ""},
+                    "api": {
+                        "base_url": "http://asr.test/v1",
+                        "model": "m",
+                        "api_key_env": "ASR_KEY",
+                        "upload_format": "wav16k",
+                    },
+                }
+            }
+        )
+    )
     assert o.backend == "api" and o.limit == 7 and o.language == "de"
     assert o.remote_url_max_age == timedelta(minutes=90)
     assert o.max_download_bytes == 1024 * 1024

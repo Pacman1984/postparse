@@ -100,8 +100,12 @@ async def run_transcription(
         "transcribe",
         drop_none(request.model_dump()),
         transcribe_job(
-            transcription, source=source, limit=request.limit, backend=request.backend,
-            refetch=request.refetch, item_ids=request.item_ids,
+            transcription,
+            source=source,
+            limit=request.limit,
+            backend=request.backend,
+            refetch=request.refetch,
+            item_ids=request.item_ids,
         ),
         total=request.limit,
     )
@@ -133,10 +137,13 @@ def backend_status(transcription: TranscriptionService) -> dict[str, Any]:
         backend = transcription.backend()
         backend.check()
     except Exception as exc:  # noqa: BLE001 - reported, never raised
-        return {"kind": transcription.options.backend, "status": "unavailable",
-                "error": str(exc)}
-    return {"kind": transcription.options.backend, "status": "available",
-            "name": getattr(backend, "name", None), "model": getattr(backend, "model", None)}
+        return {"kind": transcription.options.backend, "status": "unavailable", "error": str(exc)}
+    return {
+        "kind": transcription.options.backend,
+        "status": "available",
+        "name": getattr(backend, "name", None),
+        "model": getattr(backend, "model", None),
+    }
 
 
 # -- summaries ---------------------------------------------------------------
@@ -161,8 +168,11 @@ async def run_summaries(
         "summarize",
         drop_none(request.model_dump()),
         summarize_job(
-            summarization, limit=request.limit, provider=request.provider,
-            force=request.force, item_ids=request.item_ids,
+            summarization,
+            limit=request.limit,
+            provider=request.provider,
+            force=request.force,
+            item_ids=request.item_ids,
         ),
         total=request.limit,
     )
@@ -190,8 +200,12 @@ async def run_enrichment(
         "enrich",
         drop_none(request.model_dump()),
         enrich_job(
-            enrichment, source=request.source, limit=request.limit, force=request.force,
-            refresh_legacy=request.refresh_legacy, domains=request.domains,
+            enrichment,
+            source=request.source,
+            limit=request.limit,
+            force=request.force,
+            refresh_legacy=request.refresh_legacy,
+            domains=request.domains,
         ),
         total=request.limit,
     )

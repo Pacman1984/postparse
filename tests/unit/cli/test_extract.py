@@ -50,11 +50,17 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         path = Path(db_path) if db_path else settings.db_path
         state["db_paths"].append(path)
         return ExtractionService(
-            Database.open(path), settings,
-            telegram_overrides={"client_factory": client_factory(state["client"]),
-                                "sleep": no_sleep},
-            instagram_overrides={"loader_factory": loader_factory(state["loader"]),
-                                 "saved_posts": state["feed"], "sleep": SleepRecorder()},
+            Database.open(path),
+            settings,
+            telegram_overrides={
+                "client_factory": client_factory(state["client"]),
+                "sleep": no_sleep,
+            },
+            instagram_overrides={
+                "loader_factory": loader_factory(state["loader"]),
+                "saved_posts": state["feed"],
+                "sleep": SleepRecorder(),
+            },
         )
 
     monkeypatch.setattr("postparse.cli.extract._build_service", build)
@@ -125,8 +131,9 @@ def test_instagram_success(env) -> None:
 
 
 def test_instagram_rate_limited_exit_3(env) -> None:
-    env["feed"] = Feed([ig_post(ig_node(c)) for c in "abc"], fail_at=2,
-                       error=TooManyRequestsException("429"))
+    env["feed"] = Feed(
+        [ig_post(ig_node(c)) for c in "abc"], fail_at=2, error=TooManyRequestsException("429")
+    )
     result = invoke(["instagram"], SECRETS)
     assert result.exit_code == 3, result.output
     assert "rate limit" in result.output.lower()

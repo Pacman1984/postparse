@@ -65,8 +65,7 @@ class CredentialsMissing(AuthRequired):
     def __init__(self, source: str, missing: tuple[str, ...]) -> None:
         self.missing = missing
         super().__init__(
-            f"{source} credentials missing: set {', '.join(missing)} "
-            "(environment or config/.env)."
+            f"{source} credentials missing: set {', '.join(missing)} (environment or config/.env)."
         )
 
 
@@ -275,8 +274,12 @@ class BatchWriter:
         self.stats.last_external_id = batch[-1].external_id
         logger.debug(
             "Committed %s batch of %d (new=%d, updated=%d)",
-            self.stats.source, len(batch), new, updated,
+            self.stats.source,
+            len(batch),
+            new,
+            updated,
         )
+
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -52,52 +52,43 @@ class TelegramExtractRequest(BaseModel):
         }
     """
 
-    model_config = ConfigDict(json_schema_extra={
-        "examples": [
-            {
-                "api_id": 12345678,
-                "api_hash": "0123456789abcdef0123456789abcdef",
-                "phone": "+1234567890",
-                "limit": 100,
-                "force_update": False,
-                "max_requests_per_session": 5
-            }
-        ]
-    })
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "api_id": 12345678,
+                    "api_hash": "0123456789abcdef0123456789abcdef",
+                    "phone": "+1234567890",
+                    "limit": 100,
+                    "force_update": False,
+                    "max_requests_per_session": 5,
+                }
+            ]
+        }
+    )
 
     api_id: int = Field(
-        ...,
-        description="Telegram API ID (integer from my.telegram.org)",
-        examples=[12345678]
+        ..., description="Telegram API ID (integer from my.telegram.org)", examples=[12345678]
     )
     api_hash: str = Field(
         ...,
         min_length=32,
         max_length=32,
         description="Telegram API hash (32 characters)",
-        examples=["0123456789abcdef0123456789abcdef"]
+        examples=["0123456789abcdef0123456789abcdef"],
     )
     phone: str | None = Field(
         default=None,
         pattern=r"^\+?[1-9]\d{1,14}$",
         description="Phone number in international format (E.164)",
-        examples=["+1234567890"]
+        examples=["+1234567890"],
     )
     limit: int | None = Field(
-        default=100,
-        ge=1,
-        le=10000,
-        description="Maximum messages to extract per channel"
+        default=100, ge=1, le=10000, description="Maximum messages to extract per channel"
     )
-    force_update: bool = Field(
-        default=False,
-        description="Re-extract already processed messages"
-    )
+    force_update: bool = Field(default=False, description="Re-extract already processed messages")
     max_requests_per_session: int | None = Field(
-        default=5,
-        ge=1,
-        le=20,
-        description="Rate limiting: max API requests per session"
+        default=5, ge=1, le=20, description="Rate limiting: max API requests per session"
     )
 
 
@@ -120,35 +111,26 @@ class TelegramExtractResponse(BaseModel):
         }
     """
 
-    model_config = ConfigDict(json_schema_extra={
-        "examples": [
-            {
-                "job_id": "550e8400-e29b-41d4-a716-446655440000",
-                "status": "pending",
-                "message_count": 0,
-                "estimated_time": 60
-            }
-        ]
-    })
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "job_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "status": "pending",
+                    "message_count": 0,
+                    "estimated_time": 60,
+                }
+            ]
+        }
+    )
 
     job_id: str = Field(
-        ...,
-        description="Unique job identifier",
-        examples=["550e8400-e29b-41d4-a716-446655440000"]
+        ..., description="Unique job identifier", examples=["550e8400-e29b-41d4-a716-446655440000"]
     )
-    status: ExtractionStatus = Field(
-        ...,
-        description="Current job status"
-    )
-    message_count: int = Field(
-        default=0,
-        ge=0,
-        description="Estimated messages to process"
-    )
+    status: ExtractionStatus = Field(..., description="Current job status")
+    message_count: int = Field(default=0, ge=0, description="Estimated messages to process")
     estimated_time: int | None = Field(
-        default=None,
-        ge=0,
-        description="Estimated completion time (seconds)"
+        default=None, ge=0, description="Estimated completion time (seconds)"
     )
 
 
@@ -199,52 +181,27 @@ class TelegramMessageSchema(BaseModel):
                     "mentions": [],
                     "created_at": "2025-11-19T10:00:00Z",
                     "extracted_at": "2025-11-19T10:30:00Z",
-                    "metadata": {}
+                    "metadata": {},
                 }
             ]
-        }
+        },
     )
 
-    message_id: int = Field(
-        ...,
-        description="Telegram message ID"
-    )
-    channel_username: str | None = Field(
-        default=None,
-        description="Channel username (without @)"
-    )
-    content: str | None = Field(
-        default=None,
-        description="Message text content"
-    )
+    message_id: int = Field(..., description="Telegram message ID")
+    channel_username: str | None = Field(default=None, description="Channel username (without @)")
+    content: str | None = Field(default=None, description="Message text content")
     content_type: str = Field(
         default="text",
         description="Type of content",
-        examples=["text", "photo", "video", "document"]
+        examples=["text", "photo", "video", "document"],
     )
-    media_urls: list[str] = Field(
-        default_factory=list,
-        description="List of media URLs"
-    )
-    hashtags: list[str] = Field(
-        default_factory=list,
-        description="Extracted hashtags (without #)"
-    )
-    mentions: list[str] = Field(
-        default_factory=list,
-        description="Mentioned usernames (without @)"
-    )
-    created_at: datetime | None = Field(
-        default=None,
-        description="Message creation timestamp"
-    )
-    extracted_at: datetime | None = Field(
-        default=None,
-        description="Extraction timestamp"
-    )
+    media_urls: list[str] = Field(default_factory=list, description="List of media URLs")
+    hashtags: list[str] = Field(default_factory=list, description="Extracted hashtags (without #)")
+    mentions: list[str] = Field(default_factory=list, description="Mentioned usernames (without @)")
+    created_at: datetime | None = Field(default=None, description="Message creation timestamp")
+    extracted_at: datetime | None = Field(default=None, description="Extraction timestamp")
     metadata: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Additional message metadata"
+        default_factory=dict, description="Additional message metadata"
     )
 
 
@@ -269,48 +226,32 @@ class JobStatusResponse(BaseModel):
         }
     """
 
-    model_config = ConfigDict(json_schema_extra={
-        "examples": [
-            {
-                "job_id": "550e8400-e29b-41d4-a716-446655440000",
-                "status": "running",
-                "progress": 65,
-                "messages_processed": 65,
-                "errors": []
-            },
-            {
-                "job_id": "550e8400-e29b-41d4-a716-446655440000",
-                "status": "completed",
-                "progress": 100,
-                "messages_processed": 100,
-                "errors": []
-            }
-        ]
-    })
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "job_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "status": "running",
+                    "progress": 65,
+                    "messages_processed": 65,
+                    "errors": [],
+                },
+                {
+                    "job_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "status": "completed",
+                    "progress": 100,
+                    "messages_processed": 100,
+                    "errors": [],
+                },
+            ]
+        }
+    )
 
-    job_id: str = Field(
-        ...,
-        description="Unique job identifier"
-    )
-    status: ExtractionStatus = Field(
-        ...,
-        description="Current job status"
-    )
-    progress: int = Field(
-        default=0,
-        ge=0,
-        le=100,
-        description="Completion percentage"
-    )
-    messages_processed: int = Field(
-        default=0,
-        ge=0,
-        description="Messages processed so far"
-    )
-    errors: list[str] = Field(
-        default_factory=list,
-        description="Error messages encountered"
-    )
+    job_id: str = Field(..., description="Unique job identifier")
+    status: ExtractionStatus = Field(..., description="Current job status")
+    progress: int = Field(default=0, ge=0, le=100, description="Completion percentage")
+    messages_processed: int = Field(default=0, ge=0, description="Messages processed so far")
+    errors: list[str] = Field(default_factory=list, description="Error messages encountered")
     job_type: str | None = Field(
         default=None,
         description="Job kind (telegram_extract, instagram_extract, transcribe, summarize, "
@@ -355,5 +296,3 @@ class JobStatusResponse(BaseModel):
             started_at=job.start_time,
             finished_at=job.end_time,
         )
-
-

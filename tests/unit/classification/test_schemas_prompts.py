@@ -73,9 +73,7 @@ def test_extra_fields_are_rejected_and_reasoning_is_shortened() -> None:
         model.model_validate(
             {"reasoning": "", "label": "recipe", "confidence": 0.5, "cuisine": "it"}
         )
-    out = model.model_validate(
-        {"reasoning": "x  " * 400, "label": "recipe", "confidence": 0.5}
-    )
+    out = model.model_validate({"reasoning": "x  " * 400, "label": "recipe", "confidence": 0.5})
     assert len(out.reasoning) == REASONING_MAX_CHARS
 
 

@@ -93,9 +93,7 @@ def to_db_ts(value: TimestampInput, assume_tz: tzinfo | None = None) -> str:
 
     if parsed.tzinfo is None or parsed.tzinfo.utcoffset(parsed) is None:
         if assume_tz is None:
-            raise ValueError(
-                f"Naive timestamp {value!r} needs an explicit assume_tz to be stored"
-            )
+            raise ValueError(f"Naive timestamp {value!r} needs an explicit assume_tz to be stored")
         parsed = parsed.replace(tzinfo=assume_tz)
     return _format(parsed)
 

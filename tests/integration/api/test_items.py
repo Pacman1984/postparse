@@ -19,8 +19,12 @@ class TestListItems:
         assert data["has_more"] is False
         # Undated items sort by collected_at (2024-01-15); ties by id descending.
         assert _ids(response) == [
-            seeded["python"], seeded["pasta"], seeded["cake"], seeded["undated2"],
-            seeded["undated"], seeded["carousel"],
+            seeded["python"],
+            seeded["pasta"],
+            seeded["cake"],
+            seeded["undated2"],
+            seeded["undated"],
+            seeded["carousel"],
         ]
 
     def test_item_fields_include_tags_and_labels(
@@ -146,8 +150,13 @@ class TestItemDetail:
         data = client.get(f"/api/v1/items/{seeded['undated']}").json()
         assert data["created_at"] is None
         assert data["detail"]["telegram"] == {
-            "chat_id": 100, "message_id": 2, "views": None, "forwards": None,
-            "reply_to_msg_id": None, "fwd_from_name": None, "fwd_from_id": None,
+            "chat_id": 100,
+            "message_id": 2,
+            "views": None,
+            "forwards": None,
+            "reply_to_msg_id": None,
+            "fwd_from_name": None,
+            "fwd_from_id": None,
             "fwd_from_post_id": None,
         }
         assert data["summary"] is None and data["transcript"] is None
@@ -168,8 +177,11 @@ class TestItemDetail:
     def test_summary_endpoint(self, client: TestClient, seeded: dict[str, int]) -> None:
         data = client.get(f"/api/v1/items/{seeded['pasta']}/summary").json()
         assert data == {
-            "item_id": seeded["pasta"], "summary": "A carbonara video.",
-            "key_points": ["Use guanciale", "No cream"], "provider": "fake",
-            "model": "fake-model", "created_at": data["created_at"],
+            "item_id": seeded["pasta"],
+            "summary": "A carbonara video.",
+            "key_points": ["Use guanciale", "No cream"],
+            "provider": "fake",
+            "model": "fake-model",
+            "created_at": data["created_at"],
         }
         assert client.get(f"/api/v1/items/{seeded['cake']}/summary").status_code == 404

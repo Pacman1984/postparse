@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 # Singleton console instance
 _console: Console | None = None
 
-T = TypeVar('T')
+T = TypeVar("T")
 
 
 def get_console() -> Console:
@@ -116,10 +116,7 @@ def print_info(message: str) -> None:
 
 
 def print_panel(
-    content: str,
-    title: str | None = None,
-    style: str = "cyan",
-    expand: bool = False
+    content: str, title: str | None = None, style: str = "cyan", expand: bool = False
 ) -> None:
     """
     Display content in a Rich panel.
@@ -139,9 +136,7 @@ def print_panel(
 
 
 def print_table(
-    data: list[dict[str, Any]],
-    title: str | None = None,
-    columns: list[str] | None = None
+    data: list[dict[str, Any]], title: str | None = None, columns: list[str] | None = None
 ) -> None:
     """
     Display data in a Rich table.
@@ -280,8 +275,7 @@ def open_database(ctx: Any, db_path: str | None = None) -> Database:
     path = resolve_db_path(ctx, db_path)
     if not path.is_file():
         raise click.ClickException(
-            f"Database not found: {path} (run `postparse db migrate` or "
-            "`postparse db migrate-v1`)"
+            f"Database not found: {path} (run `postparse db migrate` or `postparse db migrate-v1`)"
         )
     conn = connect(path)
     try:
@@ -332,6 +326,7 @@ def emit_json(data: Any) -> None:
     import rich_click as click
 
     click.echo(json.dumps(data, indent=2, ensure_ascii=False, default=str))
+
 
 def format_duration(seconds: float) -> str:
     """Format a duration in seconds for CLI display.
@@ -411,10 +406,7 @@ def run_async(coro: Coroutine[Any, Any, T]) -> T:  # noqa: UP047 - keep pre-PEP 
     return loop.run_until_complete(coro)
 
 
-def validate_credentials(
-    required: list[str],
-    provided: dict[str, str | None]
-) -> list[str]:
+def validate_credentials(required: list[str], provided: dict[str, str | None]) -> list[str]:
     """
     Check required credentials are provided.
 
@@ -456,7 +448,7 @@ def truncate_text(text: str, max_length: int = 50) -> str:
     """
     if len(text) <= max_length:
         return text
-    return text[:max_length - 3] + "..."
+    return text[: max_length - 3] + "..."
 
 
 def parse_date(date_str: str) -> datetime:
@@ -480,4 +472,3 @@ def parse_date(date_str: str) -> datetime:
         return datetime.strptime(date_str, "%Y-%m-%d")
     except ValueError:
         raise ValueError(f"Invalid date format: {date_str}. Use YYYY-MM-DD") from None
-

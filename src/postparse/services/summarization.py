@@ -236,7 +236,10 @@ class SummarizationService:
         return summarizer
 
     def pending(
-        self, *, limit: int | None = None, force: bool = False,
+        self,
+        *,
+        limit: int | None = None,
+        force: bool = False,
         item_ids: Sequence[int] | None = None,
     ) -> list[int]:
         """Items that need a summary (see :meth:`SummariesRepo.items_needing_summary`)."""
@@ -256,7 +259,10 @@ class SummarizationService:
         """Summarize due items (synchronous wrapper around :meth:`arun`)."""
         return run_sync(
             self.arun(
-                limit=limit, provider=provider, force=force, item_ids=item_ids,
+                limit=limit,
+                provider=provider,
+                force=force,
+                item_ids=item_ids,
                 progress=progress,
             )
         )
@@ -345,12 +351,18 @@ class SummarizationService:
             report.duration_s = time.perf_counter() - started
             logger.info(
                 "Summaries: %d stored, %d empty, %d errors in %.1fs",
-                report.summarized, report.skipped_empty, report.errors, report.duration_s,
+                report.summarized,
+                report.skipped_empty,
+                report.errors,
+                report.duration_s,
             )
         return report
 
     def _store(
-        self, item_id: int, outcome: SummaryOutcome, summarizer: Summarizer,
+        self,
+        item_id: int,
+        outcome: SummaryOutcome,
+        summarizer: Summarizer,
         report: SummarizationReport,
     ) -> None:
         with self.db.transaction() as conn:

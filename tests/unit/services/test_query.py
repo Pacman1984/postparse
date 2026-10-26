@@ -49,25 +49,54 @@ def seeded(db: Database) -> dict[str, int]:
         def add(key: str, **kwargs: object) -> None:
             ids[key], _ = items.upsert(ItemUpsert(**kwargs))  # type: ignore[arg-type]
 
-        add("pasta", source="instagram", external_id="p1", kind="video",
-            text="Creamy pasta carbonara", author="chef",
-            created_at="2024-03-10T12:00:00Z", hashtags=("pasta", "Dinner"),
-            detail=InstagramDetail("p1"), media=(MediaInput(0, "video"),))
-        add("cake", source="instagram", external_id="p2", kind="image",
-            text="Chocolate cake recipe", author="baker",
-            created_at="2024-02-01T08:00:00Z", hashtags=("dessert",), mentions=("chef",))
-        add("python", source="telegram", external_id="1:1", kind="text",
-            text="New Python release notes", author="news",
-            created_at="2024-03-31T23:59:59Z")
-        add("undated", source="telegram", external_id="1:2", kind="document",
-            text="Undated pasta document", author="news",
-            collected_at="2024-01-15T00:00:00Z")
+        add(
+            "pasta",
+            source="instagram",
+            external_id="p1",
+            kind="video",
+            text="Creamy pasta carbonara",
+            author="chef",
+            created_at="2024-03-10T12:00:00Z",
+            hashtags=("pasta", "Dinner"),
+            detail=InstagramDetail("p1"),
+            media=(MediaInput(0, "video"),),
+        )
+        add(
+            "cake",
+            source="instagram",
+            external_id="p2",
+            kind="image",
+            text="Chocolate cake recipe",
+            author="baker",
+            created_at="2024-02-01T08:00:00Z",
+            hashtags=("dessert",),
+            mentions=("chef",),
+        )
+        add(
+            "python",
+            source="telegram",
+            external_id="1:1",
+            kind="text",
+            text="New Python release notes",
+            author="news",
+            created_at="2024-03-31T23:59:59Z",
+        )
+        add(
+            "undated",
+            source="telegram",
+            external_id="1:2",
+            kind="document",
+            text="Undated pasta document",
+            author="news",
+            collected_at="2024-01-15T00:00:00Z",
+        )
 
         media_id = conn.execute(
             "SELECT id FROM media WHERE item_id = ?", (ids["pasta"],)
         ).fetchone()[0]
-        TranscriptsRepo(conn).add(media_id, backend="whisper", model="small",
-                                  text="stir the guanciale")
+        TranscriptsRepo(conn).add(
+            media_id, backend="whisper", model="small", text="stir the guanciale"
+        )
         SummariesRepo(conn).add(ids["pasta"], "A carbonara video")
 
         repo = ClassificationRepo(conn)
@@ -87,7 +116,10 @@ def _ids(service: QueryService, flt: ItemFilter) -> list[int]:
 def test_default_order_is_newest_first(db: Database, seeded: dict[str, int]) -> None:
     page = QueryService(db).search()
     assert [v.id for v in page.items] == [
-        seeded["python"], seeded["pasta"], seeded["cake"], seeded["undated"]
+        seeded["python"],
+        seeded["pasta"],
+        seeded["cake"],
+        seeded["undated"],
     ]
     assert page.next_cursor is None
     pasta = page.items[1]
@@ -109,8 +141,10 @@ def test_default_order_is_newest_first(db: Database, seeded: dict[str, int]) -> 
         (ItemFilter(date_from=date(2024, 3, 1)), ["python", "pasta"]),
         (ItemFilter(date_to=date(2024, 3, 31)), ["python", "pasta", "cake", "undated"]),
         (ItemFilter(date_to=date(2024, 3, 30)), ["pasta", "cake", "undated"]),
-        (ItemFilter(date_from="2024-02-01T08:00:00Z", date_to=datetime(2024, 3, 10, 12)),
-         ["pasta", "cake"]),
+        (
+            ItemFilter(date_from="2024-02-01T08:00:00Z", date_to=datetime(2024, 3, 10, 12)),
+            ["pasta", "cake"],
+        ),
         (ItemFilter(labels=LabelFilter("topics", ("food",))), ["pasta", "cake"]),
         (ItemFilter(labels=LabelFilter("topics")), ["python", "pasta", "cake"]),
         (ItemFilter(labels=LabelFilter("unknown", ("food",))), []),
@@ -123,8 +157,9 @@ def test_default_order_is_newest_first(db: Database, seeded: dict[str, int]) -> 
         (ItemFilter(q="pasta", source="instagram"), ["pasta"]),
     ],
 )
-def test_filters(db: Database, seeded: dict[str, int], flt: ItemFilter,
-                 expected: list[str]) -> None:
+def test_filters(
+    db: Database, seeded: dict[str, int], flt: ItemFilter, expected: list[str]
+) -> None:
     service = QueryService(db)
     assert _ids(service, flt) == [seeded[key] for key in expected]
     assert service.count(flt) == len(expected)
@@ -204,8 +239,13 @@ def test_get_item_detail(db: Database, seeded: dict[str, int]) -> None:
             ItemUpsert("instagram", "p1", "video", text="Creamy pasta https://recipes.example/c")
         )
         links = LinksRepo(conn)
-        links.add_fetch(links.ensure("https://recipes.example/c"), fetcher="http",
-                        status="ok", title="Carbonara", metadata={"lang": "it"})
+        links.add_fetch(
+            links.ensure("https://recipes.example/c"),
+            fetcher="http",
+            status="ok",
+            title="Carbonara",
+            metadata={"lang": "it"},
+        )
     detail = QueryService(db).get_item(seeded["pasta"])
     assert detail is not None
     assert detail.instagram is not None and detail.instagram.shortcode == "p1"
@@ -223,8 +263,12 @@ def test_get_item_detail(db: Database, seeded: dict[str, int]) -> None:
 def test_tags_with_counts(db: Database, seeded: dict[str, int]) -> None:
     service = QueryService(db)
     counts = {(t.kind, t.name): t.count for t in service.tags()}
-    assert counts == {("hashtag", "pasta"): 1, ("hashtag", "dinner"): 1,
-                      ("hashtag", "dessert"): 1, ("mention", "chef"): 1}
+    assert counts == {
+        ("hashtag", "pasta"): 1,
+        ("hashtag", "dinner"): 1,
+        ("hashtag", "dessert"): 1,
+        ("mention", "chef"): 1,
+    }
     assert [t.name for t in service.tags(kind="mention")] == ["chef"]
     assert service.tags(source="telegram") == []
 

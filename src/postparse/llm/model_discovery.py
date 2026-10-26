@@ -2,7 +2,6 @@
 
 import ipaddress
 import logging
-from typing import List, Optional
 from urllib.parse import urljoin, urlparse
 
 import httpx
@@ -15,7 +14,7 @@ logger = logging.getLogger(__name__)
 _PRIVATE_SUFFIXES = (".local", ".lan", ".home", ".internal", ".localhost", ".test")
 
 
-def is_self_hosted_url(url: Optional[str]) -> bool:
+def is_self_hosted_url(url: str | None) -> bool:
     """Return True when ``url`` points at a self-hosted server.
 
     Self-hosted means loopback, a private/link-local IP address, a single-label
@@ -83,7 +82,7 @@ def _ollama_base_url(api_base: str) -> str:
     return base
 
 
-def _pick_model_id(model_ids: List[str], configured_model: str) -> str:
+def _pick_model_id(model_ids: list[str], configured_model: str) -> str:
     """Choose the best model id from a server response.
 
     Args:
@@ -110,7 +109,7 @@ def _pick_model_id(model_ids: List[str], configured_model: str) -> str:
 def discover_openai_compatible_model(
     config: ProviderConfig,
     timeout: float = 5.0,
-) -> Optional[str]:
+) -> str | None:
     """Discover the model served by an OpenAI-compatible local server.
 
     Works with LM Studio, llama.cpp, and similar servers exposing /v1/models.
@@ -152,9 +151,7 @@ def discover_openai_compatible_model(
         return None
 
     model_ids = [
-        item["id"]
-        for item in payload.get("data", [])
-        if isinstance(item, dict) and item.get("id")
+        item["id"] for item in payload.get("data", []) if isinstance(item, dict) and item.get("id")
     ]
     if not model_ids:
         return None
@@ -165,7 +162,7 @@ def discover_openai_compatible_model(
 def discover_ollama_model(
     config: ProviderConfig,
     timeout: float = 5.0,
-) -> Optional[str]:
+) -> str | None:
     """Discover a running Ollama model, falling back to configured model.
 
     Args:
@@ -202,7 +199,7 @@ def discover_ollama_model(
 def discover_served_model(
     config: ProviderConfig,
     timeout: float = 5.0,
-) -> Optional[str]:
+) -> str | None:
     """Discover the model currently served by a local provider.
 
     Args:

@@ -180,9 +180,7 @@ class FetchRouter:
         self.stats = _Stats()
 
     @classmethod
-    def default_router(
-        cls, options: EnrichmentOptions | None = None, **kwargs: Any
-    ) -> FetchRouter:
+    def default_router(cls, options: EnrichmentOptions | None = None, **kwargs: Any) -> FetchRouter:
         """Router with :func:`default_fetchers` and the generic fallback."""
         options = options or EnrichmentOptions()
         return cls(default_fetchers(options), GenericFetcher(options), options, **kwargs)

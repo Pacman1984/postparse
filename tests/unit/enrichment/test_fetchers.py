@@ -67,8 +67,9 @@ async def fetch(fetcher: Any, url: str, options: EnrichmentOptions = OPTIONS) ->
 @respx.mock
 async def test_html_article_is_extracted_with_trafilatura() -> None:
     route = respx.get("https://kochblog.example/pasta").mock(
-        return_value=httpx.Response(200, text=ARTICLE,
-                                    headers={"content-type": "text/html; charset=utf-8"})
+        return_value=httpx.Response(
+            200, text=ARTICLE, headers={"content-type": "text/html; charset=utf-8"}
+        )
     )
     result = await fetch(GenericFetcher(OPTIONS), "https://kochblog.example/pasta")
     assert result.status == "ok" and result.fetcher == "generic"
@@ -152,14 +153,17 @@ async def test_connection_error_becomes_error_result() -> None:
 async def test_body_size_cap() -> None:
     options = EnrichmentOptions(min_domain_interval=0, max_body_mb=0.01)  # ~10 KB
     big = "<html><body>" + "<p>x</p>" * 5000 + "</body></html>"
-    respx.get("https://big.example/declared").mock(return_value=httpx.Response(
-        200, text=big, headers={"content-type": "text/html"}))
+    respx.get("https://big.example/declared").mock(
+        return_value=httpx.Response(200, text=big, headers={"content-type": "text/html"})
+    )
+
     async def chunks() -> Any:
         yield big.encode()[:8000]
         yield big.encode()[8000:]
 
-    respx.get("https://big.example/chunked").mock(return_value=httpx.Response(
-        200, content=chunks(), headers={"content-type": "text/html"}))
+    respx.get("https://big.example/chunked").mock(
+        return_value=httpx.Response(200, content=chunks(), headers={"content-type": "text/html"})
+    )
     for url in ("https://big.example/declared", "https://big.example/chunked"):
         result = await fetch(GenericFetcher(options), url, options)
         assert result.status == "skipped", url
@@ -168,16 +172,22 @@ async def test_body_size_cap() -> None:
 
 @respx.mock
 async def test_unsupported_content_type_is_skipped_without_body() -> None:
-    respx.get("https://img.example/cat.jpg").mock(return_value=httpx.Response(
-        200, content=b"\xff\xd8" * 10, headers={"content-type": "image/jpeg"}))
+    respx.get("https://img.example/cat.jpg").mock(
+        return_value=httpx.Response(
+            200, content=b"\xff\xd8" * 10, headers={"content-type": "image/jpeg"}
+        )
+    )
     result = await fetch(GenericFetcher(OPTIONS), "https://img.example/cat.jpg")
     assert result.status == "skipped" and "image/jpeg" in (result.error or "")
 
 
 @respx.mock
 async def test_plain_text_is_stored_as_is() -> None:
-    respx.get("https://e.example/notes.txt").mock(return_value=httpx.Response(
-        200, text="Zeile eins\n\n\n\nZeile zwei", headers={"content-type": "text/plain"}))
+    respx.get("https://e.example/notes.txt").mock(
+        return_value=httpx.Response(
+            200, text="Zeile eins\n\n\n\nZeile zwei", headers={"content-type": "text/plain"}
+        )
+    )
     result = await fetch(GenericFetcher(OPTIONS), "https://e.example/notes.txt")
     assert result.status == "ok" and result.text == "Zeile eins\n\nZeile zwei"
 
@@ -185,9 +195,13 @@ async def test_plain_text_is_stored_as_is() -> None:
 @respx.mock
 async def test_latin1_page_is_decoded() -> None:
     html = ARTICLE.replace('<meta charset="utf-8">', "")
-    respx.get("https://e.example/latin").mock(return_value=httpx.Response(
-        200, content=html.encode("latin-1"),
-        headers={"content-type": "text/html; charset=ISO-8859-1"}))
+    respx.get("https://e.example/latin").mock(
+        return_value=httpx.Response(
+            200,
+            content=html.encode("latin-1"),
+            headers={"content-type": "text/html; charset=ISO-8859-1"},
+        )
+    )
     result = await fetch(GenericFetcher(OPTIONS), "https://e.example/latin")
     assert "geröstet" in (result.text or "")
 
@@ -204,9 +218,13 @@ def test_document_detection() -> None:
 
 @respx.mock
 async def test_pdf_is_converted_with_markitdown_from_generic_handoff() -> None:
-    respx.get("https://e.example/download?id=7").mock(return_value=httpx.Response(
-        200, content=make_pdf("Hello Enrichment PDF"),
-        headers={"content-type": "application/pdf"}))
+    respx.get("https://e.example/download?id=7").mock(
+        return_value=httpx.Response(
+            200,
+            content=make_pdf("Hello Enrichment PDF"),
+            headers={"content-type": "application/pdf"},
+        )
+    )
     result = await fetch(GenericFetcher(OPTIONS), "https://e.example/download?id=7")
     assert result.status == "ok" and result.fetcher == "document"
     assert "Hello Enrichment PDF" in (result.text or "")
@@ -216,8 +234,11 @@ async def test_pdf_is_converted_with_markitdown_from_generic_handoff() -> None:
 @respx.mock
 async def test_document_fetcher_by_extension_and_size_cap() -> None:
     pdf = make_pdf("Second PDF")
-    respx.get("https://e.example/files/report.pdf").mock(return_value=httpx.Response(
-        200, content=pdf, headers={"content-type": "application/octet-stream"}))
+    respx.get("https://e.example/files/report.pdf").mock(
+        return_value=httpx.Response(
+            200, content=pdf, headers={"content-type": "application/octet-stream"}
+        )
+    )
     fetcher = DocumentFetcher(OPTIONS)
     assert fetcher.matches(link("https://e.example/files/report.pdf"))
     result = await fetch(fetcher, "https://e.example/files/report.pdf")
@@ -231,8 +252,11 @@ async def test_document_fetcher_by_extension_and_size_cap() -> None:
 
 @respx.mock
 async def test_broken_document_is_skipped() -> None:
-    respx.get("https://e.example/broken.pdf").mock(return_value=httpx.Response(
-        200, content=b"%PDF-1.4 garbage", headers={"content-type": "application/pdf"}))
+    respx.get("https://e.example/broken.pdf").mock(
+        return_value=httpx.Response(
+            200, content=b"%PDF-1.4 garbage", headers={"content-type": "application/pdf"}
+        )
+    )
     result = await fetch(DocumentFetcher(OPTIONS), "https://e.example/broken.pdf")
     assert result.status == "skipped" and result.fetcher == "document"
 
@@ -250,11 +274,15 @@ def test_youtube_video_ids() -> None:
 
 
 def _oembed() -> httpx.Response:
-    return httpx.Response(200, json={
-        "title": "Pasta in 10 Minuten", "author_name": "Kochkanal",
-        "author_url": "https://www.youtube.com/@kochkanal",
-        "thumbnail_url": "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
-    })
+    return httpx.Response(
+        200,
+        json={
+            "title": "Pasta in 10 Minuten",
+            "author_name": "Kochkanal",
+            "author_url": "https://www.youtube.com/@kochkanal",
+            "thumbnail_url": "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+        },
+    )
 
 
 @respx.mock
@@ -265,11 +293,17 @@ async def test_youtube_oembed_ytdlp_and_transcript() -> None:
     def ytdlp(url: str) -> dict[str, Any]:
         seen["url"] = url
         return {
-            "title": "Pasta in 10 Minuten", "description": "Alle Zutaten in der Beschreibung.",
-            "upload_date": "20260301", "duration": 612, "tags": ["pasta", "rezept"],
-            "chapters": [{"start_time": 0, "end_time": 65, "title": "Intro"},
-                         {"start_time": 65, "end_time": 612, "title": "Kochen"}],
-            "channel": "Kochkanal", "view_count": 1234,
+            "title": "Pasta in 10 Minuten",
+            "description": "Alle Zutaten in der Beschreibung.",
+            "upload_date": "20260301",
+            "duration": 612,
+            "tags": ["pasta", "rezept"],
+            "chapters": [
+                {"start_time": 0, "end_time": 65, "title": "Intro"},
+                {"start_time": 65, "end_time": 612, "title": "Kochen"},
+            ],
+            "channel": "Kochkanal",
+            "view_count": 1234,
         }
 
     def transcripts(video_id: str, languages: Any) -> tuple[str, str, bool]:
@@ -283,7 +317,8 @@ async def test_youtube_oembed_ytdlp_and_transcript() -> None:
     assert result.status == "ok" and result.fetcher == "youtube"
     assert result.title == "Pasta in 10 Minuten"
     assert route.calls.last.request.url.params["url"] == (
-        "https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    )
     assert seen["url"] == "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
     assert seen["transcript"] == ("dQw4w9WgXcQ", ("de", "en"))
     meta = result.metadata
@@ -303,8 +338,9 @@ async def test_youtube_without_ytdlp_and_transcript_still_ok() -> None:
     def no_transcript(video_id: str, languages: Any) -> Any:
         raise RuntimeError("TranscriptsDisabled")
 
-    fetcher = YouTubeFetcher(OPTIONS, ytdlp_extract=lambda url: None,
-                             transcript_fetcher=no_transcript)
+    fetcher = YouTubeFetcher(
+        OPTIONS, ytdlp_extract=lambda url: None, transcript_fetcher=no_transcript
+    )
     result = await fetch(fetcher, "https://www.youtube.com/watch?v=dQw4w9WgXcQ")
     assert result.status == "ok" and result.title == "Pasta in 10 Minuten"
     assert result.text is None
@@ -318,8 +354,9 @@ async def test_youtube_ytdlp_failure_falls_back_to_oembed() -> None:
     def broken(url: str) -> Any:
         raise RuntimeError("Sign in to confirm you're not a bot")
 
-    fetcher = YouTubeFetcher(OPTIONS, ytdlp_extract=broken,
-                             transcript_fetcher=lambda vid, langs: None)
+    fetcher = YouTubeFetcher(
+        OPTIONS, ytdlp_extract=broken, transcript_fetcher=lambda vid, langs: None
+    )
     result = await fetch(fetcher, "https://www.youtube.com/watch?v=dQw4w9WgXcQ")
     assert result.status == "ok" and "not a bot" in result.metadata["ytdlp_error"]
 
@@ -327,8 +364,9 @@ async def test_youtube_ytdlp_failure_falls_back_to_oembed() -> None:
 @respx.mock
 async def test_unavailable_youtube_video_is_an_error() -> None:
     respx.get("https://www.youtube.com/oembed").mock(return_value=httpx.Response(404))
-    fetcher = YouTubeFetcher(OPTIONS, ytdlp_extract=lambda url: None,
-                             transcript_fetcher=lambda vid, langs: None)
+    fetcher = YouTubeFetcher(
+        OPTIONS, ytdlp_extract=lambda url: None, transcript_fetcher=lambda vid, langs: None
+    )
     result = await fetch(fetcher, "https://www.youtube.com/watch?v=dQw4w9WgXcQ")
     assert result.status == "error" and result.http_status == 404
 
@@ -337,25 +375,40 @@ async def test_unavailable_youtube_video_is_an_error() -> None:
 
 
 FX_TWEET = {
-    "code": 200, "message": "OK",
+    "code": 200,
+    "message": "OK",
     "tweet": {
         "url": "https://x.com/chef/status/1790000000000000001",
         "id": "1790000000000000001",
         "text": "Mein neues Lieblingsrezept",
         "author": {"name": "Chef Koch", "screen_name": "chef"},
         "created_at": "Tue May 14 10:00:00 +0000 2026",
-        "likes": 10, "retweets": 2, "replies": 1, "lang": "de",
-        "media": {"all": [{"type": "photo", "url": "https://pbs.twimg.com/a.jpg",
-                           "altText": "Teller mit Pasta"}]},
-        "quote": {"url": "https://x.com/other/status/1",
-                  "text": "Original-Post", "author": {"name": "Other", "screen_name": "other"}},
+        "likes": 10,
+        "retweets": 2,
+        "replies": 1,
+        "lang": "de",
+        "media": {
+            "all": [
+                {
+                    "type": "photo",
+                    "url": "https://pbs.twimg.com/a.jpg",
+                    "altText": "Teller mit Pasta",
+                }
+            ]
+        },
+        "quote": {
+            "url": "https://x.com/other/status/1",
+            "text": "Original-Post",
+            "author": {"name": "Other", "screen_name": "other"},
+        },
     },
 }
 
 
 def test_x_status_ids() -> None:
     assert x_status_id("https://x.com/chef/status/1790000000000000001?s=20") == (
-        "1790000000000000001")
+        "1790000000000000001"
+    )
     assert x_status_id("https://twitter.com/i/web/status/42") == "42"
     assert x_status_id("https://x.com/chef") is None
 
@@ -363,7 +416,8 @@ def test_x_status_ids() -> None:
 @respx.mock
 async def test_fxtwitter_json() -> None:
     respx.get("https://api.fxtwitter.com/status/1790000000000000001").mock(
-        return_value=httpx.Response(200, json=FX_TWEET))
+        return_value=httpx.Response(200, json=FX_TWEET)
+    )
     fetcher = XFetcher()
     url = "https://twitter.com/chef/status/1790000000000000001"
     assert fetcher.matches(link(url))
@@ -382,13 +436,18 @@ async def test_fxtwitter_json() -> None:
 @respx.mock
 async def test_x_falls_back_to_oembed() -> None:
     respx.get("https://api.fxtwitter.com/status/42").mock(return_value=httpx.Response(500))
-    oembed = respx.get("https://publish.twitter.com/oembed").mock(return_value=httpx.Response(
-        200, json={
-            "url": "https://twitter.com/chef/status/42", "author_name": "Chef Koch",
-            "author_url": "https://twitter.com/chef",
-            "html": '<blockquote class="twitter-tweet"><p lang="de">Pasta &amp; Wein</p>'
-                    "&mdash; Chef Koch (@chef)</blockquote>",
-        }))
+    oembed = respx.get("https://publish.twitter.com/oembed").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "url": "https://twitter.com/chef/status/42",
+                "author_name": "Chef Koch",
+                "author_url": "https://twitter.com/chef",
+                "html": '<blockquote class="twitter-tweet"><p lang="de">Pasta &amp; Wein</p>'
+                "&mdash; Chef Koch (@chef)</blockquote>",
+            },
+        )
+    )
     result = await fetch(XFetcher(), "https://x.com/chef/status/42")
     assert result.status == "ok" and result.text == "Pasta & Wein"
     assert result.metadata["source"] == "oembed"
@@ -398,8 +457,9 @@ async def test_x_falls_back_to_oembed() -> None:
 
 @respx.mock
 async def test_x_both_sources_failing_is_an_error() -> None:
-    respx.get("https://api.fxtwitter.com/status/42").mock(return_value=httpx.Response(
-        404, json={"code": 404, "message": "NOT_FOUND"}))
+    respx.get("https://api.fxtwitter.com/status/42").mock(
+        return_value=httpx.Response(404, json={"code": 404, "message": "NOT_FOUND"})
+    )
     respx.get("https://publish.twitter.com/oembed").mock(return_value=httpx.Response(404))
     result = await fetch(XFetcher(), "https://x.com/chef/status/42")
     assert result.status == "error" and result.http_status == 404
@@ -425,12 +485,24 @@ async def test_instagram_links_are_skipped_without_requests(respx_mock: Any) -> 
 
 
 def test_options_from_config() -> None:
-    config = type("C", (), {"get_section": staticmethod(lambda name: {
-        "concurrency": 2, "transcript_languages": "en, fr", "user_agent": "custom/1"})})()
+    config = type(
+        "C",
+        (),
+        {
+            "get_section": staticmethod(
+                lambda name: {
+                    "concurrency": 2,
+                    "transcript_languages": "en, fr",
+                    "user_agent": "custom/1",
+                }
+            )
+        },
+    )()
     options = EnrichmentOptions.from_config(config)
     assert options.concurrency == 2 and options.transcript_languages == ("en", "fr")
     assert options.effective_user_agent == "custom/1"
     with pytest.raises(ValueError):
-        EnrichmentOptions.from_config(type("C", (), {
-            "get_section": staticmethod(lambda name: {"concurrency": 0})})())
+        EnrichmentOptions.from_config(
+            type("C", (), {"get_section": staticmethod(lambda name: {"concurrency": 0})})()
+        )
     assert json.dumps(EnrichmentOptions().transcript_languages)

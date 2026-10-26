@@ -165,8 +165,9 @@ def create_app(
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         state = services or await asyncio.to_thread(build_services, settings, config)
         app.state.services = state
-        logger.info("PostParse API ready (database %s, cache %s)", state.db.path,
-                    state.cache.backend)
+        logger.info(
+            "PostParse API ready (database %s, cache %s)", state.db.path, state.cache.backend
+        )
         cleanup = asyncio.create_task(_job_cleanup(state, effective_config))
         try:
             yield
@@ -208,8 +209,12 @@ def create_app(
     app.include_router(jobs_router)
     _install_handlers(app, effective_config)
 
-    @app.get("/", tags=["root"], summary="API root",
-             description="Welcome endpoint with links to documentation")
+    @app.get(
+        "/",
+        tags=["root"],
+        summary="API root",
+        description="Welcome endpoint with links to documentation",
+    )
     async def root() -> dict[str, Any]:
         return {
             "message": "Welcome to PostParse API",
@@ -254,9 +259,7 @@ def _install_handlers(app: FastAPI, config: Any) -> None:
         )
 
     @app.exception_handler(StarletteHTTPException)
-    async def http_exception_handler(
-        request: Request, exc: StarletteHTTPException
-    ) -> JSONResponse:
+    async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
         return JSONResponse(
             status_code=exc.status_code,
             content={"error_code": f"HTTP_{exc.status_code}", "detail": exc.detail},

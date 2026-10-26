@@ -106,9 +106,7 @@ class EnrichmentOptions:
             languages = [part.strip() for part in languages.split(",") if part.strip()]
         options = cls(
             concurrency=int(_get(section, "concurrency", d.concurrency)),
-            min_domain_interval=float(
-                _get(section, "min_domain_interval", d.min_domain_interval)
-            ),
+            min_domain_interval=float(_get(section, "min_domain_interval", d.min_domain_interval)),
             timeout=float(_get(section, "timeout", d.timeout)),
             max_body_mb=float(_get(section, "max_body_mb", d.max_body_mb)),
             max_document_mb=float(_get(section, "max_document_mb", d.max_document_mb)),

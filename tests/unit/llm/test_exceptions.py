@@ -1,7 +1,5 @@
 """Tests for LLM provider exception hierarchy."""
 
-import pytest
-
 from postparse.llm.exceptions import (
     LLMAuthenticationError,
     LLMConnectionError,
@@ -228,4 +226,3 @@ class TestExceptionChaining:
 
         # Verify we can access the original error type
         assert "ValueError" in str(error)
-

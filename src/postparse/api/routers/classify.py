@@ -146,9 +146,7 @@ def _adhoc_spec(
     """
     if classes is None:
         default = taxonomies.get(DEFAULT_TAXONOMY)
-        classes = (
-            {label.name: label.description for label in default.labels} if default else {}
-        )
+        classes = {label.name: label.description for label in default.labels} if default else {}
     if len(classes) < 2:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -548,16 +546,26 @@ async def run_classification(
     if request.filters is not None:
         f = request.filters
         item_filter = item_filter_or_400(
-            q=f.q, source=f.source, tags=f.tags, authors=f.authors, kinds=f.kinds,
-            labels=f.labels, date_from=f.date_from, date_to=f.date_to,
+            q=f.q,
+            source=f.source,
+            tags=f.tags,
+            authors=f.authors,
+            kinds=f.kinds,
+            labels=f.labels,
+            date_from=f.date_from,
+            date_to=f.date_to,
             has_transcript=f.has_transcript,
         )
     job_id = runner.submit(
         "classify",
         drop_none(request.model_dump()),
         classify_job(
-            service, taxonomy=request.taxonomy, scope=request.scope, filters=item_filter,
-            limit=request.limit, provider=request.provider,
+            service,
+            taxonomy=request.taxonomy,
+            scope=request.scope,
+            filters=item_filter,
+            limit=request.limit,
+            provider=request.provider,
             wait_for_transcripts=request.wait_for_transcripts,
         ),
         total=request.limit,
@@ -610,9 +618,7 @@ async def _persist(
     """Store outcomes as one run (worker thread) and invalidate the cache."""
 
     def store() -> PersistedInfo:
-        run_id, persisted = service.persist_outcomes(
-            taxonomy, outcomes, classifier=classifier
-        )
+        run_id, persisted = service.persist_outcomes(taxonomy, outcomes, classifier=classifier)
         cache.invalidate()
         return PersistedInfo(run_id=run_id, result_ids=[p.result_id for p in persisted])
 
@@ -708,7 +714,10 @@ async def classify_taxonomy_batch(
     if request.persist:
         assert request.item_ids is not None
         persisted = await _persist(
-            service, cache, taxonomy, list(zip(request.item_ids, outcomes, strict=True)),
+            service,
+            cache,
+            taxonomy,
+            list(zip(request.item_ids, outcomes, strict=True)),
             classifier,
         )
     return TaxonomyBatchResponse(

@@ -81,9 +81,7 @@ DEFAULT_CHUNK_SIZE = 32
 _MAX_ERROR_SAMPLES = 10
 
 ClassifierFactory = Callable[[TaxonomySpec, str | None], TaxonomyClassifier]
-ProgressStatus = Literal[
-    "ok", "no_labels", "error", "skipped_empty", "skipped_waiting_transcript"
-]
+ProgressStatus = Literal["ok", "no_labels", "error", "skipped_empty", "skipped_waiting_transcript"]
 
 
 # ---------------------------------------------------------------------------
@@ -173,8 +171,9 @@ def compose_inputs(
             header = f"Linked page ({link.domain})" + (f": {title}" if title else "")
             sections.append(("link", header, _clean(fetch.text), max(max_chars // 4, 1)))
         if _clean(expanded.get(item_id)):
-            sections.append(("legacy_expanded_text", "Expanded text", _clean(expanded[item_id]),
-                             None))
+            sections.append(
+                ("legacy_expanded_text", "Expanded text", _clean(expanded[item_id]), None)
+            )
 
         parts: list[str] = []
         used_sections: list[str] = []
@@ -334,10 +333,12 @@ def _filter_params(item_filter: ItemFilter | None) -> dict[str, Any] | None:
         value = getattr(item_filter, f.name)
         if value is None or value == ():
             continue
-        data[f.name] = json.loads(json.dumps(
-            dataclasses.asdict(value) if dataclasses.is_dataclass(value) else value,
-            default=str,
-        ))
+        data[f.name] = json.loads(
+            json.dumps(
+                dataclasses.asdict(value) if dataclasses.is_dataclass(value) else value,
+                default=str,
+            )
+        )
     return data
 
 
@@ -607,14 +608,22 @@ class ClassificationService:
                 details = {"latency_s": round(outcome.latency_s, 3), "requests": outcome.requests}
                 if outcome.status == "ok":
                     result_id = repo.add_result(
-                        run_id, item_id, "ok", labels=outcome.label_scores(),
-                        confidence=outcome.confidence, reasoning=outcome.reasoning,
+                        run_id,
+                        item_id,
+                        "ok",
+                        labels=outcome.label_scores(),
+                        confidence=outcome.confidence,
+                        reasoning=outcome.reasoning,
                         details=details,
                     )
                 elif outcome.status == "no_labels":
                     result_id = repo.add_result(
-                        run_id, item_id, "no_labels", confidence=outcome.confidence,
-                        reasoning=outcome.reasoning, details=details,
+                        run_id,
+                        item_id,
+                        "no_labels",
+                        confidence=outcome.confidence,
+                        reasoning=outcome.reasoning,
+                        details=details,
                     )
                 elif outcome.status == "error":
                     result_id = repo.add_result(
@@ -627,7 +636,9 @@ class ClassificationService:
             repo.finish_run(run_id, status="done")
         logger.info(
             "Stored %d API classification result(s) for taxonomy %s in run %d",
-            sum(1 for p in persisted if p.result_id is not None), spec.name, run_id,
+            sum(1 for p in persisted if p.result_id is not None),
+            spec.name,
+            run_id,
         )
         return run_id, persisted
 
@@ -759,7 +770,12 @@ class ClassificationService:
         run_id = report.run_id
         logger.info(
             "Classification run %d: taxonomy=%s scope=%s candidates=%d provider=%s model=%s",
-            run_id, spec.name, scope, len(candidates), report.provider, report.model,
+            run_id,
+            spec.name,
+            scope,
+            len(candidates),
+            report.provider,
+            report.model,
         )
 
         total = min(len(candidates), limit) if limit is not None else len(candidates)
@@ -827,8 +843,14 @@ class ClassificationService:
             logger.info(
                 "Classification run %d %s: ok=%d no_labels=%d errors=%d skipped_empty=%d "
                 "waiting_transcript=%d in %.1fs",
-                run_id, final_status, report.ok, report.no_labels, report.errors,
-                report.skipped_empty, report.skipped_waiting_transcript, report.duration_s,
+                run_id,
+                final_status,
+                report.ok,
+                report.no_labels,
+                report.errors,
+                report.skipped_empty,
+                report.skipped_waiting_transcript,
+                report.duration_s,
             )
         return report
 
@@ -854,7 +876,9 @@ class ClassificationService:
             try:
                 if outcome.status == "ok":
                     repo.add_result(
-                        run_id, composed.item_id, "ok",
+                        run_id,
+                        composed.item_id,
+                        "ok",
                         labels=outcome.label_scores(),
                         confidence=outcome.confidence,
                         reasoning=outcome.reasoning,
@@ -863,7 +887,9 @@ class ClassificationService:
                     status = "ok"
                 elif outcome.status == "no_labels":
                     repo.add_result(
-                        run_id, composed.item_id, "no_labels",
+                        run_id,
+                        composed.item_id,
+                        "no_labels",
                         confidence=outcome.confidence,
                         reasoning=outcome.reasoning,
                         details=details,

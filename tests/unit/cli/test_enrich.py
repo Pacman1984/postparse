@@ -37,8 +37,11 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     def build(ctx: Any, db_path: str | None) -> EnrichmentService:
         state["db_paths"].append(db_path)
         return EnrichmentService(
-            db, settings, options=EnrichmentOptions(min_domain_interval=0),
-            router_factory=router_factory(fetcher), clock=lambda: NOW,
+            db,
+            settings,
+            options=EnrichmentOptions(min_domain_interval=0),
+            router_factory=router_factory(fetcher),
+            clock=lambda: NOW,
         )
 
     monkeypatch.setattr("postparse.cli.enrich._build_service", build)
@@ -50,8 +53,9 @@ def invoke(*args: str):
 
 
 def test_enrich_run(env: dict[str, Any]) -> None:
-    add_item(env["db"], "1:1", ["https://a.example/1", "https://b.example/2",
-                                "https://c.example/3"])
+    add_item(
+        env["db"], "1:1", ["https://a.example/1", "https://b.example/2", "https://c.example/3"]
+    )
     add_legacy_fetch(env["db"], "https://c.example/3", "Alt")
     env["fetcher"].results["https://b.example/2"] = FetchResult.failed("HTTP 500")
     result = invoke("enrich", "run", "--limit", "5", "--db", "x.db")
@@ -59,8 +63,11 @@ def test_enrich_run(env: dict[str, Any]) -> None:
     assert "Enrichment" in result.output and "legacy texts replaced 1" in result.output
     assert "HTTP 500" in result.output
     assert env["db_paths"] == ["x.db"]
-    assert sorted(env["fetcher"].calls) == ["https://a.example/1", "https://b.example/2",
-                                            "https://c.example/3"]
+    assert sorted(env["fetcher"].calls) == [
+        "https://a.example/1",
+        "https://b.example/2",
+        "https://c.example/3",
+    ]
 
 
 def test_enrich_run_filters(env: dict[str, Any]) -> None:

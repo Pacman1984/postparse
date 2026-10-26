@@ -36,9 +36,7 @@ def test_non_canonical_timestamp_rejected(conn: sqlite3.Connection, bad_ts: str)
         _insert_item(conn, created_at=bad_ts)
 
 
-@pytest.mark.parametrize(
-    ("column", "value"), [("source", "twitter"), ("kind", "reel")]
-)
+@pytest.mark.parametrize(("column", "value"), [("source", "twitter"), ("kind", "reel")])
 def test_enum_checks(conn: sqlite3.Connection, column: str, value: str) -> None:
     with pytest.raises(sqlite3.IntegrityError, match="CHECK"):
         _insert_item(conn, **{column: value})
@@ -106,8 +104,16 @@ def test_cascade_delete_removes_everything(conn: sqlite3.Connection) -> None:
 
     assert items.delete(item_id)
     for table in (
-        "instagram_posts", "item_tags", "media", "transcripts", "summaries", "item_links",
-        "classification_results", "result_labels", "legacy_expanded_text", "search_docs",
+        "instagram_posts",
+        "item_tags",
+        "media",
+        "transcripts",
+        "summaries",
+        "item_links",
+        "classification_results",
+        "result_labels",
+        "legacy_expanded_text",
+        "search_docs",
         "items_fts_docsize",
     ):
         assert conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0, table

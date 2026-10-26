@@ -49,16 +49,34 @@ def add_legacy_fetch(db: Database, url: str, text: str, *, at: datetime | None =
     """Record a migrated v1 fetch (``legacy_v1``) for ``url``."""
     with db.transaction() as conn:
         repo = LinksRepo(conn)
-        repo.add_fetch(repo.ensure(url), fetcher=LEGACY_FETCHER, status="ok", text=text,
-                       fetched_at=at or datetime(2025, 1, 1, tzinfo=UTC))
+        repo.add_fetch(
+            repo.ensure(url),
+            fetcher=LEGACY_FETCHER,
+            status="ok",
+            text=text,
+            fetched_at=at or datetime(2025, 1, 1, tzinfo=UTC),
+        )
 
 
-def add_fetch(db: Database, url: str, status: str, *, at: datetime, fetcher: str = "generic",
-              text: str | None = None) -> None:
+def add_fetch(
+    db: Database,
+    url: str,
+    status: str,
+    *,
+    at: datetime,
+    fetcher: str = "generic",
+    text: str | None = None,
+) -> None:
     with db.transaction() as conn:
         repo = LinksRepo(conn)
-        repo.add_fetch(repo.ensure(url), fetcher=fetcher, status=status,  # type: ignore[arg-type]
-                       text=text, error=None if status == "ok" else "boom", fetched_at=at)
+        repo.add_fetch(
+            repo.ensure(url),
+            fetcher=fetcher,
+            status=status,  # type: ignore[arg-type]
+            text=text,
+            error=None if status == "ok" else "boom",
+            fetched_at=at,
+        )
 
 
 def fts_ids(db: Database, query: str) -> list[int]:
@@ -88,20 +106,30 @@ class ScriptedFetcher:
         if callable(value):
             return value()
         if value is not None:
-            return FetchResult(value.status, fetcher=value.fetcher or self.name,
-                               http_status=value.http_status, title=value.title,
-                               text=value.text, metadata=dict(value.metadata),
-                               error=value.error)
-        return FetchResult("ok", fetcher=self.name, title=f"Title of {link.url}",
-                           text=f"Fresh text from {link.domain}")
+            return FetchResult(
+                value.status,
+                fetcher=value.fetcher or self.name,
+                http_status=value.http_status,
+                title=value.title,
+                text=value.text,
+                metadata=dict(value.metadata),
+                error=value.error,
+            )
+        return FetchResult(
+            "ok",
+            fetcher=self.name,
+            title=f"Title of {link.url}",
+            text=f"Fresh text from {link.domain}",
+        )
 
 
 def router_factory(fetcher: Any) -> Callable[[EnrichmentOptions], FetchRouter]:
     """Router factory with ``fetcher`` as the only fetcher and no throttling."""
 
     def build(options: EnrichmentOptions) -> FetchRouter:
-        return FetchRouter([], fetcher, options,
-                           transport=httpx.MockTransport(lambda request: httpx.Response(599)))
+        return FetchRouter(
+            [], fetcher, options, transport=httpx.MockTransport(lambda request: httpx.Response(599))
+        )
 
     return build
 
@@ -115,8 +143,7 @@ def make_pdf(text: str) -> bytes:
         b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
         b"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-        b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream
-        + b"\nendstream",
+        b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream",
     ]
     out = bytearray(b"%PDF-1.4\n")
     offsets = []
@@ -128,6 +155,7 @@ def make_pdf(text: str) -> bytes:
     out += b"0000000000 65535 f \n"
     for offset in offsets:
         out += f"{offset:010d} 00000 n \n".encode()
-    out += (f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
-            f"startxref\n{xref}\n%%EOF\n").encode()
+    out += (
+        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n"
+    ).encode()
     return bytes(out)

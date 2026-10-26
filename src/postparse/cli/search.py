@@ -42,8 +42,14 @@ logger = logging.getLogger(__name__)
 _DB_OPTION_HELP = "Schema v2 database file (default: Settings.db_path)"
 
 #: ``search messages --type`` values of the old CLI mapped to item kinds.
-_MESSAGE_TYPES = {"text": "text", "photo": "image", "image": "image", "video": "video",
-                  "document": "document", "audio": "audio"}
+_MESSAGE_TYPES = {
+    "text": "text",
+    "photo": "image",
+    "image": "image",
+    "video": "video",
+    "document": "document",
+    "audio": "audio",
+}
 _POST_TYPES = {"image": "image", "video": "video", "carousel": "carousel"}
 
 
@@ -111,11 +117,13 @@ def run_search(
     total = service.count(item_filter)
 
     if as_json:
-        emit_json({
-            "total": total,
-            "items": [view.to_dict() for view in page.items],
-            "next_cursor": page.next_cursor,
-        })
+        emit_json(
+            {
+                "total": total,
+                "items": [view.to_dict() for view in page.items],
+                "next_cursor": page.next_cursor,
+            }
+        )
         return
 
     console = get_console()
@@ -131,15 +139,22 @@ def run_search(
 
 def _page_options(func: Any) -> Any:
     """Add ``--limit``, ``--cursor``, ``--json`` / ``--output`` and ``--db``."""
-    for option in reversed([
-        click.option("--limit", type=int, default=20, show_default=True,
-                     help="Page size (1-500)"),
-        click.option("--cursor", help="Continue after a previous page (printed next cursor)"),
-        click.option("--json", "as_json", is_flag=True, help="Print JSON instead of a table"),
-        click.option("--output", type=click.Choice(["table", "json"]), default=None,
-                     help="Output format (same as --json when 'json')"),
-        click.option("--db", "db_path", type=click.Path(dir_okay=False), help=_DB_OPTION_HELP),
-    ]):
+    for option in reversed(
+        [
+            click.option(
+                "--limit", type=int, default=20, show_default=True, help="Page size (1-500)"
+            ),
+            click.option("--cursor", help="Continue after a previous page (printed next cursor)"),
+            click.option("--json", "as_json", is_flag=True, help="Print JSON instead of a table"),
+            click.option(
+                "--output",
+                type=click.Choice(["table", "json"]),
+                default=None,
+                help="Output format (same as --json when 'json')",
+            ),
+            click.option("--db", "db_path", type=click.Path(dir_okay=False), help=_DB_OPTION_HELP),
+        ]
+    ):
         func = option(func)
     return func
 
@@ -178,17 +193,35 @@ def items(
         postparse search items rezept --has-transcript --json
     """
     flt = build_item_filter(
-        q=query, source=source, tags=tags, authors=authors, kinds=kinds, labels=labels,
-        date_from=date_from, date_to=date_to, has_transcript=has_transcript,
+        q=query,
+        source=source,
+        tags=tags,
+        authors=authors,
+        kinds=kinds,
+        labels=labels,
+        date_from=date_from,
+        date_to=date_to,
+        has_transcript=has_transcript,
     )
-    run_search(ctx, flt, limit=limit, cursor=cursor, as_json=as_json or output == "json",
-               db_path=db_path, title="Items")
+    run_search(
+        ctx,
+        flt,
+        limit=limit,
+        cursor=cursor,
+        as_json=as_json or output == "json",
+        db_path=db_path,
+        title="Items",
+    )
 
 
 @search.command()
 @click.argument("query", required=False)
-@click.option("--type", "content_type", type=click.Choice(sorted(_POST_TYPES)),
-              help="Post type (same as --kind)")
+@click.option(
+    "--type",
+    "content_type",
+    type=click.Choice(sorted(_POST_TYPES)),
+    help="Post type (same as --kind)",
+)
 @filter_options(source=False, author_aliases=("--username", "--owner"))
 @_page_options
 @click.pass_context
@@ -220,17 +253,35 @@ def posts(
     if content_type:
         kinds = (*kinds, _POST_TYPES[content_type])
     flt = build_item_filter(
-        q=query, source="instagram", tags=tags, authors=authors, kinds=kinds, labels=labels,
-        date_from=date_from, date_to=date_to, has_transcript=has_transcript,
+        q=query,
+        source="instagram",
+        tags=tags,
+        authors=authors,
+        kinds=kinds,
+        labels=labels,
+        date_from=date_from,
+        date_to=date_to,
+        has_transcript=has_transcript,
     )
-    run_search(ctx, flt, limit=limit, cursor=cursor, as_json=as_json or output == "json",
-               db_path=db_path, title="Instagram posts")
+    run_search(
+        ctx,
+        flt,
+        limit=limit,
+        cursor=cursor,
+        as_json=as_json or output == "json",
+        db_path=db_path,
+        title="Instagram posts",
+    )
 
 
 @search.command()
 @click.argument("query", required=False)
-@click.option("--type", "content_type", type=click.Choice(sorted(_MESSAGE_TYPES)),
-              help="Message type (photo = image; same as --kind)")
+@click.option(
+    "--type",
+    "content_type",
+    type=click.Choice(sorted(_MESSAGE_TYPES)),
+    help="Message type (photo = image; same as --kind)",
+)
 @filter_options(source=False)
 @_page_options
 @click.pass_context
@@ -261,8 +312,22 @@ def messages(
     if content_type:
         kinds = (*kinds, _MESSAGE_TYPES[content_type])
     flt = build_item_filter(
-        q=query, source="telegram", tags=tags, authors=authors, kinds=kinds, labels=labels,
-        date_from=date_from, date_to=date_to, has_transcript=has_transcript,
+        q=query,
+        source="telegram",
+        tags=tags,
+        authors=authors,
+        kinds=kinds,
+        labels=labels,
+        date_from=date_from,
+        date_to=date_to,
+        has_transcript=has_transcript,
     )
-    run_search(ctx, flt, limit=limit, cursor=cursor, as_json=as_json or output == "json",
-               db_path=db_path, title="Telegram messages")
+    run_search(
+        ctx,
+        flt,
+        limit=limit,
+        cursor=cursor,
+        as_json=as_json or output == "json",
+        db_path=db_path,
+        title="Telegram messages",
+    )

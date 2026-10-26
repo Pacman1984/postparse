@@ -36,11 +36,31 @@ logger = logging.getLogger(__name__)
 _NO_KEY = "not-needed"
 #: verbose_json reports full language names; map the common ones to ISO codes.
 _LANGUAGE_CODES = {
-    "german": "de", "english": "en", "french": "fr", "spanish": "es", "italian": "it",
-    "portuguese": "pt", "dutch": "nl", "polish": "pl", "turkish": "tr", "russian": "ru",
-    "ukrainian": "uk", "arabic": "ar", "japanese": "ja", "korean": "ko", "chinese": "zh",
-    "hindi": "hi", "swedish": "sv", "danish": "da", "norwegian": "no", "finnish": "fi",
-    "czech": "cs", "greek": "el", "hungarian": "hu", "romanian": "ro", "croatian": "hr",
+    "german": "de",
+    "english": "en",
+    "french": "fr",
+    "spanish": "es",
+    "italian": "it",
+    "portuguese": "pt",
+    "dutch": "nl",
+    "polish": "pl",
+    "turkish": "tr",
+    "russian": "ru",
+    "ukrainian": "uk",
+    "arabic": "ar",
+    "japanese": "ja",
+    "korean": "ko",
+    "chinese": "zh",
+    "hindi": "hi",
+    "swedish": "sv",
+    "danish": "da",
+    "norwegian": "no",
+    "finnish": "fi",
+    "czech": "cs",
+    "greek": "el",
+    "hungarian": "hu",
+    "romanian": "ro",
+    "croatian": "hr",
 }
 
 
@@ -119,7 +139,9 @@ class OpenAICompatibleBackend:
             from openai import OpenAI
 
             self._client = OpenAI(
-                api_key=self._api_key(), base_url=self.base_url, timeout=self.timeout,
+                api_key=self._api_key(),
+                base_url=self.base_url,
+                timeout=self.timeout,
                 max_retries=1,
             )
         return self._client

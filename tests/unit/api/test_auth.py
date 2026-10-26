@@ -26,8 +26,12 @@ class StaticConfig:
     """Minimal ``ConfigManager`` stand-in."""
 
     def __init__(self, **values: Any) -> None:
-        self.values = {"api.auth.enabled": True, "api.auth.secret_key": SECRET,
-                       "api.auth.algorithm": "HS256", **values}
+        self.values = {
+            "api.auth.enabled": True,
+            "api.auth.secret_key": SECRET,
+            "api.auth.algorithm": "HS256",
+            **values,
+        }
 
     def get(self, key: str, default: Any = None, env_var: str | None = None) -> Any:
         return self.values.get(key, default)
@@ -53,7 +57,9 @@ class TestValidateToken:
         assert exc.value.status_code == 401
         assert exc.value.headers == {"WWW-Authenticate": "Bearer"}
 
-    @pytest.mark.parametrize("token", ["garbage", make_token(secret="other-secret-padded-to-32-bytes-minimum")])
+    @pytest.mark.parametrize(
+        "token", ["garbage", make_token(secret="other-secret-padded-to-32-bytes-minimum")]
+    )
     def test_invalid_tokens_are_401(self, token: str) -> None:
         with pytest.raises(HTTPException) as exc:
             validate_jwt_token(token, StaticConfig())

@@ -12,8 +12,9 @@ from tests.integration.api.conftest import services_of
 
 class TestLegacyEndpoints:
     def test_recipe(self, client: TestClient) -> None:
-        response = client.post("/api/v1/classify/recipe",
-                               json={"text": "Boil pasta and add the sauce"})
+        response = client.post(
+            "/api/v1/classify/recipe", json={"text": "Boil pasta and add the sauce"}
+        )
         assert response.status_code == 200, response.text
         data = response.json()
         assert data["label"] == "recipe"
@@ -25,25 +26,34 @@ class TestLegacyEndpoints:
         assert response.status_code == 503
 
     def test_unknown_provider_is_400(self, client: TestClient) -> None:
-        response = client.post("/api/v1/classify/recipe",
-                               json={"text": "pasta", "provider_name": "missing"})
+        response = client.post(
+            "/api/v1/classify/recipe", json={"text": "pasta", "provider_name": "missing"}
+        )
         assert response.status_code == 400
 
     def test_multi_defaults_to_configured_classes(self, client: TestClient) -> None:
-        data = client.post("/api/v1/classify/multi",
-                           json={"text": "new python release"}).json()
+        data = client.post("/api/v1/classify/multi", json={"text": "new python release"}).json()
         assert data["label"] == "tech"
         assert set(data["available_classes"]) == {"recipe", "tech", "travel"}
 
     def test_multilabel_with_classes(self, client: TestClient) -> None:
-        data = client.post("/api/v1/classify/multilabel", json={
-            "text": "A python cooking app with a pasta recipe",
-            "classes": {"recipe": "Cooking", "tech": "Software", "travel": "Trips"},
-        }).json()
+        data = client.post(
+            "/api/v1/classify/multilabel",
+            json={
+                "text": "A python cooking app with a pasta recipe",
+                "classes": {"recipe": "Cooking", "tech": "Software", "travel": "Trips"},
+            },
+        ).json()
         assert {s["label"] for s in data["labels"]} == {"recipe", "tech"}
 
-    @pytest.mark.parametrize("path", ["/api/v1/classify/batch", "/api/v1/classify/multi/batch",
-                                      "/api/v1/classify/multilabel/batch"])
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/api/v1/classify/batch",
+            "/api/v1/classify/multi/batch",
+            "/api/v1/classify/multilabel/batch",
+        ],
+    )
     def test_batches_keep_per_item_errors(self, client: TestClient, path: str) -> None:
         texts = ["Bake the cake with flour", f"broken {FAIL_MARKER}", "python release"]
         response = client.post(path, json={"texts": texts})
@@ -79,8 +89,10 @@ class TestTaxonomyEndpoints:
 
     def test_persist_creates_run_and_current_label(self, client: TestClient, seeded) -> None:
         item_id = seeded["undated2"]
-        response = client.post("/api/v1/classify/topics", json={
-            "text": "beach trip", "persist": True, "item_id": item_id})
+        response = client.post(
+            "/api/v1/classify/topics",
+            json={"text": "beach trip", "persist": True, "item_id": item_id},
+        )
         assert response.status_code == 200, response.text
         persisted = response.json()["persisted"]
         assert persisted["run_id"] > 1 and persisted["result_ids"][0] is not None
@@ -96,8 +108,10 @@ class TestTaxonomyEndpoints:
 
     @pytest.mark.parametrize(
         ("body", "status"),
-        [({"text": "x", "persist": True}, 400),
-         ({"text": "x", "persist": True, "item_id": 99999}, 404)],
+        [
+            ({"text": "x", "persist": True}, 400),
+            ({"text": "x", "persist": True, "item_id": 99999}, 404),
+        ],
     )
     def test_persist_validation(self, client: TestClient, body: dict, status: int) -> None:
         assert client.post("/api/v1/classify/topics", json=body).status_code == status
@@ -114,8 +128,9 @@ class TestTaxonomyEndpoints:
     def test_batch_format_and_persist(self, client: TestClient, seeded) -> None:
         texts = ["pasta recipe", "   ", f"oops {FAIL_MARKER}", "python laptop"]
         ids = [seeded["undated"], seeded["undated2"], seeded["carousel"], seeded["cake"]]
-        response = client.post("/api/v1/classify/topics/batch", json={
-            "texts": texts, "item_ids": ids, "persist": True})
+        response = client.post(
+            "/api/v1/classify/topics/batch", json={"texts": texts, "item_ids": ids, "persist": True}
+        )
         assert response.status_code == 200, response.text
         data = response.json()
         assert data["failed_count"] == 2
@@ -134,14 +149,17 @@ class TestTaxonomyEndpoints:
             ).fetchone()[0]
         assert status == "error"
         assert client.get(f"/api/v1/items/{seeded['cake']}").json()["labels"] == {
-            "topics": ["tech"]}
+            "topics": ["tech"]
+        }
 
     def test_batch_validation(self, client: TestClient) -> None:
-        mismatch = client.post("/api/v1/classify/topics/batch",
-                               json={"texts": ["a", "b"], "item_ids": [1]})
+        mismatch = client.post(
+            "/api/v1/classify/topics/batch", json={"texts": ["a", "b"], "item_ids": [1]}
+        )
         assert mismatch.status_code == 400
-        missing = client.post("/api/v1/classify/topics/batch",
-                              json={"texts": ["a"], "persist": True})
+        missing = client.post(
+            "/api/v1/classify/topics/batch", json={"texts": ["a"], "persist": True}
+        )
         assert missing.status_code == 400
         assert client.post("/api/v1/classify/topics/batch", json={"texts": []}).status_code == 422
 

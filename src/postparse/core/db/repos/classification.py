@@ -176,21 +176,24 @@ class ClassificationRepo:
         for row in self.conn.execute(
             "SELECT taxonomy_id, count(*) FROM classification_runs GROUP BY taxonomy_id"
         ).fetchall():
-            stats.setdefault(row[0], {"runs": 0, "ok": 0, "no_labels": 0, "error": 0,
-                                      "classified_items": 0})["runs"] = row[1]
+            stats.setdefault(
+                row[0], {"runs": 0, "ok": 0, "no_labels": 0, "error": 0, "classified_items": 0}
+            )["runs"] = row[1]
         for row in self.conn.execute(
             "SELECT taxonomy_id, status, count(*) FROM classification_results "
             "GROUP BY taxonomy_id, status"
         ).fetchall():
-            entry = stats.setdefault(row[0], {"runs": 0, "ok": 0, "no_labels": 0, "error": 0,
-                                              "classified_items": 0})
+            entry = stats.setdefault(
+                row[0], {"runs": 0, "ok": 0, "no_labels": 0, "error": 0, "classified_items": 0}
+            )
             entry[row[1]] = row[2]
         for row in self.conn.execute(
             "SELECT taxonomy_id, count(DISTINCT item_id) FROM v_current_classification "
             "GROUP BY taxonomy_id"
         ).fetchall():
-            entry = stats.setdefault(row[0], {"runs": 0, "ok": 0, "no_labels": 0, "error": 0,
-                                              "classified_items": 0})
+            entry = stats.setdefault(
+                row[0], {"runs": 0, "ok": 0, "no_labels": 0, "error": 0, "classified_items": 0}
+            )
             entry["classified_items"] = row[1]
         return stats
 
@@ -344,8 +347,16 @@ class ClassificationRepo:
             "INSERT INTO classification_results (run_id, item_id, taxonomy_id, status, "
             "confidence, reasoning, details, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
             "RETURNING id",
-            (run_id, item_id, run.taxonomy_id, status, confidence, reasoning,
-             _dumps(details), error),
+            (
+                run_id,
+                item_id,
+                run.taxonomy_id,
+                status,
+                confidence,
+                reasoning,
+                _dumps(details),
+                error,
+            ),
         ).fetchone()
         result_id = int(row[0])
         self.conn.executemany(

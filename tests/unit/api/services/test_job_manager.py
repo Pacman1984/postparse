@@ -5,16 +5,13 @@ This module provides comprehensive tests for the JobManager service which handle
 extraction job lifecycle management with thread-safe operations.
 """
 
-from datetime import datetime, timedelta
-from typing import List
-from unittest.mock import patch
 import threading
-import time
+from datetime import datetime, timedelta
 
 import pytest
 
-from postparse.api.services.job_manager import Job, JobManager
 from postparse.api.schemas.telegram import ExtractionStatus
+from postparse.api.services.job_manager import Job, JobManager
 
 
 class TestJobDataclass:
@@ -373,12 +370,8 @@ class TestJobManagerUpdateJobStatus:
         manager = JobManager()
         job_id = manager.create_job("telegram", {})
 
-        manager.update_job_status(
-            job_id, ExtractionStatus.RUNNING, 25, 50, ["Error 1"]
-        )
-        manager.update_job_status(
-            job_id, ExtractionStatus.RUNNING, 50, 100, ["Error 2", "Error 3"]
-        )
+        manager.update_job_status(job_id, ExtractionStatus.RUNNING, 25, 50, ["Error 1"])
+        manager.update_job_status(job_id, ExtractionStatus.RUNNING, 50, 100, ["Error 2", "Error 3"])
 
         job = manager.get_job(job_id)
         assert job.errors == ["Error 1", "Error 2", "Error 3"]
@@ -392,9 +385,7 @@ class TestJobManagerUpdateJobStatus:
         manager = JobManager()
 
         with pytest.raises(ValueError, match="Job .* not found"):
-            manager.update_job_status(
-                "nonexistent-uuid", ExtractionStatus.RUNNING, 50, 100, None
-            )
+            manager.update_job_status("nonexistent-uuid", ExtractionStatus.RUNNING, 50, 100, None)
 
 
 class TestJobManagerMarkJobCompleted:
@@ -510,9 +501,7 @@ class TestJobManagerMarkJobFailed:
         """
         manager = JobManager()
         job_id = manager.create_job("telegram", {})
-        manager.update_job_status(
-            job_id, ExtractionStatus.RUNNING, 25, 50, ["Warning 1"]
-        )
+        manager.update_job_status(job_id, ExtractionStatus.RUNNING, 25, 50, ["Warning 1"])
 
         manager.mark_job_failed(job_id, "Fatal error")
 
@@ -707,7 +696,7 @@ class TestJobManagerThreadSafety:
         Verifies no race conditions during parallel job creation.
         """
         manager = JobManager()
-        job_ids: List[str] = []
+        job_ids: list[str] = []
         lock = threading.Lock()
 
         def create_job():
@@ -741,10 +730,7 @@ class TestJobManagerThreadSafety:
                 job_id, ExtractionStatus.RUNNING, progress, progress * 10, None
             )
 
-        threads = [
-            threading.Thread(target=update_progress, args=(i * 10,))
-            for i in range(10)
-        ]
+        threads = [threading.Thread(target=update_progress, args=(i * 10,)) for i in range(10)]
         for t in threads:
             t.start()
         for t in threads:
@@ -754,5 +740,3 @@ class TestJobManagerThreadSafety:
         job = manager.get_job(job_id)
         assert job is not None
         assert 0 <= job.progress <= 100
-
-

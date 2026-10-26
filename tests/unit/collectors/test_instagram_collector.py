@@ -39,14 +39,25 @@ CREDS = InstagramCredentials("me", "pw-secret")
 
 
 def make(
-    db: Database, settings: Settings, feed: Feed | None = None, *,
-    loader: FakeLoader | None = None, creds: InstagramCredentials = CREDS,
-    interactive: bool = True, sleep: SleepRecorder | None = None, **kwargs,
+    db: Database,
+    settings: Settings,
+    feed: Feed | None = None,
+    *,
+    loader: FakeLoader | None = None,
+    creds: InstagramCredentials = CREDS,
+    interactive: bool = True,
+    sleep: SleepRecorder | None = None,
+    **kwargs,
 ) -> InstagramCollector:
     return InstagramCollector(
-        db, settings, creds, interactive=interactive,
+        db,
+        settings,
+        creds,
+        interactive=interactive,
         loader_factory=loader_factory(loader or FakeLoader()),
-        saved_posts=feed or Feed([]), sleep=sleep or SleepRecorder(), **kwargs,
+        saved_posts=feed or Feed([]),
+        sleep=sleep or SleepRecorder(),
+        **kwargs,
     )
 
 
@@ -54,10 +65,16 @@ def store(db: Database, *shortcodes: str) -> None:
     """Pretend these posts were collected before."""
     with db.transaction() as conn:
         for code in shortcodes:
-            ItemsRepo(conn).upsert(ItemUpsert(
-                source="instagram", external_id=code, kind="image", text="old caption",
-                created_at="2020-01-01T00:00:00+00:00", detail=InstagramDetail(shortcode=code),
-            ))
+            ItemsRepo(conn).upsert(
+                ItemUpsert(
+                    source="instagram",
+                    external_id=code,
+                    kind="image",
+                    text="old caption",
+                    created_at="2020-01-01T00:00:00+00:00",
+                    detail=InstagramDetail(shortcode=code),
+                )
+            )
 
 
 def posts(*codes: str, typename: str = "GraphImage"):
@@ -94,8 +111,13 @@ def test_map_image_post_uses_node_only() -> None:
     assert item.hashtags == ("rezept",) and item.mentions == ("chef",)
     assert item.media is None  # no image CDN URL is kept
     assert item.detail == InstagramDetail(
-        shortcode="AbC1", owner_id=123, typename="GraphImage", likes=10, comments=2,
-        saved_feed_rank=4, date_status="verified",
+        shortcode="AbC1",
+        owner_id=123,
+        typename="GraphImage",
+        likes=10,
+        comments=2,
+        saved_feed_rank=4,
+        date_status="verified",
     )
 
 
@@ -114,10 +136,14 @@ def test_map_video_with_and_without_url() -> None:
 
 
 def test_map_carousel_records_video_children_only() -> None:
-    node = ig_node("C1", "GraphSidecar", children=[
-        {"is_video": False, "display_url": "https://cdn/img.jpg"},
-        {"is_video": True, "video_url": "https://cdn/child.mp4"},
-    ])
+    node = ig_node(
+        "C1",
+        "GraphSidecar",
+        children=[
+            {"is_video": False, "display_url": "https://cdn/img.jpg"},
+            {"is_video": True, "video_url": "https://cdn/child.mp4"},
+        ],
+    )
     item = map_post(ig_post(node), 0)
     assert item.kind == "carousel"
     assert [(m.position, m.media_type, m.remote_url) for m in item.media] == [
@@ -150,8 +176,11 @@ def test_collect_new_posts_and_store_no_cdn_urls(db: Database, settings: Setting
     _, detail_a, media_a = get(db, "a")
     assert media_a == [] and detail_a.saved_feed_rank == 0
     with db.read() as conn:
-        dump = "\n".join(str(tuple(r)) for t in ("items", "media", "links")
-                         for r in conn.execute(f"SELECT * FROM {t}"))
+        dump = "\n".join(
+            str(tuple(r))
+            for t in ("items", "media", "links")
+            for r in conn.execute(f"SELECT * FROM {t}")
+        )
         tags = {t.display for t in TagsRepo(conn).for_item(get(db, "a")[0].id)}
     assert "cdninstagram" not in dump
     assert tags == {"#rezept", "@chef"}
@@ -171,8 +200,14 @@ def test_collect_new_posts_and_store_no_cdn_urls(db: Database, settings: Setting
     ],
 )
 def test_early_stop(
-    db: Database, settings: Settings, feed_codes, known, expected_new, expected_known,
-    consumed, reason,
+    db: Database,
+    settings: Settings,
+    feed_codes,
+    known,
+    expected_new,
+    expected_known,
+    consumed,
+    reason,
 ) -> None:
     store(db, *known)
     feed = Feed(posts(*feed_codes))
@@ -243,8 +278,11 @@ def test_batches_are_committed_separately(
 
 
 def test_rate_limit_keeps_progress(db: Database, settings: Settings) -> None:
-    feed = Feed(posts("p1", "p2", "p3", "p4", "p5"), fail_at=3,
-                error=TooManyRequestsException("429 Too Many Requests"))
+    feed = Feed(
+        posts("p1", "p2", "p3", "p4", "p5"),
+        fail_at=3,
+        error=TooManyRequestsException("429 Too Many Requests"),
+    )
     collector = make(db, settings, feed)
     with pytest.raises(InstagramRateLimited), collector:
         collector.collect_saved(batch_size=2)
@@ -257,8 +295,9 @@ def test_rate_limit_keeps_progress(db: Database, settings: Settings) -> None:
 def test_checkpoint_during_feed_is_auth_required(db: Database, settings: Settings) -> None:
     from instaloader.exceptions import ConnectionException
 
-    feed = Feed(posts("p1"), fail_at=0,
-                error=ConnectionException("checkpoint_required: confirm it's you"))
+    feed = Feed(
+        posts("p1"), fail_at=0, error=ConnectionException("checkpoint_required: confirm it's you")
+    )
     collector = make(db, settings, feed)
     with pytest.raises(InstagramAuthRequired, match="Instagram app"), collector:
         collector.collect_saved()
@@ -319,8 +358,13 @@ def test_two_factor_interactive_prompts(db: Database, settings: Settings) -> Non
 
 def test_two_factor_non_interactive_raises(db: Database, settings: Settings) -> None:
     loader = FakeLoader(login_error=TwoFactorAuthRequiredException("2fa"))
-    collector = make(db, settings, loader=loader, interactive=False,
-                     prompt=lambda _: pytest.fail("must not prompt"))
+    collector = make(
+        db,
+        settings,
+        loader=loader,
+        interactive=False,
+        prompt=lambda _: pytest.fail("must not prompt"),
+    )
     with pytest.raises(InstagramAuthRequired, match="Two-factor"):
         collector.login()
     assert loader.saved == []
@@ -340,9 +384,7 @@ def test_login_failures_are_auth_required(db: Database, settings: Settings, erro
 
 
 def test_rate_limited_login(db: Database, settings: Settings) -> None:
-    collector = make(
-        db, settings, loader=FakeLoader(login_error=TooManyRequestsException("429"))
-    )
+    collector = make(db, settings, loader=FakeLoader(login_error=TooManyRequestsException("429")))
     with pytest.raises(InstagramRateLimited):
         collector.login()
 
@@ -363,9 +405,7 @@ def test_session_fallback_order(settings: Settings) -> None:
     assert resolve_session_path(settings, "me", custom) == (custom.resolve(), custom.resolve())
 
 
-def test_legacy_session_is_loaded_and_saved_to_new_path(
-    db: Database, settings: Settings
-) -> None:
+def test_legacy_session_is_loaded_and_saved_to_new_path(db: Database, settings: Settings) -> None:
     legacy = Path.cwd() / "instagram_session"
     legacy.write_text("legacy")
     loader = FakeLoader(session_user="me")

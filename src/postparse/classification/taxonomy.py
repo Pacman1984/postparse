@@ -196,7 +196,10 @@ class TaxonomySpec:
         else:
             items = [_coerce_label(label) for label in labels]
         return cls(
-            name=name, mode=mode, labels=tuple(items), instructions=instructions,
+            name=name,
+            mode=mode,
+            labels=tuple(items),
+            instructions=instructions,
             max_labels=max_labels,
         )
 

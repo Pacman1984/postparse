@@ -103,7 +103,9 @@ def readiness_check(
     if services is None:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
         return HealthResponse(
-            status="error", version=API_VERSION, timestamp=datetime.now(UTC),
+            status="error",
+            version=API_VERSION,
+            timestamp=datetime.now(UTC),
             details={"services": "not initialized"},
         )
     from postparse.api.routers.pipeline import backend_status

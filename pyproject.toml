@@ -145,11 +145,7 @@ line-length = 100
 extend-exclude = ["playground", "notebooks", "docs", "instructions", "dist"]
 
 [tool.ruff.lint]
-# Rule set we are working towards. Not enforced yet (no CI gate, no autofix run);
-# `uv run ruff check --statistics` shows the current backlog.
 select = ["E", "F", "W", "I", "B", "UP", "SIM"]
-# Nothing is auto-fixed until the codebase is reformatted deliberately.
-fixable = []
 
 [tool.ruff.lint.flake8-bugbear]
 # FastAPI dependency markers in parameter defaults are the framework idiom.

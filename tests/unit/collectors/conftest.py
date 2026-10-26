@@ -12,8 +12,13 @@ from postparse.core.db import Database
 
 @pytest.fixture
 def settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Settings:
-    for name in ("POSTPARSE_DATA_DIR", "POSTPARSE_DB_PATH", "POSTPARSE_SESSIONS_DIR",
-                 "POSTPARSE_DOWNLOADS_DIR", "POSTPARSE_TMP_DIR"):
+    for name in (
+        "POSTPARSE_DATA_DIR",
+        "POSTPARSE_DB_PATH",
+        "POSTPARSE_SESSIONS_DIR",
+        "POSTPARSE_DOWNLOADS_DIR",
+        "POSTPARSE_TMP_DIR",
+    ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.chdir(tmp_path)
     return Settings(data_dir=tmp_path / "data")

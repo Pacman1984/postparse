@@ -21,28 +21,28 @@ from postparse.cli.utils import (
 
 @click.command()
 @click.option(
-    '--host',
-    help='Host to bind',
+    "--host",
+    help="Host to bind",
 )
 @click.option(
-    '--port',
+    "--port",
     type=int,
-    help='Port to bind',
+    help="Port to bind",
 )
 @click.option(
-    '--reload',
+    "--reload",
     is_flag=True,
-    help='Enable auto-reload',
+    help="Enable auto-reload",
 )
 @click.option(
-    '--workers',
+    "--workers",
     type=int,
-    help='Number of workers',
+    help="Number of workers",
 )
 @click.option(
-    '--log-level',
-    type=click.Choice(['debug', 'info', 'warning', 'error']),
-    help='Log level',
+    "--log-level",
+    type=click.Choice(["debug", "info", "warning", "error"]),
+    help="Log level",
 )
 @click.pass_context
 def serve(ctx, host, port, reload, workers, log_level):
@@ -70,15 +70,15 @@ def serve(ctx, host, port, reload, workers, log_level):
 
     try:
         # Load config
-        config_path = ctx.obj.get('config')
+        config_path = ctx.obj.get("config")
         config = load_config(config_path)
 
         # Determine server settings
-        server_host = host or config.get('api.host', default='0.0.0.0')
-        server_port = port or config.get('api.port', default=8000)
-        server_reload = reload or config.get('api.reload', default=False)
-        server_workers = workers or config.get('api.workers', default=1)
-        server_log_level = str(log_level or config.get('api.log_level', default='info')).lower()
+        server_host = host or config.get("api.host", default="0.0.0.0")
+        server_port = port or config.get("api.port", default=8000)
+        server_reload = reload or config.get("api.reload", default=False)
+        server_workers = workers or config.get("api.workers", default=1)
+        server_log_level = str(log_level or config.get("api.log_level", default="info")).lower()
 
         # Display startup info
         startup_info = f"""[bold cyan]PostParse API Server[/bold cyan]
@@ -89,10 +89,10 @@ def serve(ctx, host, port, reload, workers, log_level):
 
 [bold]Configuration:[/bold]
   • Workers: {server_workers}
-  • Auto-reload: {'Yes' if server_reload else 'No'}
+  • Auto-reload: {"Yes" if server_reload else "No"}
   • Log level: {server_log_level}
-  • Auth enabled: {config.get('api.auth.enabled', default=False)}
-  • Rate limiting: {config.get('api.rate_limiting.enabled', default=False)}
+  • Auth enabled: {config.get("api.auth.enabled", default=False)}
+  • Rate limiting: {config.get("api.rate_limiting.enabled", default=False)}
 
 [yellow]Press Ctrl+C to stop the server[/yellow]
 """
@@ -130,7 +130,6 @@ def serve(ctx, host, port, reload, workers, log_level):
         pass
     except Exception as e:
         print_error(f"Failed to start server: {e}")
-        if ctx.obj.get('verbose'):
+        if ctx.obj.get("verbose"):
             console.print_exception()
         raise click.Abort() from e
-

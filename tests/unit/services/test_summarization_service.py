@@ -43,8 +43,9 @@ def db(settings: Settings) -> Database:
     return Database.open(settings.db_path)
 
 
-def json_model(payload: dict[str, Any], prompts: list[str] | None = None,
-               fail: bool = False) -> FunctionModel:
+def json_model(
+    payload: dict[str, Any], prompts: list[str] | None = None, fail: bool = False
+) -> FunctionModel:
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if prompts is not None:
             for message in messages:
@@ -60,16 +61,16 @@ def json_model(payload: dict[str, Any], prompts: list[str] | None = None,
 
 def add_transcript(db: Database, media_id: int, text: str, language: str = "de") -> None:
     with db.transaction() as conn:
-        TranscriptsRepo(conn).add(media_id, backend="fake", model="m", text=text,
-                                  language=language)
+        TranscriptsRepo(conn).add(media_id, backend="fake", model="m", text=text, language=language)
         MediaRepo(conn).mark_transcribed(media_id)
 
 
 def make_service(db: Database, model: Any, *, provider: str = "local") -> SummarizationService:
     return SummarizationService(
         db,
-        summarizer_factory=lambda name: Summarizer(model, "native", provider_name=provider,
-                                                   model_name="test-llm"),
+        summarizer_factory=lambda name: Summarizer(
+            model, "native", provider_name=provider, model_name="test-llm"
+        ),
     )
 
 
@@ -91,7 +92,9 @@ def test_text_format_round_trip() -> None:
     assert text == "Kurz gesagt.\n\n- A\n- B"
     assert parse_summary_text(text) == ("Kurz gesagt.", ["A", "B"])
     assert parse_summary_text("Nur Text.\n\nZweiter Absatz.") == (
-        "Nur Text.\n\nZweiter Absatz.", [])
+        "Nur Text.\n\nZweiter Absatz.",
+        [],
+    )
     assert format_summary_text("Ohne Punkte.") == "Ohne Punkte."
 
 
@@ -120,8 +123,9 @@ def test_summarizer_rejects_blank_input() -> None:
 
 
 def test_from_provider_uses_provider_output_mode() -> None:
-    local = Summarizer.from_provider(ProviderConfig(
-        name="llama_cpp", model="qwen", api_base="http://127.0.0.1:9/v1"))
+    local = Summarizer.from_provider(
+        ProviderConfig(name="llama_cpp", model="qwen", api_base="http://127.0.0.1:9/v1")
+    )
     assert local.output_mode == "native" and local.max_concurrency == 1
     assert local.provider_name == "llama_cpp" and local.model_name == "qwen"
 
@@ -144,12 +148,16 @@ def test_service_summarizes_items_with_transcripts(db: Database) -> None:
     with db.read() as conn:
         summary = SummariesRepo(conn).latest(item_id)
         hits = conn.execute(
-            "SELECT rowid FROM items_fts WHERE items_fts MATCH 'Basilikum'").fetchall()
+            "SELECT rowid FROM items_fts WHERE items_fts MATCH 'Basilikum'"
+        ).fetchall()
     assert summary is not None
     assert summary.provider == "local" and summary.model == "test-llm"
     assert summary.prompt_sha256 == prompt_sha256()
-    assert parse_summary_text(summary.text)[1] == ["200 g Spaghetti", "Tomaten anbraten",
-                                                   "Basilikum"]
+    assert parse_summary_text(summary.text)[1] == [
+        "200 g Spaghetti",
+        "Tomaten anbraten",
+        "Basilikum",
+    ]
     assert [h[0] for h in hits] == [item_id]  # key points are searchable
     # Nothing left to do; a new transcript makes the item due again.
     assert svc.run().candidates == 0
@@ -197,10 +205,13 @@ def test_service_limit_and_item_ids(db: Database) -> None:
 
 
 def test_service_provider_from_config(db: Database) -> None:
-    llm = LLMConfig(default_provider="a", providers=[
-        ProviderConfig(name="a", model="ma", api_base="http://127.0.0.1:9/v1"),
-        ProviderConfig(name="b", model="mb", api_base="http://127.0.0.1:9/v1"),
-    ])
+    llm = LLMConfig(
+        default_provider="a",
+        providers=[
+            ProviderConfig(name="a", model="ma", api_base="http://127.0.0.1:9/v1"),
+            ProviderConfig(name="b", model="mb", api_base="http://127.0.0.1:9/v1"),
+        ],
+    )
     svc = SummarizationService(db, llm_config=llm)
     assert svc.summarizer().provider_name == "a"
     assert svc.summarizer("b").model_name == "mb"
@@ -217,8 +228,9 @@ def test_compose_includes_link_texts_and_respects_budget(db: Database) -> None:
     add_transcript(db, mid, "Wort " * 500)
     with db.transaction() as conn:
         (link,) = LinksRepo(conn).for_items([item_id])[item_id]
-        LinksRepo(conn).add_fetch(link.id, fetcher="test", status="ok", title="Pasta",
-                                  text="Zutaten: Nudeln")
+        LinksRepo(conn).add_fetch(
+            link.id, fetcher="test", status="ok", title="Pasta", text="Zutaten: Nudeln"
+        )
     with db.read() as conn:
         text = compose_summary_input(conn, [item_id], max_chars=4000)[item_id]
         short = compose_summary_input(conn, [item_id], max_chars=300)[item_id]

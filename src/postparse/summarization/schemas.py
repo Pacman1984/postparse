@@ -84,5 +84,5 @@ def parse_summary_text(text: str) -> tuple[str, list[str]]:
     if sep:
         lines = [line for line in tail.splitlines() if line.strip()]
         if lines and all(line.startswith(_BULLET) for line in lines):
-            return body.strip(), [line[len(_BULLET):].strip() for line in lines]
+            return body.strip(), [line[len(_BULLET) :].strip() for line in lines]
     return text.strip(), []

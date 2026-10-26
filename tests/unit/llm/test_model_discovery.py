@@ -3,7 +3,6 @@
 from unittest.mock import MagicMock, patch
 
 import httpx
-import pytest
 
 from postparse.llm.config import ProviderConfig
 from postparse.llm.model_discovery import (

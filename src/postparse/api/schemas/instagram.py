@@ -50,24 +50,26 @@ class InstagramExtractRequest(BaseModel):
         }
     """
 
-    model_config = ConfigDict(json_schema_extra={
-        "examples": [
-            {
-                "username": "cooking_profile",
-                "password": "secret123",
-                "limit": 50,
-                "force_update": False,
-                "use_api": False
-            },
-            {
-                "username": "cooking_profile",
-                "access_token": "EAABsbCS1iHgBO...",
-                "limit": 50,
-                "force_update": False,
-                "use_api": True
-            }
-        ]
-    })
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "username": "cooking_profile",
+                    "password": "secret123",
+                    "limit": 50,
+                    "force_update": False,
+                    "use_api": False,
+                },
+                {
+                    "username": "cooking_profile",
+                    "access_token": "EAABsbCS1iHgBO...",
+                    "limit": 50,
+                    "force_update": False,
+                    "use_api": True,
+                },
+            ]
+        }
+    )
 
     username: str = Field(
         ...,
@@ -75,30 +77,17 @@ class InstagramExtractRequest(BaseModel):
         max_length=30,
         pattern=r"^[a-zA-Z0-9._]+$",
         description="Instagram username",
-        examples=["cooking_profile"]
+        examples=["cooking_profile"],
     )
     password: SecretStr | None = Field(
-        default=None,
-        description="Account password (for Instaloader method)"
+        default=None, description="Account password (for Instaloader method)"
     )
     access_token: SecretStr | None = Field(
-        default=None,
-        description="API access token (for Platform API method)"
+        default=None, description="API access token (for Platform API method)"
     )
-    limit: int | None = Field(
-        default=50,
-        ge=1,
-        le=1000,
-        description="Maximum posts to extract"
-    )
-    force_update: bool = Field(
-        default=False,
-        description="Re-extract already processed posts"
-    )
-    use_api: bool = Field(
-        default=False,
-        description="Use Platform API instead of Instaloader"
-    )
+    limit: int | None = Field(default=50, ge=1, le=1000, description="Maximum posts to extract")
+    force_update: bool = Field(default=False, description="Re-extract already processed posts")
+    use_api: bool = Field(default=False, description="Use Platform API instead of Instaloader")
     stop_after_known: int | None = Field(
         default=20,
         ge=1,
@@ -129,35 +118,26 @@ class InstagramExtractResponse(BaseModel):
         }
     """
 
-    model_config = ConfigDict(json_schema_extra={
-        "examples": [
-            {
-                "job_id": "550e8400-e29b-41d4-a716-446655440000",
-                "status": "pending",
-                "post_count": 0,
-                "estimated_time": 30
-            }
-        ]
-    })
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "job_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "status": "pending",
+                    "post_count": 0,
+                    "estimated_time": 30,
+                }
+            ]
+        }
+    )
 
     job_id: str = Field(
-        ...,
-        description="Unique job identifier",
-        examples=["550e8400-e29b-41d4-a716-446655440000"]
+        ..., description="Unique job identifier", examples=["550e8400-e29b-41d4-a716-446655440000"]
     )
-    status: ExtractionStatus = Field(
-        ...,
-        description="Current job status"
-    )
-    post_count: int = Field(
-        default=0,
-        ge=0,
-        description="Estimated posts to process"
-    )
+    status: ExtractionStatus = Field(..., description="Current job status")
+    post_count: int = Field(default=0, ge=0, description="Estimated posts to process")
     estimated_time: int | None = Field(
-        default=None,
-        ge=0,
-        description="Estimated completion time (seconds)"
+        default=None, ge=0, description="Estimated completion time (seconds)"
     )
 
 
@@ -214,59 +194,21 @@ class InstagramPostSchema(BaseModel):
                     "mentions": ["chef_friend"],
                     "created_at": "2025-11-19T10:00:00Z",
                     "extracted_at": "2025-11-19T10:30:00Z",
-                    "metadata": {}
+                    "metadata": {},
                 }
             ]
-        }
+        },
     )
 
-    shortcode: str = Field(
-        ...,
-        description="Instagram post shortcode"
-    )
-    owner_username: str | None = Field(
-        default=None,
-        description="Post owner username"
-    )
-    caption: str | None = Field(
-        default=None,
-        description="Post caption text"
-    )
-    is_video: bool = Field(
-        default=False,
-        description="Whether post contains video"
-    )
-    media_url: str | None = Field(
-        default=None,
-        description="URL to post media"
-    )
-    likes: int = Field(
-        default=0,
-        ge=0,
-        description="Number of likes"
-    )
-    comments: int = Field(
-        default=0,
-        ge=0,
-        description="Number of comments"
-    )
-    hashtags: list[str] = Field(
-        default_factory=list,
-        description="Extracted hashtags (without #)"
-    )
-    mentions: list[str] = Field(
-        default_factory=list,
-        description="Mentioned usernames (without @)"
-    )
-    created_at: datetime | None = Field(
-        default=None,
-        description="Post creation timestamp"
-    )
-    extracted_at: datetime | None = Field(
-        default=None,
-        description="Extraction timestamp"
-    )
-    metadata: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Additional post metadata"
-    )
+    shortcode: str = Field(..., description="Instagram post shortcode")
+    owner_username: str | None = Field(default=None, description="Post owner username")
+    caption: str | None = Field(default=None, description="Post caption text")
+    is_video: bool = Field(default=False, description="Whether post contains video")
+    media_url: str | None = Field(default=None, description="URL to post media")
+    likes: int = Field(default=0, ge=0, description="Number of likes")
+    comments: int = Field(default=0, ge=0, description="Number of comments")
+    hashtags: list[str] = Field(default_factory=list, description="Extracted hashtags (without #)")
+    mentions: list[str] = Field(default_factory=list, description="Mentioned usernames (without @)")
+    created_at: datetime | None = Field(default=None, description="Post creation timestamp")
+    extracted_at: datetime | None = Field(default=None, description="Extraction timestamp")
+    metadata: dict[str, Any] = Field(default_factory=dict, description="Additional post metadata")

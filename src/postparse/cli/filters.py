@@ -108,9 +108,9 @@ def build_item_filter(
     )
 
 
-def filter_options(*, source: bool = True, author_aliases: Sequence[str] = ()) -> Callable[
-    [Callable[..., Any]], Callable[..., Any]
-]:
+def filter_options(
+    *, source: bool = True, author_aliases: Sequence[str] = ()
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Decorator adding the shared filter options.
 
     Args:
@@ -125,26 +125,59 @@ def filter_options(*, source: bool = True, author_aliases: Sequence[str] = ()) -
 
     def decorate(func: Callable[..., Any]) -> Callable[..., Any]:
         options = [
-            click.option("--tag", "--hashtag", "tags", multiple=True,
-                         help="Tag filter, repeatable (any of): #hashtag, @mention or name"),
-            click.option("--author", *author_aliases, "authors", multiple=True,
-                         help="Author / owner filter, repeatable (any of)"),
-            click.option("--kind", "kinds", multiple=True, type=click.Choice(KINDS),
-                         help="Item kind, repeatable (any of)"),
-            click.option("--label", "labels", multiple=True, metavar="TAXONOMY[:LABEL]",
-                         help="Current classification label, repeatable (same taxonomy, any "
-                              "label); a bare taxonomy matches any classified item"),
-            click.option("--from", "date_from", metavar="YYYY-MM-DD",
-                         help="Items on or after this day (UTC)"),
-            click.option("--to", "date_to", metavar="YYYY-MM-DD",
-                         help="Items on or before this day (UTC)"),
-            click.option("--has-transcript/--no-transcript", "has_transcript", default=None,
-                         help="Only items with / without a video transcript"),
+            click.option(
+                "--tag",
+                "--hashtag",
+                "tags",
+                multiple=True,
+                help="Tag filter, repeatable (any of): #hashtag, @mention or name",
+            ),
+            click.option(
+                "--author",
+                *author_aliases,
+                "authors",
+                multiple=True,
+                help="Author / owner filter, repeatable (any of)",
+            ),
+            click.option(
+                "--kind",
+                "kinds",
+                multiple=True,
+                type=click.Choice(KINDS),
+                help="Item kind, repeatable (any of)",
+            ),
+            click.option(
+                "--label",
+                "labels",
+                multiple=True,
+                metavar="TAXONOMY[:LABEL]",
+                help="Current classification label, repeatable (same taxonomy, any "
+                "label); a bare taxonomy matches any classified item",
+            ),
+            click.option(
+                "--from", "date_from", metavar="YYYY-MM-DD", help="Items on or after this day (UTC)"
+            ),
+            click.option(
+                "--to", "date_to", metavar="YYYY-MM-DD", help="Items on or before this day (UTC)"
+            ),
+            click.option(
+                "--has-transcript/--no-transcript",
+                "has_transcript",
+                default=None,
+                help="Only items with / without a video transcript",
+            ),
         ]
         if source:
-            options.insert(0, click.option(
-                "--source", type=click.Choice(["instagram", "telegram", "all"]), default="all",
-                show_default=True, help="Restrict to one source"))
+            options.insert(
+                0,
+                click.option(
+                    "--source",
+                    type=click.Choice(["instagram", "telegram", "all"]),
+                    default="all",
+                    show_default=True,
+                    help="Restrict to one source",
+                ),
+            )
         for option in reversed(options):
             func = option(func)
         return func

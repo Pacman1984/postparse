@@ -205,23 +205,53 @@ def transcribe() -> None:
 
 
 @transcribe.command()
-@click.option("--source", type=click.Choice(["instagram", "telegram", "all"]),
-              default="instagram", show_default=True, help="Restrict to one source")
-@click.option("--limit", type=click.IntRange(min=1),
-              help="Maximum media this run (default: transcription.limit = 50)")
-@click.option("--backend", type=click.Choice(["local", "api"]),
-              help="ASR backend (default: transcription.backend)")
-@click.option("--no-refetch", is_flag=True,
-              help="Never re-fetch Instagram posts; media without a fresh URL stay pending")
-@click.option("--item", "item_ids", type=int, multiple=True,
-              help="Only media of this item id (repeatable; ignores retry backoff)")
+@click.option(
+    "--source",
+    type=click.Choice(["instagram", "telegram", "all"]),
+    default="instagram",
+    show_default=True,
+    help="Restrict to one source",
+)
+@click.option(
+    "--limit",
+    type=click.IntRange(min=1),
+    help="Maximum media this run (default: transcription.limit = 50)",
+)
+@click.option(
+    "--backend",
+    type=click.Choice(["local", "api"]),
+    help="ASR backend (default: transcription.backend)",
+)
+@click.option(
+    "--no-refetch",
+    is_flag=True,
+    help="Never re-fetch Instagram posts; media without a fresh URL stay pending",
+)
+@click.option(
+    "--item",
+    "item_ids",
+    type=int,
+    multiple=True,
+    help="Only media of this item id (repeatable; ignores retry backoff)",
+)
 @click.option("--db", "db_path", type=click.Path(dir_okay=False), help=_DB_OPTION_HELP)
-@click.option("--interactive/--no-interactive", default=False, show_default=True,
-              help="Allow an Instagram 2FA prompt if a re-fetch needs a new login")
+@click.option(
+    "--interactive/--no-interactive",
+    default=False,
+    show_default=True,
+    help="Allow an Instagram 2FA prompt if a re-fetch needs a new login",
+)
 @click.pass_context
-def run(ctx: click.Context, source: str, limit: int | None, backend: str | None,
-        no_refetch: bool, item_ids: tuple[int, ...], db_path: str | None,
-        interactive: bool) -> None:
+def run(
+    ctx: click.Context,
+    source: str,
+    limit: int | None,
+    backend: str | None,
+    no_refetch: bool,
+    item_ids: tuple[int, ...],
+    db_path: str | None,
+    interactive: bool,
+) -> None:
     """Transcribe pending videos and store transcripts (no media files are kept).
 
     Videos whose stored URL is older than transcription.remote_url_max_age_hours
@@ -235,9 +265,12 @@ def run(ctx: click.Context, source: str, limit: int | None, backend: str | None,
     """
     service = _build_service(ctx, db_path, interactive=interactive)
     _report, code = run_transcription(
-        ctx, service,
+        ctx,
+        service,
         source=None if source == "all" else source,
-        limit=limit, backend=backend, refetch=not no_refetch,
+        limit=limit,
+        backend=backend,
+        refetch=not no_refetch,
         item_ids=list(item_ids) or None,
     )
     if code:

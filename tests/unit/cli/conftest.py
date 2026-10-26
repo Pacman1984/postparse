@@ -28,33 +28,64 @@ def seed_v2(path: Path) -> dict[str, int]:
         def add(key: str, **kwargs: object) -> None:
             ids[key], _ = items.upsert(ItemUpsert(**kwargs))  # type: ignore[arg-type]
 
-        add("pasta", source="instagram", external_id="p1", kind="video",
-            text="Creamy pasta carbonara", author="chef",
-            created_at="2024-03-10T12:00:00Z", hashtags=("pasta", "dinner"),
-            detail=InstagramDetail("p1"), media=(MediaInput(0, "video"),),
-            links=("https://example.com/carbonara",))
-        add("cake", source="instagram", external_id="p2", kind="image",
-            text="Chocolate cake recipe", author="baker",
-            created_at="2024-02-01T08:00:00Z", hashtags=("dessert", "pasta"),
-            detail=InstagramDetail("p2"))
-        add("python", source="telegram", external_id="1:1", kind="text",
-            text="New Python release notes", author="news",
-            created_at="2024-03-31T23:59:59Z", detail=TelegramDetail(1, 1),
-            links=("https://python.org/news",))
-        add("doc", source="telegram", external_id="1:2", kind="document",
-            text="Pasta document", author="news",
-            created_at="2024-01-15T00:00:00Z", detail=TelegramDetail(1, 2))
+        add(
+            "pasta",
+            source="instagram",
+            external_id="p1",
+            kind="video",
+            text="Creamy pasta carbonara",
+            author="chef",
+            created_at="2024-03-10T12:00:00Z",
+            hashtags=("pasta", "dinner"),
+            detail=InstagramDetail("p1"),
+            media=(MediaInput(0, "video"),),
+            links=("https://example.com/carbonara",),
+        )
+        add(
+            "cake",
+            source="instagram",
+            external_id="p2",
+            kind="image",
+            text="Chocolate cake recipe",
+            author="baker",
+            created_at="2024-02-01T08:00:00Z",
+            hashtags=("dessert", "pasta"),
+            detail=InstagramDetail("p2"),
+        )
+        add(
+            "python",
+            source="telegram",
+            external_id="1:1",
+            kind="text",
+            text="New Python release notes",
+            author="news",
+            created_at="2024-03-31T23:59:59Z",
+            detail=TelegramDetail(1, 1),
+            links=("https://python.org/news",),
+        )
+        add(
+            "doc",
+            source="telegram",
+            external_id="1:2",
+            kind="document",
+            text="Pasta document",
+            author="news",
+            created_at="2024-01-15T00:00:00Z",
+            detail=TelegramDetail(1, 2),
+        )
 
         media_id = conn.execute(
             "SELECT id FROM media WHERE item_id = ?", (ids["pasta"],)
         ).fetchone()[0]
-        TranscriptsRepo(conn).add(media_id, backend="whisper", model="small",
-                                  text="stir the guanciale")
+        TranscriptsRepo(conn).add(
+            media_id, backend="whisper", model="small", text="stir the guanciale"
+        )
         SummariesRepo(conn).add(ids["pasta"], "A carbonara video")
         links = LinksRepo(conn)
         link_id = conn.execute("SELECT id FROM links WHERE domain = 'example.com'").fetchone()[0]
-        links.add_fetch(link_id, fetcher="trafilatura", status="ok", title="Carbonara",
-                        text="Recipe text")
+        links.add_fetch(
+            link_id, fetcher="trafilatura", status="ok", title="Carbonara", text="Recipe text"
+        )
 
         repo = ClassificationRepo(conn)
         tax = repo.ensure_taxonomy("topics", "multi", ["food", "tech"])

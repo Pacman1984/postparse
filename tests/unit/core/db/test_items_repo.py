@@ -38,8 +38,11 @@ def test_upsert_update_preserves_collected_at(conn: sqlite3.Connection) -> None:
     assert first is not None
 
     again_id, created_again = repo.upsert(
-        _ig(text="Edited", collected_at="2025-05-05T00:00:00Z",
-            detail=InstagramDetail("abc", likes=5))
+        _ig(
+            text="Edited",
+            collected_at="2025-05-05T00:00:00Z",
+            detail=InstagramDetail("abc", likes=5),
+        )
     )
     assert (again_id, created_again) == (item_id, False)
     item = repo.get(item_id)
@@ -65,9 +68,7 @@ def test_upsert_none_keeps_values(conn: sqlite3.Connection) -> None:
 
 def test_detail_must_match_source(conn: sqlite3.Connection) -> None:
     with pytest.raises(ValueError):
-        ItemsRepo(conn).upsert(
-            ItemUpsert("instagram", "1", "text", detail=TelegramDetail(1, 1))
-        )
+        ItemsRepo(conn).upsert(ItemUpsert("instagram", "1", "text", detail=TelegramDetail(1, 1)))
 
 
 def test_naive_timestamp_rejected(conn: sqlite3.Connection) -> None:
@@ -101,10 +102,13 @@ def test_media_upsert_preserves_transcript_state(conn: sqlite3.Connection) -> No
     media_repo.mark_transcribed(media.id)
 
     repo.upsert(
-        _ig(kind="video", media=(
-            MediaInput(0, "video", remote_url="https://cdn/x.mp4", duration_s=3.5),
-            MediaInput(1, "image"),
-        ))
+        _ig(
+            kind="video",
+            media=(
+                MediaInput(0, "video", remote_url="https://cdn/x.mp4", duration_s=3.5),
+                MediaInput(1, "image"),
+            ),
+        )
     )
     first, second = media_repo.for_item(item_id)
     assert first.id == media.id
@@ -126,8 +130,9 @@ def test_pending_transcriptions_and_backoff(conn: sqlite3.Connection) -> None:
     repo = ItemsRepo(conn)
     repo.upsert(_ig("a", kind="video", media=(MediaInput(0, "video"),)))
     repo.upsert(
-        ItemUpsert("telegram", "1:1", "audio", media=(MediaInput(0, "audio"),),
-                   detail=TelegramDetail(1, 1))
+        ItemUpsert(
+            "telegram", "1:1", "audio", media=(MediaInput(0, "audio"),), detail=TelegramDetail(1, 1)
+        )
     )
     media_repo = MediaRepo(conn)
     now = datetime(2025, 1, 1, tzinfo=UTC)
@@ -158,8 +163,9 @@ def test_lookup_helpers(conn: sqlite3.Connection) -> None:
     repo.upsert(_ig("a"))
     repo.upsert(_ig("b"))
     for chat, msg in ((1, 5), (1, 9), (2, 3)):
-        repo.upsert(ItemUpsert("telegram", f"{chat}:{msg}", "text",
-                               detail=TelegramDetail(chat, msg)))
+        repo.upsert(
+            ItemUpsert("telegram", f"{chat}:{msg}", "text", detail=TelegramDetail(chat, msg))
+        )
     assert repo.exists("instagram", "a") and not repo.exists("instagram", "zzz")
     found = repo.get_by_external("telegram", "1:9")
     assert found is not None and found.source == "telegram"
@@ -173,8 +179,10 @@ def test_lookup_helpers(conn: sqlite3.Connection) -> None:
 def test_links_extracted_normalized_and_deduplicated(conn: sqlite3.Connection) -> None:
     repo = ItemsRepo(conn)
     item_id, _ = repo.upsert(
-        _ig(text="a https://Example.com/p?utm_source=x&b=1 and "
-                 "https://example.com/p?b=1#frag, then (https://other.org/x).")
+        _ig(
+            text="a https://Example.com/p?utm_source=x&b=1 and "
+            "https://example.com/p?b=1#frag, then (https://other.org/x)."
+        )
     )
     links = LinksRepo(conn).for_items([item_id])[item_id]
     assert [link.url for link in links] == ["https://example.com/p?b=1", "https://other.org/x"]

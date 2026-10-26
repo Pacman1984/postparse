@@ -37,8 +37,18 @@ from postparse.cli.utils import (
     print_warning,
 )
 
-SECTIONS = ("paths", "database", "llm", "api", "telegram", "instagram", "transcription",
-            "summarization", "enrichment", "classification")
+SECTIONS = (
+    "paths",
+    "database",
+    "llm",
+    "api",
+    "telegram",
+    "instagram",
+    "transcription",
+    "summarization",
+    "enrichment",
+    "classification",
+)
 
 _SECRET_MARKERS = ("key", "secret", "password", "token", "hash")
 
@@ -120,8 +130,10 @@ def _settings_dict(ctx: click.Context) -> dict[str, str]:
     from postparse.config import get_settings
 
     settings = get_settings(config_path_from_ctx(ctx))
-    return {name: str(getattr(settings, name))
-            for name in ("data_dir", "db_path", "sessions_dir", "downloads_dir", "tmp_dir")}
+    return {
+        name: str(getattr(settings, name))
+        for name in ("data_dir", "db_path", "sessions_dir", "downloads_dir", "tmp_dir")
+    }
 
 
 def _options_dict(factory: Any, manager: Any) -> dict[str, Any]:
@@ -142,8 +154,7 @@ def _classification_dict(manager: Any) -> dict[str, Any]:
     try:
         specs = load_taxonomies(section)
         result["taxonomies"] = [
-            {"name": s.name, "mode": s.mode, "labels": list(s.label_names)}
-            for s in specs.values()
+            {"name": s.name, "mode": s.mode, "labels": list(s.label_names)} for s in specs.values()
         ]
     except ValueError as exc:
         result["taxonomies"] = {"error": str(exc)}
@@ -183,8 +194,9 @@ def build_config_view(ctx: click.Context, manager: Any, section: str | None) -> 
 
 @config.command()
 @click.option("--section", type=click.Choice(SECTIONS), help="Show one section")
-@click.option("--format", "fmt", type=click.Choice(["text", "json"]), default="text",
-              help="Output format")
+@click.option(
+    "--format", "fmt", type=click.Choice(["text", "json"]), default="text", help="Output format"
+)
 @click.pass_context
 def show(ctx: click.Context, section: str | None, fmt: str) -> None:
     """📄 Display resolved paths and configuration (secrets masked).
@@ -201,8 +213,13 @@ def show(ctx: click.Context, section: str | None, fmt: str) -> None:
         return
     console = get_console()
     print_info(f"Configuration file: {manager.config_path}")
-    console.print(Panel(Syntax(text, "json", theme="monokai", word_wrap=True),
-                        title="Configuration", border_style="cyan"))
+    console.print(
+        Panel(
+            Syntax(text, "json", theme="monokai", word_wrap=True),
+            title="Configuration",
+            border_style="cyan",
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -221,8 +238,9 @@ def _writable_dir(path: Path) -> bool:
 def _validate_paths(ctx: click.Context, results: list[dict[str, str]], fix: bool) -> None:
     """Check that data directories exist (or can be created) and are writable."""
     paths = _settings_dict(ctx)
-    dirs = {name: Path(paths[name]) for name in ("data_dir", "sessions_dir", "downloads_dir",
-                                                 "tmp_dir")}
+    dirs = {
+        name: Path(paths[name]) for name in ("data_dir", "sessions_dir", "downloads_dir", "tmp_dir")
+    }
     dirs["db_path (parent)"] = Path(paths["db_path"]).parent
     for name, path in dirs.items():
         if not path.exists() and fix:
@@ -250,8 +268,12 @@ def _validate_database(ctx: click.Context, results: list[dict[str, str]]) -> Non
         _add(results, "Legacy database key", "warning", warning)
     db_path = Path(_settings_dict(ctx)["db_path"])
     if not db_path.is_file():
-        _add(results, "Database", "warning",
-             f"{db_path} not found (run `postparse db migrate` or `db migrate-v1`)")
+        _add(
+            results,
+            "Database",
+            "warning",
+            f"{db_path} not found (run `postparse db migrate` or `db migrate-v1`)",
+        )
         return
     try:
         conn = connect(db_path)
@@ -264,8 +286,12 @@ def _validate_database(ctx: click.Context, results: list[dict[str, str]]) -> Non
         return
     latest = latest_version()
     if version < latest:
-        _add(results, "Database", "warning",
-             f"schema v{version} < v{latest} (run `postparse db migrate`)")
+        _add(
+            results,
+            "Database",
+            "warning",
+            f"schema v{version} < v{latest} (run `postparse db migrate`)",
+        )
     else:
         _add(results, "Database", "pass", f"{db_path} (schema v{version})")
 
@@ -275,28 +301,39 @@ def _validate_llm(manager: Any, results: list[dict[str, str]]) -> set[str]:
     from postparse.llm.config import LLMConfig
 
     if not manager.get_section("llm"):
-        _add(results, "LLM providers", "warning",
-             "No [llm] section: classification and summaries are unavailable")
+        _add(
+            results,
+            "LLM providers",
+            "warning",
+            "No [llm] section: classification and summaries are unavailable",
+        )
         return set()
     try:
         llm = LLMConfig.from_config_manager(manager)
     except (ValueError, TypeError) as exc:
         _add(results, "LLM providers", "fail", f"Invalid [llm] config: {exc}")
         return set()
-    _add(results, "LLM providers", "pass",
-         f"{len(llm.providers)} provider(s), default {llm.default_provider}")
+    _add(
+        results,
+        "LLM providers",
+        "pass",
+        f"{len(llm.providers)} provider(s), default {llm.default_provider}",
+    )
     for provider in llm.providers:
         where = provider.api_base or "cloud API"
         if not provider.api_base and not provider.api_key:
-            _add(results, f"Provider {provider.name}", "warning",
-                 f"{provider.model} @ {where}: no API key configured")
+            _add(
+                results,
+                f"Provider {provider.name}",
+                "warning",
+                f"{provider.model} @ {where}: no API key configured",
+            )
         else:
             _add(results, f"Provider {provider.name}", "pass", f"{provider.model} @ {where}")
     return {p.name.lower() for p in llm.providers}
 
 
-def _validate_features(manager: Any, results: list[dict[str, str]],
-                       providers: set[str]) -> None:
+def _validate_features(manager: Any, results: list[dict[str, str]], providers: set[str]) -> None:
     """Validate taxonomies and the transcription / summarization / enrichment options."""
     import importlib.util
 
@@ -307,8 +344,9 @@ def _validate_features(manager: Any, results: list[dict[str, str]],
     try:
         specs = load_taxonomies(manager)
         if specs:
-            names = ", ".join(f"{s.name} ({len(s.labels)} labels, {s.mode})"
-                              for s in specs.values())
+            names = ", ".join(
+                f"{s.name} ({len(s.labels)} labels, {s.mode})" for s in specs.values()
+            )
             _add(results, "Taxonomies", "pass", names)
         else:
             _add(results, "Taxonomies", "warning", "No taxonomies configured in [classification]")
@@ -332,15 +370,18 @@ def _validate_features(manager: Any, results: list[dict[str, str]],
     section = manager.get_section("summarization") or {}
     provider = str(section.get("provider") or "").strip()
     if provider and providers and provider.lower() not in providers:
-        _add(results, "Summarization", "fail",
-             f"provider {provider!r} is not in [[llm.providers]]")
+        _add(results, "Summarization", "fail", f"provider {provider!r} is not in [[llm.providers]]")
     else:
         _add(results, "Summarization", "pass", f"provider {provider or '(llm default)'}")
 
     try:
         enrichment = EnrichmentOptions.from_config(manager)
-        _add(results, "Enrichment", "pass",
-             f"concurrency {enrichment.concurrency}, timeout {enrichment.timeout:g}s")
+        _add(
+            results,
+            "Enrichment",
+            "pass",
+            f"concurrency {enrichment.concurrency}, timeout {enrichment.timeout:g}s",
+        )
     except ValueError as exc:
         _add(results, "Enrichment", "fail", str(exc))
 
@@ -402,8 +443,11 @@ def display_validation_results(console: Console, results: list[dict[str, str]]) 
     table.add_column("Details", overflow="fold")
     labels = {"pass": "[green]✓ Pass[/green]", "warning": "[yellow]⚠ Warning[/yellow]"}
     for result in results:
-        table.add_row(result["check"], labels.get(result["status"], "[red]✗ Fail[/red]"),
-                      escape(result["message"]))
+        table.add_row(
+            result["check"],
+            labels.get(result["status"], "[red]✗ Fail[/red]"),
+            escape(result["message"]),
+        )
     console.print(table)
 
 
@@ -441,8 +485,9 @@ def env(ctx: click.Context) -> None:
         table.add_column("Used for", style="dim")
         for name, purpose in rows:
             is_set = bool((os.getenv(name) or "").strip())
-            table.add_row(name, "[green]✓ set[/green]" if is_set else "[dim]✗ not set[/dim]",
-                          purpose)
+            table.add_row(
+                name, "[green]✓ set[/green]" if is_set else "[dim]✗ not set[/dim]", purpose
+            )
         console.print(table)
         console.print()
     console.print("[dim]Current working directory:[/dim]")

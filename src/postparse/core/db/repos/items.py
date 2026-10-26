@@ -137,8 +137,16 @@ class ItemsRepo:
                                            instagram_posts.saved_feed_rank),
                 date_status = coalesce(excluded.date_status, instagram_posts.date_status)
             """,
-            (item_id, d.shortcode, d.owner_id, d.typename, d.likes, d.comments,
-             d.saved_feed_rank, d.date_status),
+            (
+                item_id,
+                d.shortcode,
+                d.owner_id,
+                d.typename,
+                d.likes,
+                d.comments,
+                d.saved_feed_rank,
+                d.date_status,
+            ),
         )
 
     def _upsert_telegram(self, item_id: int, d: TelegramDetail) -> None:
@@ -161,8 +169,17 @@ class ItemsRepo:
                 fwd_from_post_id = coalesce(excluded.fwd_from_post_id,
                                             telegram_messages.fwd_from_post_id)
             """,
-            (item_id, d.chat_id, d.message_id, d.views, d.forwards, d.reply_to_msg_id,
-             d.fwd_from_name, d.fwd_from_id, d.fwd_from_post_id),
+            (
+                item_id,
+                d.chat_id,
+                d.message_id,
+                d.views,
+                d.forwards,
+                d.reply_to_msg_id,
+                d.fwd_from_name,
+                d.fwd_from_id,
+                d.fwd_from_post_id,
+            ),
         )
 
     def get(self, item_id: int) -> Item | None:

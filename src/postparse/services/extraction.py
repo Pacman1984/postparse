@@ -148,7 +148,10 @@ class ExtractionService:
         """
         return asyncio.run(
             self.telegram_async(
-                limit=limit, full=full, interactive=interactive, session=session,
+                limit=limit,
+                full=full,
+                interactive=interactive,
+                session=session,
                 progress=progress,
             )
         )
@@ -243,7 +246,9 @@ class ExtractionService:
             )
             with collector:
                 collector.collect_saved(
-                    stop_after_known=stop_after_known, limit=limit, batch_size=batch_size,
+                    stop_after_known=stop_after_known,
+                    limit=limit,
+                    batch_size=batch_size,
                     progress=progress,
                 )
                 if refresh_dates:
@@ -264,7 +269,8 @@ class ExtractionService:
         duration = time.monotonic() - started
         report = (
             ExtractionReport.from_stats(stats, duration)
-            if stats is not None else ExtractionReport(source=source, duration_s=duration)
+            if stats is not None
+            else ExtractionReport(source=source, duration_s=duration)
         )
         report.stopped_reason = "rate_limited" if isinstance(exc, RateLimited) else "auth_required"
         report.error = str(exc)

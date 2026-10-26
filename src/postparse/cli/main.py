@@ -109,7 +109,6 @@ install_rich_traceback(show_locals=False)
 console = Console()
 
 
-
 LOGO = r"""
     ____             __     ____
    / __ \____  _____/ /_   / __ \____ _______________
@@ -158,13 +157,15 @@ def show_welcome() -> None:
     content.append("\n")
     content.append(info_text)
     content.append("\n\n")
-    console.print(Panel(
-        content,
-        border_style="bold cyan",
-        padding=(1, 2),
-        subtitle="[dim]Use [cyan]postparse COMMAND --help[/cyan] for detailed information[/dim]",
-        subtitle_align="center",
-    ))
+    console.print(
+        Panel(
+            content,
+            border_style="bold cyan",
+            padding=(1, 2),
+            subtitle="[dim]Use [cyan]postparse COMMAND --help[/cyan] for detailed information[/dim]",
+            subtitle_align="center",
+        )
+    )
     console.print()
     console.print(examples)
     console.print()
@@ -244,10 +245,15 @@ def info(ctx: click.Context) -> None:
     py = sys.version_info
     table.add_row("📦 Version", __version__)
     table.add_row("🐍 Python", f"{py.major}.{py.minor}.{py.micro}")
-    for label, package in (("🖱️  Click", "click"), ("✨ Rich", "rich"),
-                           ("📱 Telethon", "telethon"), ("📸 Instaloader", "instaloader"),
-                           ("⚡ FastAPI", "fastapi"), ("🤖 OpenAI SDK", "openai"),
-                           ("🎙️ faster-whisper", "faster-whisper")):
+    for label, package in (
+        ("🖱️  Click", "click"),
+        ("✨ Rich", "rich"),
+        ("📱 Telethon", "telethon"),
+        ("📸 Instaloader", "instaloader"),
+        ("⚡ FastAPI", "fastapi"),
+        ("🤖 OpenAI SDK", "openai"),
+        ("🎙️ faster-whisper", "faster-whisper"),
+    ):
         table.add_row(label, _package_version(package))
     try:
         settings = get_settings((ctx.obj or {}).get("config"))
@@ -260,12 +266,19 @@ def info(ctx: click.Context) -> None:
         table.add_row(key, value)
 
     console.print()
-    console.print(Panel(table, title="[bold cyan]PostParse Installation Info[/bold cyan]",
-                        border_style="cyan", padding=(1, 2)))
+    console.print(
+        Panel(
+            table,
+            title="[bold cyan]PostParse Installation Info[/bold cyan]",
+            border_style="cyan",
+            padding=(1, 2),
+        )
+    )
     console.print()
 
-    commands = Table(title="[bold yellow]Available Commands[/bold yellow]", show_header=False,
-                     box=None)
+    commands = Table(
+        title="[bold yellow]Available Commands[/bold yellow]", show_header=False, box=None
+    )
     commands.add_column("Command", style="cyan", width=12)
     commands.add_column("Description", style="dim")
     for name, description in (

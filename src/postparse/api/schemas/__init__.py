@@ -74,5 +74,3 @@ __all__ = [
     "ContentTypeFilter",
     "PaginationMetadata",
 ]
-
-

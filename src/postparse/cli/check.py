@@ -132,8 +132,11 @@ def print_result(result: CheckResult) -> None:
     style = _STYLE[result.status]
     table = Table(
         title=f"[bold {style}]{_ICON[result.status]} {result.name}: {escape(result.summary)}"
-              f"[/bold {style}]",
-        show_header=False, title_justify="left", box=None, padding=(0, 2),
+        f"[/bold {style}]",
+        show_header=False,
+        title_justify="left",
+        box=None,
+        padding=(0, 2),
     )
     table.add_column("Key", style="cyan", no_wrap=True)
     table.add_column("Value", overflow="fold")
@@ -175,8 +178,11 @@ def telegram_status(
     result = CheckResult("telegram")
     path = resolve_session_path(settings, session)
     result.rows.append(("Session file", _file_row(path)))
-    for name, required in (("TELEGRAM_API_ID", True), ("TELEGRAM_API_HASH", True),
-                           ("TELEGRAM_PHONE", False)):
+    for name, required in (
+        ("TELEGRAM_API_ID", True),
+        ("TELEGRAM_API_HASH", True),
+        ("TELEGRAM_PHONE", False),
+    ):
         result.rows.append(_env_row(env, name, required=required))
     missing = [n for n in ("TELEGRAM_API_ID", "TELEGRAM_API_HASH") if not _is_set(env, n)]
     result.configured = path.exists() or len(missing) < 2
@@ -187,16 +193,19 @@ def telegram_status(
     elif not path.exists():
         result.worsen("warn")
         result.summary = "no session file yet"
-        result.hints.append("`postparse check telegram --login` (or the first extract) "
-                            "logs in interactively and creates it")
+        result.hints.append(
+            "`postparse check telegram --login` (or the first extract) "
+            "logs in interactively and creates it"
+        )
     else:
         result.summary = "session file and credentials present (not verified)"
         result.hints.append("Verify the login with `postparse check telegram --login`")
     return result
 
 
-def _make_telegram_collector(settings: Settings, credentials: Any, config: Any,
-                             session: str | None) -> Any:
+def _make_telegram_collector(
+    settings: Settings, credentials: Any, config: Any, session: str | None
+) -> Any:
     """Create the Telegram collector used by ``--login`` (tests replace this)."""
     from postparse.collectors.telegram import TelegramCollector, TelegramOptions
     from postparse.core.db import Database
@@ -205,8 +214,12 @@ def _make_telegram_collector(settings: Settings, credentials: Any, config: Any,
     # The collector never touches the database while connecting; migrate=False
     # keeps the handle inert.
     return TelegramCollector(
-        Database(settings.db_path, migrate=False), settings, credentials,
-        TelegramOptions.from_config(config), interactive=True, session=session,
+        Database(settings.db_path, migrate=False),
+        settings,
+        credentials,
+        TelegramOptions.from_config(config),
+        interactive=True,
+        session=session,
     )
 
 
@@ -284,26 +297,34 @@ def instagram_status(
     else:
         result.worsen("fail")
         result.summary = "no session file and INSTAGRAM_PASSWORD not set"
-        result.hints.append("Set INSTAGRAM_PASSWORD once and run `postparse check instagram "
-                            "--login` to create the session")
+        result.hints.append(
+            "Set INSTAGRAM_PASSWORD once and run `postparse check instagram "
+            "--login` to create the session"
+        )
     return result
 
 
-def _make_instagram_collector(settings: Settings, credentials: Any, config: Any,
-                              session: str | None) -> Any:
+def _make_instagram_collector(
+    settings: Settings, credentials: Any, config: Any, session: str | None
+) -> Any:
     """Create the Instagram collector used by ``--login`` (tests replace this)."""
     from postparse.collectors.instagram import InstagramCollector, InstagramOptions
     from postparse.core.db import Database
 
     assert settings.db_path is not None
     return InstagramCollector(
-        Database(settings.db_path, migrate=False), settings, credentials,
-        InstagramOptions.from_config(config), interactive=True, session=session,
+        Database(settings.db_path, migrate=False),
+        settings,
+        credentials,
+        InstagramOptions.from_config(config),
+        interactive=True,
+        session=session,
     )
 
 
-def instagram_login(settings: Settings, config: Any, username: str | None,
-                    session: str | None) -> CheckResult:
+def instagram_login(
+    settings: Settings, config: Any, username: str | None, session: str | None
+) -> CheckResult:
     """Load the Instagram session (or log in) and save it."""
     from postparse.collectors import CollectorError, instagram_credentials
 
@@ -358,7 +379,10 @@ def _cuda_info() -> tuple[int, list[str]]:
         try:
             completed = subprocess.run(
                 [smi, "--query-gpu=name,memory.total", "--format=csv,noheader"],
-                capture_output=True, text=True, timeout=10, check=False,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
             )
             names = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
         except (OSError, subprocess.SubprocessError):
@@ -415,8 +439,9 @@ def transcription_status(
     result.rows.append(("Backend", kind))
     if kind == "local":
         local = options.local
-        result.rows.append(("Model / device / compute",
-                            f"{local.model} / {local.device} / {local.compute_type}"))
+        result.rows.append(
+            ("Model / device / compute", f"{local.model} / {local.device} / {local.compute_type}")
+        )
         fw_version = _module_version("faster-whisper")
         if importlib.util.find_spec("faster_whisper") is None:
             result.rows.append(("faster-whisper", "[red]not installed[/red]"))
@@ -442,11 +467,13 @@ def transcription_status(
                 result.worsen("fail")
                 result.summary = f"model load failed: {exc}"
                 return result
-            result.rows.append((
-                "Model loaded",
-                f"{loaded.active_device} / {loaded.active_compute_type} "
-                f"in {loaded.load_seconds:.1f}s",
-            ))
+            result.rows.append(
+                (
+                    "Model loaded",
+                    f"{loaded.active_device} / {loaded.active_compute_type} "
+                    f"in {loaded.load_seconds:.1f}s",
+                )
+            )
             result.summary = f"model loaded on {loaded.active_device}"
         else:
             result.hints.append("--load-model loads (and if needed downloads) the model")
@@ -494,8 +521,9 @@ def _check_provider(cfg: ProviderConfig, *, chat: bool, timeout: float) -> Healt
     return check_provider(cfg, chat=chat, timeout=timeout)
 
 
-def llm_status(config: Any, *, provider: str | None = None, chat: bool = True,
-               timeout: float = 10.0) -> CheckResult:
+def llm_status(
+    config: Any, *, provider: str | None = None, chat: bool = True, timeout: float = 10.0
+) -> CheckResult:
     """Check configured LLM providers.
 
     The result fails when the default (or the requested) provider does not
@@ -523,11 +551,9 @@ def llm_status(config: Any, *, provider: str | None = None, chat: bool = True,
         resolved = _resolve_model(cfg, min(timeout, 5.0))
         health = _check_provider(resolved, chat=chat, timeout=timeout)
         is_target = cfg.name.lower() == target.lower()
-        label = cfg.name + (" *" if cfg.name.lower() == llm_config.default_provider.lower()
-                            else "")
+        label = cfg.name + (" *" if cfg.name.lower() == llm_config.default_provider.lower() else "")
         model = cfg.model if resolved.model == cfg.model else f"{resolved.model} (discovered)"
-        parts = [f"[green]{health.status}[/green]" if health.ok
-                 else f"[red]{health.status}[/red]"]
+        parts = [f"[green]{health.status}[/green]" if health.ok else f"[red]{health.status}[/red]"]
         if health.latency_ms is not None:
             parts.append(f"{health.latency_ms:.0f} ms")
         if health.models:
@@ -579,8 +605,11 @@ def db_check(ctx: click.Context, db_path: str | None) -> None:
 
 @check.command()
 @click.option("--session", help="Session name or file (default: Settings.sessions_dir)")
-@click.option("--login", is_flag=True,
-              help="Connect to Telegram and verify the session (may prompt for a code)")
+@click.option(
+    "--login",
+    is_flag=True,
+    help="Connect to Telegram and verify the session (may prompt for a code)",
+)
 @click.pass_context
 def telegram(ctx: click.Context, session: str | None, login: bool) -> None:
     """📱 Telegram session file and credentials (`--login` verifies online).
@@ -601,11 +630,13 @@ def telegram(ctx: click.Context, session: str | None, login: bool) -> None:
 @check.command()
 @click.option("--username", help="Instagram username (default: INSTAGRAM_USERNAME)")
 @click.option("--session", help="Session file (default: <sessions_dir>/instagram_<username>)")
-@click.option("--login", is_flag=True,
-              help="Load the session or log in to Instagram (may prompt for a 2FA code)")
+@click.option(
+    "--login",
+    is_flag=True,
+    help="Load the session or log in to Instagram (may prompt for a 2FA code)",
+)
 @click.pass_context
-def instagram(ctx: click.Context, username: str | None, session: str | None,
-              login: bool) -> None:
+def instagram(ctx: click.Context, username: str | None, session: str | None, login: bool) -> None:
     """📸 Instagram session file and credentials (`--login` verifies online).
 
     Examples:
@@ -631,10 +662,14 @@ def _transcription_options(ctx: click.Context) -> TranscriptionOptions:
 
 
 @check.command()
-@click.option("--backend", type=click.Choice(["local", "api"]),
-              help="Backend to check (default: transcription.backend)")
-@click.option("--load-model", is_flag=True,
-              help="Load the faster-whisper model (downloads it on first use)")
+@click.option(
+    "--backend",
+    type=click.Choice(["local", "api"]),
+    help="Backend to check (default: transcription.backend)",
+)
+@click.option(
+    "--load-model", is_flag=True, help="Load the faster-whisper model (downloads it on first use)"
+)
 @click.pass_context
 def transcription(ctx: click.Context, backend: str | None, load_model: bool) -> None:
     """🎙️ Transcription backend: faster-whisper / CUDA, or API endpoint reachability.
@@ -644,8 +679,9 @@ def transcription(ctx: click.Context, backend: str | None, load_model: bool) -> 
         postparse check transcription --load-model
         postparse check transcription --backend api
     """
-    result = transcription_status(_transcription_options(ctx), backend=backend,
-                                  load_model=load_model)
+    result = transcription_status(
+        _transcription_options(ctx), backend=backend, load_model=load_model
+    )
     print_result(result)
     _finish(ctx, [result])
 
@@ -653,12 +689,14 @@ def transcription(ctx: click.Context, backend: str | None, load_model: bool) -> 
 @check.command()
 @click.option("--provider", help="Check only this provider (default: all configured)")
 @click.option("--no-chat", is_flag=True, help="Only list models, skip the chat ping")
-@click.option("--timeout", type=float, default=10.0, show_default=True,
-              help="Request timeout in seconds")
+@click.option(
+    "--timeout", type=float, default=10.0, show_default=True, help="Request timeout in seconds"
+)
 @click.option("--verbose", "-v", is_flag=True, hidden=True, help="Accepted for compatibility")
 @click.pass_context
-def llm(ctx: click.Context, provider: str | None, no_chat: bool, timeout: float,
-        verbose: bool) -> None:
+def llm(
+    ctx: click.Context, provider: str | None, no_chat: bool, timeout: float, verbose: bool
+) -> None:
     """🤖 LLM providers: model list, discovered model, chat ping and latency.
 
     Examples:
@@ -680,8 +718,9 @@ def _not_configured(result: CheckResult) -> bool:
 @click.option("--skip-llm", is_flag=True, help="Skip the LLM provider check")
 @click.option("--db", "db_path", type=click.Path(dir_okay=False), help=_DB_OPTION_HELP)
 @click.pass_context
-def all_checks(ctx: click.Context, login: bool = False, skip_llm: bool = False,
-               db_path: str | None = None) -> None:
+def all_checks(
+    ctx: click.Context, login: bool = False, skip_llm: bool = False, db_path: str | None = None
+) -> None:
     """✅ Run all checks (no Telegram/Instagram network calls without --login).
 
     Telegram / Instagram are reported as skipped when neither credentials nor
@@ -701,8 +740,9 @@ def all_checks(ctx: click.Context, login: bool = False, skip_llm: bool = False,
     console.print("[bold cyan]Database[/bold cyan]")
     db_ok = run_db_check(resolve_db_path(ctx, db_path), config_path_from_ctx(ctx))
     console.print()
-    results.append(CheckResult("db", "ok" if db_ok else "fail",
-                               "passed" if db_ok else "problems found"))
+    results.append(
+        CheckResult("db", "ok" if db_ok else "fail", "passed" if db_ok else "problems found")
+    )
 
     try:
         from postparse.media.options import TranscriptionOptions
@@ -735,15 +775,19 @@ def all_checks(ctx: click.Context, login: bool = False, skip_llm: bool = False,
         results.append(llm_status(config))
         print_result(results[-1])
 
-    summary = Table(title="Summary", show_header=True, header_style="bold cyan",
-                    title_justify="left")
+    summary = Table(
+        title="Summary", show_header=True, header_style="bold cyan", title_justify="left"
+    )
     summary.add_column("Check", style="cyan")
     summary.add_column("Status")
     summary.add_column("Details", overflow="fold")
     for result in results:
         style = _STYLE[result.status]
-        summary.add_row(result.name, f"[{style}]{_ICON[result.status]} {result.status}[/{style}]",
-                        escape(result.summary))
+        summary.add_row(
+            result.name,
+            f"[{style}]{_ICON[result.status]} {result.status}[/{style}]",
+            escape(result.summary),
+        )
     console.print(summary)
     failed = [r.name for r in results if r.status == "fail"]
     if failed:

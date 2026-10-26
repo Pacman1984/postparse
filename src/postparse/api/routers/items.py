@@ -46,8 +46,9 @@ router = APIRouter(
 def _detail_or_404(query: QueryService, item_id: int) -> ItemDetail:
     detail = query.get_item(item_id)
     if detail is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
-                            detail=f"Item {item_id} not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Item {item_id} not found"
+        )
     return detail
 
 
@@ -69,8 +70,12 @@ def list_items(
     date_to: str | None = Query(default=None, description="YYYY-MM-DD (inclusive)"),
     has_transcript: bool | None = Query(default=None),
     cursor: str | None = Query(default=None, description="next_cursor of the previous page"),
-    offset: int = Query(default=0, ge=0, deprecated=True,
-                        description="Deprecated row offset (translated into a cursor)"),
+    offset: int = Query(
+        default=0,
+        ge=0,
+        deprecated=True,
+        description="Deprecated row offset (translated into a cursor)",
+    ),
     limit: int = Query(default=50, ge=1, le=MAX_PAGE_SIZE),
     count: bool = Query(default=True, description="Include the total number of matches"),
     query: QueryService = Depends(get_query_service),
@@ -79,13 +84,31 @@ def list_items(
 ) -> dict[str, Any]:
     """Return one page of matching items, newest first."""
     item_filter = item_filter_or_400(
-        q=q, source=source, tags=tag, authors=author, kinds=kind, labels=label,
-        date_from=date_from, date_to=date_to, has_transcript=has_transcript,
+        q=q,
+        source=source,
+        tags=tag,
+        authors=author,
+        kinds=kind,
+        labels=label,
+        date_from=date_from,
+        date_to=date_to,
+        has_transcript=has_transcript,
     )
     key = cache.key(
-        "items", q=q, source=source, tag=tag, author=author, kind=kind, label=label,
-        date_from=date_from, date_to=date_to, has_transcript=has_transcript, cursor=cursor,
-        offset=offset or None, limit=limit, count=count,
+        "items",
+        q=q,
+        source=source,
+        tag=tag,
+        author=author,
+        kind=kind,
+        label=label,
+        date_from=date_from,
+        date_to=date_to,
+        has_transcript=has_transcript,
+        cursor=cursor,
+        offset=offset or None,
+        limit=limit,
+        count=count,
     )
     cached = cache.get(key)
     if cached is not None:
@@ -95,13 +118,18 @@ def list_items(
     position, exhausted = resolve_cursor(query, item_filter, cursor, offset)
     total = query.count(item_filter) if count else None
     if exhausted:
-        payload = ItemListResponse(items=[], total=total, limit=limit, cursor=cursor,
-                                   next_cursor=None, has_more=False)
+        payload = ItemListResponse(
+            items=[], total=total, limit=limit, cursor=cursor, next_cursor=None, has_more=False
+        )
     else:
         page = query.search(item_filter, cursor=position, limit=limit)
         payload = ItemListResponse(
-            items=[item_schema(v) for v in page.items], total=total, limit=limit,
-            cursor=cursor, next_cursor=page.next_cursor, has_more=page.next_cursor is not None,
+            items=[item_schema(v) for v in page.items],
+            total=total,
+            limit=limit,
+            cursor=cursor,
+            next_cursor=page.next_cursor,
+            has_more=page.next_cursor is not None,
         )
     data = payload.model_dump(mode="json")
     cache.set(key, data, ttl=cache.search_ttl)
@@ -156,6 +184,7 @@ def get_summary(
     """Return the latest summary."""
     detail = _detail_or_404(query, item_id)
     if detail.summary is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
-                            detail=f"Item {item_id} has no summary")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Item {item_id} has no summary"
+        )
     return summary_response(detail.summary)

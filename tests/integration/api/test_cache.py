@@ -40,8 +40,9 @@ class TestCacheDisabled:
 
 
 class TestCacheEnabled:
-    @pytest.mark.parametrize("path", ["/api/v1/items", "/api/v1/search/posts",
-                                      "/api/v1/search/messages"])
+    @pytest.mark.parametrize(
+        "path", ["/api/v1/items", "/api/v1/search/posts", "/api/v1/search/messages"]
+    )
     def test_second_request_hits(self, cached_client: TestClient, path: str) -> None:
         first = cached_client.get(path)
         second = cached_client.get(path)
@@ -77,8 +78,10 @@ class TestCacheEnabled:
     ) -> None:
         params = {"label": "topics:travel"}
         assert cached_client.get("/api/v1/items", params=params).json()["total"] == 0
-        cached_client.post("/api/v1/classify/topics", json={
-            "text": "beach trip", "persist": True, "item_id": seeded["carousel"]})
+        cached_client.post(
+            "/api/v1/classify/topics",
+            json={"text": "beach trip", "persist": True, "item_id": seeded["carousel"]},
+        )
         response = cached_client.get("/api/v1/items", params=params)
         assert response.headers["X-Cache-Status"] == "MISS"
         assert response.json()["total"] == 1
@@ -127,7 +130,8 @@ class TestCacheManagerUnit:
     def test_key_is_stable_and_ignores_none(self) -> None:
         assert CacheManager.key("items", a=1, b=None) == CacheManager.key("items", a=1)
         assert CacheManager.key("items", tags=["x", "y"]) != CacheManager.key(
-            "items", tags=["y", "x"])
+            "items", tags=["y", "x"]
+        )
 
     def test_from_config(self, config) -> None:
         assert CacheManager.from_config(config).enabled is False

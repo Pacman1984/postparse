@@ -33,35 +33,27 @@ class PaginationMetadata(BaseModel):
         }
     """
 
-    model_config = ConfigDict(json_schema_extra={
-        "examples": [
-            {
-                "cursor": None,
-                "next_cursor": "MjAyNC0wMS0xNVQxMDozMDowMHwxMjM=",
-                "has_more": True,
-                "limit": 50
-            }
-        ]
-    })
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "cursor": None,
+                    "next_cursor": "MjAyNC0wMS0xNVQxMDozMDowMHwxMjM=",
+                    "has_more": True,
+                    "limit": 50,
+                }
+            ]
+        }
+    )
 
     cursor: str | None = Field(
-        default=None,
-        description="Current pagination cursor (base64-encoded)"
+        default=None, description="Current pagination cursor (base64-encoded)"
     )
     next_cursor: str | None = Field(
-        default=None,
-        description="Next page cursor (None if no more results)"
+        default=None, description="Next page cursor (None if no more results)"
     )
-    has_more: bool = Field(
-        ...,
-        description="Whether more results are available"
-    )
-    limit: int = Field(
-        ...,
-        ge=1,
-        le=100,
-        description="Maximum results returned per page"
-    )
+    has_more: bool = Field(..., description="Whether more results are available")
+    limit: int = Field(..., ge=1, le=100, description="Maximum results returned per page")
 
 
 class ContentTypeFilter(str, Enum):  # noqa: UP042 - keep str() behaviour
@@ -96,23 +88,14 @@ class DateRangeFilter(BaseModel):
         }
     """
 
-    model_config = ConfigDict(json_schema_extra={
-        "examples": [
-            {
-                "start_date": "2025-01-01T00:00:00Z",
-                "end_date": "2025-11-19T23:59:59Z"
-            }
-        ]
-    })
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [{"start_date": "2025-01-01T00:00:00Z", "end_date": "2025-11-19T23:59:59Z"}]
+        }
+    )
 
-    start_date: datetime = Field(
-        ...,
-        description="Start of date range (inclusive)"
-    )
-    end_date: datetime = Field(
-        ...,
-        description="End of date range (inclusive)"
-    )
+    start_date: datetime = Field(..., description="Start of date range (inclusive)")
+    end_date: datetime = Field(..., description="End of date range (inclusive)")
 
     @field_validator("end_date")
     @classmethod
@@ -149,49 +132,37 @@ class SearchPostsRequest(BaseModel):
         }
     """
 
-    model_config = ConfigDict(json_schema_extra={
-        "examples": [
-            {
-                "hashtags": ["recipe", "cooking"],
-                "date_range": {
-                    "start_date": "2025-01-01T00:00:00Z",
-                    "end_date": "2025-11-19T23:59:59Z"
-                },
-                "content_type": "image",
-                "owner_username": None,
-                "limit": 50,
-                "cursor": None
-            }
-        ]
-    })
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "hashtags": ["recipe", "cooking"],
+                    "date_range": {
+                        "start_date": "2025-01-01T00:00:00Z",
+                        "end_date": "2025-11-19T23:59:59Z",
+                    },
+                    "content_type": "image",
+                    "owner_username": None,
+                    "limit": 50,
+                    "cursor": None,
+                }
+            ]
+        }
+    )
 
     hashtags: list[str] | None = Field(
         default=None,
         description="Hashtags to filter by (OR logic)",
-        examples=[["recipe", "cooking"]]
+        examples=[["recipe", "cooking"]],
     )
-    date_range: DateRangeFilter | None = Field(
-        default=None,
-        description="Date range filter"
-    )
-    content_type: ContentTypeFilter | None = Field(
-        default=None,
-        description="Content type filter"
-    )
+    date_range: DateRangeFilter | None = Field(default=None, description="Date range filter")
+    content_type: ContentTypeFilter | None = Field(default=None, description="Content type filter")
     owner_username: str | None = Field(
-        default=None,
-        description="Filter by post owner",
-        examples=["cooking_profile"]
+        default=None, description="Filter by post owner", examples=["cooking_profile"]
     )
-    limit: int = Field(
-        default=50,
-        ge=1,
-        le=100,
-        description="Maximum results to return"
-    )
+    limit: int = Field(default=50, ge=1, le=100, description="Maximum results to return")
     cursor: str | None = Field(
-        default=None,
-        description="Pagination cursor (base64-encoded string from previous response)"
+        default=None, description="Pagination cursor (base64-encoded string from previous response)"
     )
 
     @field_validator("cursor")
@@ -201,6 +172,7 @@ class SearchPostsRequest(BaseModel):
         if v is not None:
             try:
                 import base64
+
                 base64.b64decode(v.encode())
             except Exception:
                 raise ValueError("cursor must be a valid base64-encoded string") from None
@@ -233,46 +205,34 @@ class SearchMessagesRequest(BaseModel):
         }
     """
 
-    model_config = ConfigDict(json_schema_extra={
-        "examples": [
-            {
-                "hashtags": ["recipe"],
-                "date_range": None,
-                "content_type": "text",
-                "limit": 50,
-                "cursor": None
-            }
-        ]
-    })
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "hashtags": ["recipe"],
+                    "date_range": None,
+                    "content_type": "text",
+                    "limit": 50,
+                    "cursor": None,
+                }
+            ]
+        }
+    )
 
     hashtags: list[str] | None = Field(
-        default=None,
-        description="Hashtags to filter by (OR logic)",
-        examples=[["recipe"]]
+        default=None, description="Hashtags to filter by (OR logic)", examples=[["recipe"]]
     )
-    date_range: DateRangeFilter | None = Field(
-        default=None,
-        description="Date range filter"
-    )
-    content_type: ContentTypeFilter | None = Field(
-        default=None,
-        description="Content type filter"
-    )
+    date_range: DateRangeFilter | None = Field(default=None, description="Date range filter")
+    content_type: ContentTypeFilter | None = Field(default=None, description="Content type filter")
     channel_username: str | None = Field(
         default=None,
         description="DEPRECATED - Not supported. Will return 400 error if provided.",
         examples=None,
-        deprecated=True
+        deprecated=True,
     )
-    limit: int = Field(
-        default=50,
-        ge=1,
-        le=100,
-        description="Maximum results to return"
-    )
+    limit: int = Field(default=50, ge=1, le=100, description="Maximum results to return")
     cursor: str | None = Field(
-        default=None,
-        description="Pagination cursor (base64-encoded string from previous response)"
+        default=None, description="Pagination cursor (base64-encoded string from previous response)"
     )
 
     @field_validator("cursor")
@@ -282,6 +242,7 @@ class SearchMessagesRequest(BaseModel):
         if v is not None:
             try:
                 import base64
+
                 base64.b64decode(v.encode())
             except Exception:
                 raise ValueError("cursor must be a valid base64-encoded string") from None
@@ -340,13 +301,12 @@ class MessageSearchResult(BaseModel):
 
     message_id: int
     chat_id: int | None = Field(
-        default=None,
-        description="Telegram chat/channel ID (numeric identifier)"
+        default=None, description="Telegram chat/channel ID (numeric identifier)"
     )
     channel_username: str | None = Field(
         default=None,
         description="DEPRECATED - Not stored in database, always None",
-        deprecated=True
+        deprecated=True,
     )
     content: str | None = None
     content_type: str = "text"
@@ -383,40 +343,29 @@ class SearchResponse(BaseModel, Generic[T]):  # noqa: UP046
         }
     """
 
-    model_config = ConfigDict(json_schema_extra={
-        "examples": [
-            {
-                "results": [],
-                "total_count": 150,
-                "filters_applied": {
-                    "hashtags": ["recipe"],
-                    "content_type": "image"
-                },
-                "pagination": {
-                    "cursor": None,
-                    "next_cursor": "MjAyNC0wMS0xNVQxMDozMDowMHwxMjM=",
-                    "has_more": True,
-                    "limit": 50
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "results": [],
+                    "total_count": 150,
+                    "filters_applied": {"hashtags": ["recipe"], "content_type": "image"},
+                    "pagination": {
+                        "cursor": None,
+                        "next_cursor": "MjAyNC0wMS0xNVQxMDozMDowMHwxMjM=",
+                        "has_more": True,
+                        "limit": 50,
+                    },
                 }
-            }
-        ]
-    })
+            ]
+        }
+    )
 
-    results: list[T] = Field(
-        ...,
-        description="List of search results"
-    )
-    total_count: int = Field(
-        ...,
-        ge=0,
-        description="Total matching results"
-    )
+    results: list[T] = Field(..., description="List of search results")
+    total_count: int = Field(..., ge=0, description="Total matching results")
     filters_applied: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Filters that were applied"
+        default_factory=dict, description="Filters that were applied"
     )
     pagination: PaginationMetadata = Field(
-        ...,
-        description="Pagination metadata with cursor support"
+        ..., description="Pagination metadata with cursor support"
     )
-

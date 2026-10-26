@@ -34,12 +34,30 @@ VERBOSE = {
     "duration": 9.5,
     "text": " Heute machen wir Pasta. ",
     "segments": [
-        {"id": 0, "seek": 0, "start": 0.0, "end": 2.5, "text": " Heute machen wir",
-         "tokens": [], "temperature": 0.0, "avg_logprob": -0.1, "compression_ratio": 1.0,
-         "no_speech_prob": 0.01},
-        {"id": 1, "seek": 0, "start": 2.5, "end": 4.0, "text": " Pasta.", "tokens": [],
-         "temperature": 0.0, "avg_logprob": -0.1, "compression_ratio": 1.0,
-         "no_speech_prob": 0.01},
+        {
+            "id": 0,
+            "seek": 0,
+            "start": 0.0,
+            "end": 2.5,
+            "text": " Heute machen wir",
+            "tokens": [],
+            "temperature": 0.0,
+            "avg_logprob": -0.1,
+            "compression_ratio": 1.0,
+            "no_speech_prob": 0.01,
+        },
+        {
+            "id": 1,
+            "seek": 0,
+            "start": 2.5,
+            "end": 4.0,
+            "text": " Pasta.",
+            "tokens": [],
+            "temperature": 0.0,
+            "avg_logprob": -0.1,
+            "compression_ratio": 1.0,
+            "no_speech_prob": 0.01,
+        },
     ],
 }
 
@@ -58,11 +76,12 @@ class AsrServer:
 
 def api_backend(server: AsrServer, **kwargs: Any) -> OpenAICompatibleBackend:
     client = openai.OpenAI(
-        api_key="test-key", base_url="http://asr.test/v1", max_retries=0,
+        api_key="test-key",
+        base_url="http://asr.test/v1",
+        max_retries=0,
         http_client=httpx.Client(transport=httpx.MockTransport(server)),
     )
-    return OpenAICompatibleBackend("http://asr.test/v1", model="whisper-x", client=client,
-                                   **kwargs)
+    return OpenAICompatibleBackend("http://asr.test/v1", model="whisper-x", client=client, **kwargs)
 
 
 def test_api_backend_uploads_audio_and_parses_segments(tmp_path: Path) -> None:
@@ -138,8 +157,14 @@ class FakeWhisperModel:
     fail_devices: set[str] = set()
     fail_transcribe_on: set[str] = set()
 
-    def __init__(self, model: str, device: str, compute_type: str, download_root: Any = None,
-                 cpu_threads: int = 0) -> None:
+    def __init__(
+        self,
+        model: str,
+        device: str,
+        compute_type: str,
+        download_root: Any = None,
+        cpu_threads: int = 0,
+    ) -> None:
         if device in self.fail_devices:
             raise RuntimeError("CUDA failed with error no CUDA-capable device is detected")
         self.model, self.device, self.compute_type = model, device, compute_type
@@ -150,11 +175,13 @@ class FakeWhisperModel:
         self.calls.append({"audio": audio, **kwargs})
         if self.device in self.fail_transcribe_on:
             raise RuntimeError("Library cublas64_12.dll is not found or cannot be loaded")
-        segments = iter([
-            types.SimpleNamespace(start=0.0, end=1.2, text=" Hallo"),
-            types.SimpleNamespace(start=1.2, end=2.0, text="  "),
-            types.SimpleNamespace(start=2.0, end=3.0, text=" Welt."),
-        ])
+        segments = iter(
+            [
+                types.SimpleNamespace(start=0.0, end=1.2, text=" Hallo"),
+                types.SimpleNamespace(start=1.2, end=2.0, text="  "),
+                types.SimpleNamespace(start=2.0, end=3.0, text=" Welt."),
+            ]
+        )
         info = types.SimpleNamespace(language="de", language_probability=0.98, duration=3.0)
         return segments, info
 
@@ -166,7 +193,8 @@ def fake_whisper(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setitem(sys.modules, "faster_whisper", module)
     real_find_spec = importlib.util.find_spec
     monkeypatch.setattr(
-        importlib.util, "find_spec",
+        importlib.util,
+        "find_spec",
         lambda name, *a: object() if name == "faster_whisper" else real_find_spec(name, *a),
     )
     # The real decoder needs numpy (an `asr` dependency); feed a dummy waveform instead.
@@ -182,7 +210,8 @@ def fake_whisper(monkeypatch: pytest.MonkeyPatch):
 def test_local_backend_without_extra(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     real_find_spec = importlib.util.find_spec
     monkeypatch.setattr(
-        importlib.util, "find_spec",
+        importlib.util,
+        "find_spec",
         lambda name, *a: None if name == "faster_whisper" else real_find_spec(name, *a),
     )
     backend = FasterWhisperBackend()
@@ -192,14 +221,18 @@ def test_local_backend_without_extra(monkeypatch: pytest.MonkeyPatch, tmp_path: 
         backend.transcribe(tmp_path / "x.mp4")
 
 
-def test_local_backend_cuda_defaults(fake_whisper, monkeypatch: pytest.MonkeyPatch,
-                                     tmp_path: Path) -> None:
+def test_local_backend_cuda_defaults(
+    fake_whisper, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr(lfw, "_cuda_device_count", lambda: 1)
     backend = FasterWhisperBackend()
     result = backend.transcribe(tmp_path / "clip.mp4")
     (model,) = fake_whisper.instances
     assert (model.model, model.device, model.compute_type) == (
-        "large-v3-turbo", "cuda", "int8_float16")
+        "large-v3-turbo",
+        "cuda",
+        "int8_float16",
+    )
     call = model.calls[0]
     assert call["vad_filter"] is True and call["condition_on_previous_text"] is False
     assert call["language"] is None and call["beam_size"] == 5
@@ -209,8 +242,9 @@ def test_local_backend_cuda_defaults(fake_whisper, monkeypatch: pytest.MonkeyPat
     assert backend.active_device == "cuda"
 
 
-def test_local_backend_cpu_and_model_cache(fake_whisper, monkeypatch: pytest.MonkeyPatch,
-                                           tmp_path: Path) -> None:
+def test_local_backend_cpu_and_model_cache(
+    fake_whisper, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr(lfw, "_cuda_device_count", lambda: 0)
     first = FasterWhisperBackend(model="small", language="de")
     first.transcribe(tmp_path / "a.mp4")
@@ -222,8 +256,9 @@ def test_local_backend_cpu_and_model_cache(fake_whisper, monkeypatch: pytest.Mon
     assert model.calls[0]["language"] == "de" and model.calls[1]["language"] is None
 
 
-def test_local_backend_falls_back_to_cpu_on_load_error(fake_whisper, monkeypatch,
-                                                       tmp_path: Path, caplog) -> None:
+def test_local_backend_falls_back_to_cpu_on_load_error(
+    fake_whisper, monkeypatch, tmp_path: Path, caplog
+) -> None:
     monkeypatch.setattr(lfw, "_cuda_device_count", lambda: 1)
     fake_whisper.fail_devices = {"cuda"}
     backend = FasterWhisperBackend()
@@ -233,8 +268,9 @@ def test_local_backend_falls_back_to_cpu_on_load_error(fake_whisper, monkeypatch
     assert "falling back to the CPU" in caplog.text
 
 
-def test_local_backend_falls_back_to_cpu_on_inference_dll_error(fake_whisper, monkeypatch,
-                                                                tmp_path: Path) -> None:
+def test_local_backend_falls_back_to_cpu_on_inference_dll_error(
+    fake_whisper, monkeypatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr(lfw, "_cuda_device_count", lambda: 1)
     fake_whisper.fail_transcribe_on = {"cuda"}
     backend = FasterWhisperBackend()
@@ -242,8 +278,9 @@ def test_local_backend_falls_back_to_cpu_on_inference_dll_error(fake_whisper, mo
     assert result.text == "Hallo Welt." and backend.active_device == "cpu"
 
 
-def test_local_backend_errors_are_transcription_errors(fake_whisper, monkeypatch,
-                                                       tmp_path: Path) -> None:
+def test_local_backend_errors_are_transcription_errors(
+    fake_whisper, monkeypatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr(lfw, "_cuda_device_count", lambda: 0)
     fake_whisper.fail_transcribe_on = {"cpu"}
     with pytest.raises(TranscriptionError):
@@ -258,8 +295,9 @@ def test_build_backend_local_from_options() -> None:
         FasterWhisperBackend(device="tpu")
 
 
-def test_local_backend_without_audio_returns_empty(fake_whisper, monkeypatch,
-                                                   tmp_path: Path) -> None:
+def test_local_backend_without_audio_returns_empty(
+    fake_whisper, monkeypatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr(lfw, "_cuda_device_count", lambda: 0)
     monkeypatch.setattr(lfw, "_load_waveform", lambda path: None)
     result = FasterWhisperBackend().transcribe(tmp_path / "silent.mp4")

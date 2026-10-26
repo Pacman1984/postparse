@@ -44,16 +44,24 @@ BASE_DATE = datetime(2024, 3, 5, 10, 30, tzinfo=UTC)
 def tg_text(msg_id: int, text: str = "", **kwargs: Any) -> Message:
     """A text message in Saved Messages."""
     return Message(
-        id=msg_id, peer_id=PeerUser(ME), date=kwargs.pop("date", BASE_DATE), message=text,
+        id=msg_id,
+        peer_id=PeerUser(ME),
+        date=kwargs.pop("date", BASE_DATE),
+        message=text,
         **kwargs,
     )
 
 
 def tg_photo(msg_id: int, size: int = 2048, text: str = "") -> Message:
     photo = Photo(
-        id=msg_id, access_hash=1, file_reference=b"", date=BASE_DATE,
-        sizes=[PhotoSize(type="m", w=10, h=10, size=size // 2),
-               PhotoSize(type="y", w=100, h=100, size=size)],
+        id=msg_id,
+        access_hash=1,
+        file_reference=b"",
+        date=BASE_DATE,
+        sizes=[
+            PhotoSize(type="m", w=10, h=10, size=size // 2),
+            PhotoSize(type="y", w=100, h=100, size=size),
+        ],
         dc_id=1,
     )
     return tg_text(msg_id, text, media=MessageMediaPhoto(photo=photo))
@@ -61,13 +69,21 @@ def tg_photo(msg_id: int, size: int = 2048, text: str = "") -> Message:
 
 def _document(mime: str, size: int, attributes: list[Any]) -> Document:
     return Document(
-        id=1, access_hash=1, file_reference=b"", date=BASE_DATE, mime_type=mime, size=size,
-        dc_id=1, attributes=attributes,
+        id=1,
+        access_hash=1,
+        file_reference=b"",
+        date=BASE_DATE,
+        mime_type=mime,
+        size=size,
+        dc_id=1,
+        attributes=attributes,
     )
 
 
 def tg_document(
-    msg_id: int, filename: str | None = "report.pdf", mime: str = "application/pdf",
+    msg_id: int,
+    filename: str | None = "report.pdf",
+    mime: str = "application/pdf",
     size: int = 4096,
 ) -> Message:
     attrs: list[Any] = [DocumentAttributeFilename(file_name=filename)] if filename else []
@@ -81,9 +97,12 @@ def tg_voice(msg_id: int, duration: int = 7) -> Message:
 
 def tg_video(msg_id: int, duration: float = 12.0, size: int = 10_000_000) -> Message:
     doc = _document(
-        "video/mp4", size,
-        [DocumentAttributeVideo(duration=duration, w=640, h=360),
-         DocumentAttributeFilename(file_name="clip.mp4")],
+        "video/mp4",
+        size,
+        [
+            DocumentAttributeVideo(duration=duration, w=640, h=360),
+            DocumentAttributeFilename(file_name="clip.mp4"),
+        ],
     )
     return tg_text(msg_id, "watch", media=MessageMediaDocument(document=doc))
 
@@ -93,7 +112,8 @@ def tg_links(msg_id: int) -> Message:
     url_offset = len("Try 😀 ".encode("utf-16-le")) // 2
     link_offset = len("Try 😀 example.com/a and this ".encode("utf-16-le")) // 2
     return tg_text(
-        msg_id, text,
+        msg_id,
+        text,
         entities=[
             MessageEntityUrl(offset=url_offset, length=len("example.com/a")),
             MessageEntityTextUrl(offset=link_offset, length=4, url="https://hidden.example/page"),
@@ -103,11 +123,16 @@ def tg_links(msg_id: int) -> Message:
 
 def tg_forward(msg_id: int) -> Message:
     return tg_text(
-        msg_id, "forwarded post",
+        msg_id,
+        "forwarded post",
         fwd_from=MessageFwdHeader(
-            date=BASE_DATE, from_id=PeerChannel(777), from_name="Chef Channel", channel_post=99,
+            date=BASE_DATE,
+            from_id=PeerChannel(777),
+            from_name="Chef Channel",
+            channel_post=99,
         ),
-        views=150, forwards=3,
+        views=150,
+        forwards=3,
     )
 
 
@@ -308,7 +333,10 @@ class Feed:
     """Saved feed that records how far it was consumed and can fail mid-way."""
 
     def __init__(
-        self, posts: list[instaloader.Post], *, fail_at: int | None = None,
+        self,
+        posts: list[instaloader.Post],
+        *,
+        fail_at: int | None = None,
         error: BaseException | None = None,
     ) -> None:
         self.posts = posts

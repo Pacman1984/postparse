@@ -36,8 +36,13 @@ from tests.unit.media.helpers import (
 
 @pytest.fixture
 def settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Settings:
-    for name in ("POSTPARSE_DATA_DIR", "POSTPARSE_DB_PATH", "POSTPARSE_SESSIONS_DIR",
-                 "POSTPARSE_DOWNLOADS_DIR", "POSTPARSE_TMP_DIR"):
+    for name in (
+        "POSTPARSE_DATA_DIR",
+        "POSTPARSE_DB_PATH",
+        "POSTPARSE_SESSIONS_DIR",
+        "POSTPARSE_DOWNLOADS_DIR",
+        "POSTPARSE_TMP_DIR",
+    ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.chdir(tmp_path)
     return Settings(data_dir=tmp_path / "data")
@@ -49,12 +54,14 @@ def db(settings: Settings) -> Database:
     return Database.open(settings.db_path)
 
 
-def service(db: Database, settings: Settings, backend: Any = None, fetcher: Any = None,
-            **options: Any) -> TranscriptionService:
+def service(
+    db: Database, settings: Settings, backend: Any = None, fetcher: Any = None, **options: Any
+) -> TranscriptionService:
     backend = backend or FakeBackend()
     fetcher = fetcher or FakeFetcher()
     svc = TranscriptionService(
-        db, settings,
+        db,
+        settings,
         options=TranscriptionOptions(**options),
         backend_factory=lambda kind: backend,
         fetcher_factory=lambda refetch: setattr(fetcher, "refetch", refetch) or fetcher,
@@ -135,8 +142,7 @@ def test_failures_back_off_exponentially_until_max_attempts(
 ) -> None:
     _, (mid,) = add_video_item(db, "FLAKY")
     backend = FakeBackend(error=TranscriptionError("decoder crashed"))
-    svc = service(db, settings, backend, backoff_minutes=10, max_backoff_hours=24,
-                  max_attempts=3)
+    svc = service(db, settings, backend, backoff_minutes=10, max_backoff_hours=24, max_attempts=3)
     report = svc.run()
     assert report.failed == 1 and report.ok and "decoder crashed" in report.errors[0]
     media = get_media(db, mid)
@@ -171,12 +177,16 @@ def test_failed_media_succeeds_on_retry(db: Database, settings: Settings) -> Non
     assert media.transcript_status == "transcribed" and media.last_error is None
 
 
-@pytest.mark.parametrize(("error", "reason"), [
-    (InstagramRateLimited("429"), "rate_limited"),
-    (InstagramAuthRequired("checkpoint"), "auth_required"),
-])
-def test_rate_limit_or_auth_stops_the_run(db: Database, settings: Settings,
-                                          error: Exception, reason: str) -> None:
+@pytest.mark.parametrize(
+    ("error", "reason"),
+    [
+        (InstagramRateLimited("429"), "rate_limited"),
+        (InstagramAuthRequired("checkpoint"), "auth_required"),
+    ],
+)
+def test_rate_limit_or_auth_stops_the_run(
+    db: Database, settings: Settings, error: Exception, reason: str
+) -> None:
     _, (m1,) = add_video_item(db, "OK1")
     _, (m2,) = add_video_item(db, "STOP")
     _, (m3,) = add_video_item(db, "LATER")
@@ -221,10 +231,14 @@ def test_interrupt_cleans_up_and_keeps_progress(db: Database, settings: Settings
 
 
 def test_refetch_disabled_defers_media(db: Database, settings: Settings) -> None:
-    _, (mid,) = add_video_item(db, "OLD", remote_url="https://cdn.test/old.mp4",
-                               seen_at=NOW - timedelta(days=3))
+    _, (mid,) = add_video_item(
+        db, "OLD", remote_url="https://cdn.test/old.mp4", seen_at=NOW - timedelta(days=3)
+    )
     svc = TranscriptionService(
-        db, settings, options=TranscriptionOptions(), clock=lambda: NOW,
+        db,
+        settings,
+        options=TranscriptionOptions(),
+        clock=lambda: NOW,
         backend_factory=lambda kind: FakeBackend(),
     )
     report = svc.run(refetch=False)
@@ -257,8 +271,9 @@ def test_kept_local_file_is_used_and_not_deleted(db: Database, settings: Setting
     local = settings.downloads_dir / "telegram" / "clip.mp4"
     local.parent.mkdir(parents=True)
     make_media_file(local)
-    _, (mid,) = add_video_item(db, "100:5", source="telegram", kind="video",
-                               local_path="telegram/clip.mp4")
+    _, (mid,) = add_video_item(
+        db, "100:5", source="telegram", kind="video", local_path="telegram/clip.mp4"
+    )
     fetcher = FakeFetcher()
     report = service(db, settings, fetcher=fetcher).run(source="telegram")
     assert report.transcribed == 1 and fetcher.fetched == []
@@ -283,10 +298,15 @@ def test_telegram_media_with_status_none_is_ignored(db: Database, settings: Sett
         from postparse.core.db.models import ItemUpsert, MediaInput
         from postparse.core.db.repos import ItemsRepo
 
-        ItemsRepo(conn).upsert(ItemUpsert(
-            source="telegram", external_id="1:1", kind="video", text="voice",
-            media=(MediaInput(position=0, media_type="audio", transcript_status="none"),),
-        ))
+        ItemsRepo(conn).upsert(
+            ItemUpsert(
+                source="telegram",
+                external_id="1:1",
+                kind="video",
+                text="voice",
+                media=(MediaInput(position=0, media_type="audio", transcript_status="none"),),
+            )
+        )
     report = service(db, settings).run(source=None)
     assert report.candidates == 0 and report.ok
 
@@ -300,8 +320,9 @@ def test_service_with_real_fetcher_refetch_and_throttle(
     db: Database, settings: Settings, tmp_path: Path
 ) -> None:
     video = make_media_file(tmp_path / "src.mp4").read_bytes()
-    _, (fresh_id,) = add_video_item(db, "NEW", remote_url="https://cdn.test/new.mp4",
-                                    seen_at=fresh())
+    _, (fresh_id,) = add_video_item(
+        db, "NEW", remote_url="https://cdn.test/new.mp4", seen_at=fresh()
+    )
     _, (old_id,) = add_video_item(db, "OLD1")
     _, (old2_id,) = add_video_item(db, "OLD2")
     _, (rl_id,) = add_video_item(db, "OLD3")
@@ -319,19 +340,30 @@ def test_service_with_real_fetcher_refetch_and_throttle(
         def fetch_post(self, shortcode: str) -> Any:
             if shortcode == "OLD3":
                 raise InstagramRateLimited("429 Too Many Requests")
-            return SimpleNamespace(typename="GraphVideo", is_video=True,
-                                   video_url=f"https://cdn.test/{shortcode}.mp4")
+            return SimpleNamespace(
+                typename="GraphVideo", is_video=True, video_url=f"https://cdn.test/{shortcode}.mp4"
+            )
 
     sleeps: list[float] = []
-    http = httpx.Client(transport=httpx.MockTransport(
-        lambda request: httpx.Response(200, content=video)))
+    http = httpx.Client(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, content=video))
+    )
     options = TranscriptionOptions(refetch_min_delay=20, refetch_max_delay=60)
     svc = TranscriptionService(
-        db, settings, options=options, clock=lambda: NOW,
+        db,
+        settings,
+        options=options,
+        clock=lambda: NOW,
         backend_factory=lambda kind: FakeBackend(),
         fetcher_factory=lambda refetch: InstagramVideoFetcher(
-            db, options, collector_factory=Collector, refetch=refetch, http_client=http,
-            sleep=sleeps.append, clock=lambda: NOW),
+            db,
+            options,
+            collector_factory=Collector,
+            refetch=refetch,
+            http_client=http,
+            sleep=sleeps.append,
+            clock=lambda: NOW,
+        ),
     )
     report = svc.run()
     assert report.stopped_reason == "rate_limited"
@@ -341,7 +373,8 @@ def test_service_with_real_fetcher_refetch_and_throttle(
     assert get_media(db, old_id).remote_url == "https://cdn.test/OLD1.mp4"
     assert get_media(db, rl_id).transcript_status == "pending"
     assert {get_media(db, m).transcript_status for m in (fresh_id, old_id, old2_id)} == {
-        "transcribed"}
+        "transcribed"
+    }
     assert scratch_files(settings) == []
     with db.read() as conn:
         assert SearchRepo(conn).integrity_check()
@@ -358,7 +391,10 @@ def test_consecutive_refetch_failures_open_the_circuit(db: Database, settings: S
     assert [f[1] for f in fetcher.fetched] == ["B1", "B2", "B3"]
     # Failed media are retried later (never skipped); the fourth one is untouched.
     assert [get_media(db, m).transcript_status for m in ids] == [
-        "failed", "failed", "failed", "pending"
+        "failed",
+        "failed",
+        "failed",
+        "pending",
     ]
 
 
@@ -384,8 +420,6 @@ def test_other_fetch_errors_do_not_count_towards_the_circuit(
 
 
 def test_circuit_breaker_option_from_config() -> None:
-    config = SimpleNamespace(
-        get_section=lambda name: {"max_consecutive_refetch_failures": 5}
-    )
+    config = SimpleNamespace(get_section=lambda name: {"max_consecutive_refetch_failures": 5})
     assert TranscriptionOptions.from_config(config).max_consecutive_refetch_failures == 5
     assert TranscriptionOptions().max_consecutive_refetch_failures == 3

@@ -17,9 +17,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 __all__ = ["TRACKING_PARAMS", "extract_urls", "normalize_url", "url_domain"]
 
 #: Query parameters removed by :func:`normalize_url` (``utm_*`` is matched by prefix).
-TRACKING_PARAMS: frozenset[str] = frozenset(
-    {"fbclid", "gclid", "igshid", "igsh", "si", "ref_src"}
-)
+TRACKING_PARAMS: frozenset[str] = frozenset({"fbclid", "gclid", "igshid", "igsh", "si", "ref_src"})
 
 _URL_RE = re.compile(r"https?://[^\s<>\"'`]+", re.IGNORECASE)
 _TRAILING_PUNCT = ".,;:!?'\"*"
@@ -28,9 +26,28 @@ _BRACKETS = {")": "(", "]": "[", "}": "{", ">": "<"}
 # Common multi-label public suffixes; good enough for grouping by site.
 _SECOND_LEVEL_SUFFIXES: frozenset[str] = frozenset(
     {
-        "co.uk", "org.uk", "ac.uk", "gov.uk", "co.jp", "co.kr", "co.nz", "co.za",
-        "co.in", "com.au", "net.au", "org.au", "com.br", "com.mx", "com.tr",
-        "com.cn", "com.hk", "com.sg", "com.ar", "co.at", "or.at", "gv.at",
+        "co.uk",
+        "org.uk",
+        "ac.uk",
+        "gov.uk",
+        "co.jp",
+        "co.kr",
+        "co.nz",
+        "co.za",
+        "co.in",
+        "com.au",
+        "net.au",
+        "org.au",
+        "com.br",
+        "com.mx",
+        "com.tr",
+        "com.cn",
+        "com.hk",
+        "com.sg",
+        "com.ar",
+        "co.at",
+        "or.at",
+        "gv.at",
     }
 )
 

@@ -244,14 +244,20 @@ def plan_media(message: Any, options: TelegramOptions) -> tuple[ItemKind, MediaP
         mime = getattr(document, "mime_type", None)
         size = getattr(document, "size", None)
         file_name = next(
-            (a.file_name for a in attrs if _attr_name(a) == "DocumentAttributeFilename"
-             and getattr(a, "file_name", None)),
+            (
+                a.file_name
+                for a in attrs
+                if _attr_name(a) == "DocumentAttributeFilename" and getattr(a, "file_name", None)
+            ),
             None,
         )
         duration = next(
-            (float(a.duration) for a in attrs
-             if _attr_name(a) in ("DocumentAttributeVideo", "DocumentAttributeAudio")
-             and getattr(a, "duration", None) is not None),
+            (
+                float(a.duration)
+                for a in attrs
+                if _attr_name(a) in ("DocumentAttributeVideo", "DocumentAttributeAudio")
+                and getattr(a, "duration", None) is not None
+            ),
             None,
         )
         if "DocumentAttributeAnimated" in names:
@@ -269,8 +275,10 @@ def plan_media(message: Any, options: TelegramOptions) -> tuple[ItemKind, MediaP
             stem = "voice" if voice else "audio"
         else:
             kind, media_type, download, stem = "document", "document", True, "document"
-        filename = safe_filename(file_name, fallback=stem + _extension(mime)) if file_name else (
-            stem + _extension(mime)
+        filename = (
+            safe_filename(file_name, fallback=stem + _extension(mime))
+            if file_name
+            else (stem + _extension(mime))
         )
         return kind, MediaPlan(
             media_type, download, filename, mime, size, duration, options.media_timeout_document
@@ -512,7 +520,9 @@ class TelegramCollector:
                 min_id = ItemsRepo(conn).max_telegram_message_id(chat_id) or 0
         logger.info(
             "Collecting Telegram saved messages (%s, min_id=%d, limit=%s)",
-            "full" if full else "incremental", min_id, limit,
+            "full" if full else "incremental",
+            min_id,
+            limit,
         )
         writer = BatchWriter(self.db, self.stats, self.options.batch_size)
         kwargs: dict[str, Any] = {"reverse": True, "min_id": min_id}
@@ -570,7 +580,9 @@ class TelegramCollector:
         if plan.size_bytes is not None and plan.size_bytes > max_bytes:
             logger.info(
                 "Skipping download of message %s (%d bytes > %d)",
-                message.id, plan.size_bytes, max_bytes,
+                message.id,
+                plan.size_bytes,
+                max_bytes,
             )
             return base
         date = _utc(message.date) or datetime.now(UTC)
@@ -579,9 +591,11 @@ class TelegramCollector:
         )
         assert self.settings.downloads_dir is not None
         target = self.settings.downloads_dir / relative
-        if not (target.exists() and target.stat().st_size > 0 and (
-            plan.size_bytes is None or target.stat().st_size == plan.size_bytes
-        )):
+        if not (
+            target.exists()
+            and target.stat().st_size > 0
+            and (plan.size_bytes is None or target.stat().st_size == plan.size_bytes)
+        ):
             target.parent.mkdir(parents=True, exist_ok=True)
             try:
                 result = await asyncio.wait_for(

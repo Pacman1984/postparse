@@ -25,8 +25,17 @@ logger = logging.getLogger(__name__)
 
 FXTWITTER_URL = "https://api.fxtwitter.com/status/{id}"
 OEMBED_URL = "https://publish.twitter.com/oembed"
-X_DOMAINS = frozenset({"x.com", "twitter.com", "fxtwitter.com", "vxtwitter.com",
-                       "fixupx.com", "fixvx.com", "nitter.net"})
+X_DOMAINS = frozenset(
+    {
+        "x.com",
+        "twitter.com",
+        "fxtwitter.com",
+        "vxtwitter.com",
+        "fixupx.com",
+        "fixvx.com",
+        "nitter.net",
+    }
+)
 _STATUS_RE = re.compile(r"/status(?:es)?/(\d{1,25})")
 
 
@@ -124,8 +133,12 @@ class XFetcher:
         if isinstance(quote, dict):
             q_name, q_handle = _author(quote.get("author"))
             q_text = _tweet_text(quote)
-            metadata["quote"] = {"url": quote.get("url"), "author": q_name,
-                                 "author_handle": q_handle, "text": q_text}
+            metadata["quote"] = {
+                "url": quote.get("url"),
+                "author": q_name,
+                "author_handle": q_handle,
+                "text": q_text,
+            }
             if q_text:
                 parts.append(f"Quoting {q_name or ''} (@{q_handle or '?'}):\n{q_text}".strip())
         title = f"{name or handle or 'Unknown'} (@{handle or '?'}) on X"
@@ -147,14 +160,17 @@ class XFetcher:
                 OEMBED_URL, params={"url": post_url, "omit_script": "true", "dnt": "true"}
             )
         except httpx.HTTPError as exc:
-            return self._named(FetchResult.failed(
-                f"{fx_error}; oEmbed {type(exc).__name__}: {exc}", id=status_id
-            ))
+            return self._named(
+                FetchResult.failed(f"{fx_error}; oEmbed {type(exc).__name__}: {exc}", id=status_id)
+            )
         if response.status_code != 200:
-            return self._named(FetchResult.failed(
-                f"{fx_error}; oEmbed HTTP {response.status_code}",
-                http_status=response.status_code, id=status_id,
-            ))
+            return self._named(
+                FetchResult.failed(
+                    f"{fx_error}; oEmbed HTTP {response.status_code}",
+                    http_status=response.status_code,
+                    id=status_id,
+                )
+            )
         try:
             data = response.json()
         except ValueError:
@@ -171,10 +187,18 @@ class XFetcher:
             http_status=response.status_code,
             title=f"{author or handle or 'Unknown'} (@{handle or '?'}) on X",
             text=text or None,
-            metadata={k: v for k, v in {
-                "source": "oembed", "id": status_id, "url": data.get("url"),
-                "author": author, "author_handle": handle, "fxtwitter_error": fx_error,
-            }.items() if v is not None},
+            metadata={
+                k: v
+                for k, v in {
+                    "source": "oembed",
+                    "id": status_id,
+                    "url": data.get("url"),
+                    "author": author,
+                    "author_handle": handle,
+                    "fxtwitter_error": fx_error,
+                }.items()
+                if v is not None
+            },
         )
 
     @staticmethod

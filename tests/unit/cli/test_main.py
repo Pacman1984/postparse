@@ -7,7 +7,7 @@ and command registration.
 
 import io
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
@@ -16,9 +16,8 @@ from postparse.cli.main import (
     __version__,
     cli,
     configure_stdio_utf8,
-    info,
-    main,
     load_env_files,
+    main,
     show_welcome,
 )
 
@@ -26,7 +25,9 @@ from postparse.cli.main import (
 class TestEnvLoading:
     """Test environment file loading functionality."""
 
-    def test_load_env_files_finds_config_env(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_load_env_files_finds_config_env(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """
         Test that load_env_files finds and loads config/.env file.
 
@@ -50,19 +51,21 @@ class TestEnvLoading:
             # Should return the path it found
             assert result is not None
 
-    def test_load_env_files_searches_multiple_locations(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_load_env_files_searches_multiple_locations(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Test that load_env_files searches multiple standard locations."""
         # Use a real temporary directory with no .env files
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("POSTPARSE_NO_DOTENV", raising=False)
-        
+
         # Mock __file__ to point to temp directory so script_dir check also fails
         fake_file = str(tmp_path / "fake" / "cli" / "main.py")
-        
+
         with patch("postparse.cli.main.load_dotenv") as mock_load_dotenv:
             with patch("postparse.cli.main.__file__", fake_file):
                 result = load_env_files()
-                
+
                 # Should return None if no file found
                 assert result is None
                 # load_dotenv should not have been called since no files exist
@@ -92,7 +95,7 @@ class TestWelcomeBanner:
 
             # Should call print at least twice (panel and examples table)
             assert mock_console.print.call_count >= 2
-            
+
             # Verify that print was called (actual version rendering happens in Rich Panel)
             # We can't easily check the rendered content without rendering, but we verify the call happened
             assert mock_console.print.called
@@ -358,7 +361,7 @@ class TestStdioEncoding:
         assert stream.errors == "replace"
         stream.write(self.CLI_GLYPHS)
         stream.flush()
-        assert "⚙".encode("utf-8") in stream.buffer.getvalue()
+        assert "⚙".encode() in stream.buffer.getvalue()
 
     def test_configure_stdio_utf8_leaves_utf8_and_plain_streams_alone(self) -> None:
         """UTF-8 streams keep their settings; streams without reconfigure are skipped."""
@@ -372,12 +375,15 @@ class TestStdioEncoding:
     def test_main_configures_stdio_before_running_cli(self) -> None:
         """The console-script entry point reconfigures stdio, then runs the CLI."""
         calls = []
-        with patch(
-            "postparse.cli.main.configure_stdio_utf8",
-            side_effect=lambda *a, **k: calls.append("configure"),
-        ), patch(
-            "postparse.cli.main.cli",
-            side_effect=lambda *a, **k: calls.append("cli"),
+        with (
+            patch(
+                "postparse.cli.main.configure_stdio_utf8",
+                side_effect=lambda *a, **k: calls.append("configure"),
+            ),
+            patch(
+                "postparse.cli.main.cli",
+                side_effect=lambda *a, **k: calls.append("cli"),
+            ),
         ):
             main()
 
@@ -398,8 +404,9 @@ class TestSchemaV2Info:
         assert "Schema / items" in result.output
         assert "/ 4" in result.output
 
-    def test_info_with_missing_database(self, tmp_path: Path,
-                                        monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_info_with_missing_database(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from postparse.config import clear_settings_cache
 
         monkeypatch.setenv("POSTPARSE_DB_PATH", str(tmp_path / "none.db"))

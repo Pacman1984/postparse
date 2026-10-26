@@ -4,8 +4,9 @@ Pytest configuration for unit tests.
 Unit tests should be isolated, fast, and mock all external dependencies.
 """
 
-import pytest
 from unittest.mock import Mock
+
+import pytest
 
 
 @pytest.fixture

@@ -171,9 +171,7 @@ class EnrichmentService:
         self.settings = settings
         self.options = options or EnrichmentOptions.from_config(config)
         self.retry = RetryPolicy.from_options(self.options)
-        self.router_factory = router_factory or (
-            lambda opts: FetchRouter.default_router(opts)
-        )
+        self.router_factory = router_factory or (lambda opts: FetchRouter.default_router(opts))
         self._clock = clock or (lambda: datetime.now(UTC))
 
     # -- selection ---------------------------------------------------------------
@@ -219,7 +217,8 @@ class EnrichmentService:
         """Return the links to fetch, in processing order."""
         now = self._clock()
         due = [
-            s for s in self._states(source, domains)
+            s
+            for s in self._states(source, domains)
             if self.is_due(s, now, force=force, refresh_legacy=refresh_legacy)
         ]
 
@@ -293,8 +292,14 @@ class EnrichmentService:
     ) -> EnrichmentReport:
         """Fetch due links and store the results (blocking; see :meth:`arun`)."""
         return asyncio.run(
-            self.arun(source, limit, force=force, refresh_legacy=refresh_legacy,
-                      domains=domains, progress=progress)
+            self.arun(
+                source,
+                limit,
+                force=force,
+                refresh_legacy=refresh_legacy,
+                domains=domains,
+                progress=progress,
+            )
         )
 
     async def arun(
@@ -323,8 +328,9 @@ class EnrichmentService:
         """
         started = time.perf_counter()
         report = EnrichmentReport(source=source)
-        selected = self.select(source, limit, force=force, refresh_legacy=refresh_legacy,
-                               domains=domains)
+        selected = self.select(
+            source, limit, force=force, refresh_legacy=refresh_legacy, domains=domains
+        )
         report.candidates = len(selected)
         if not selected:
             report.stopped_reason = "done"
@@ -342,8 +348,16 @@ class EnrichmentService:
                     self._store(state, result, report, refreshed)
                     handled += 1
                     if progress is not None:
-                        progress(EnrichmentProgress(state.link, result.fetcher, result.status,
-                                                    handled, len(selected), report))
+                        progress(
+                            EnrichmentProgress(
+                                state.link,
+                                result.fetcher,
+                                result.status,
+                                handled,
+                                len(selected),
+                                report,
+                            )
+                        )
 
                 tasks = [asyncio.create_task(one(state)) for state in selected]
                 try:
@@ -364,8 +378,13 @@ class EnrichmentService:
             logger.info(
                 "Enrichment %s: ok=%d error=%d skipped=%d legacy_refreshed=%d "
                 "legacy_texts_removed=%d in %.1fs",
-                report.stopped_reason, report.ok, report.errors_count, report.skipped,
-                report.legacy_refreshed, report.legacy_texts_removed, report.duration_s,
+                report.stopped_reason,
+                report.ok,
+                report.errors_count,
+                report.skipped,
+                report.legacy_refreshed,
+                report.legacy_texts_removed,
+                report.duration_s,
             )
         return report
 

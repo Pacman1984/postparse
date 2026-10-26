@@ -18,8 +18,13 @@ class FakeChecker:
 
     def __call__(self, provider, chat=True, timeout=None):
         self.calls += 1
-        return HealthResult(provider=provider.name, model=provider.model, status=self.status,
-                            chat_ok=self.status == "available", latency_ms=1.0)
+        return HealthResult(
+            provider=provider.name,
+            model=provider.model,
+            status=self.status,
+            chat_ok=self.status == "available",
+            latency_ms=1.0,
+        )
 
 
 class OkBackend:
@@ -98,9 +103,15 @@ def services_of_transcription(make_client) -> object:
     return SimpleNamespace(
         options=SimpleNamespace(backend="local", max_attempts=5),
         backend=lambda kind=None: OkBackend(),
-        status=lambda: {"counts": {("instagram", "pending"): 2}, "due": {"instagram": 2},
-                        "exhausted": {}, "next_attempt_at": {}, "transcripts": 1,
-                        "transcribed_seconds": 1.5, "max_attempts": 5},
+        status=lambda: {
+            "counts": {("instagram", "pending"): 2},
+            "due": {"instagram": 2},
+            "exhausted": {},
+            "next_attempt_at": {},
+            "transcripts": 1,
+            "transcribed_seconds": 1.5,
+            "max_attempts": 5,
+        },
     )
 
 
@@ -108,8 +119,7 @@ class TestStatsAndStatus:
     def test_stats(self, client: TestClient) -> None:
         data = client.get("/api/v1/stats").json()
         assert data["items_total"] == 6
-        assert {s["source"]: s["items"] for s in data["sources"]} == {
-            "instagram": 3, "telegram": 3}
+        assert {s["source"]: s["items"] for s in data["sources"]} == {"instagram": 3, "telegram": 3}
         assert data["summaries"] == 1
         assert data["transcripts"] == 1
         assert data["taxonomies"][0]["name"] == "topics"
@@ -126,16 +136,19 @@ class TestStatsAndStatus:
         client = make_client(transcription=services_of_transcription(make_client))
         data = client.get("/api/v1/transcription/status").json()
         assert data["status"] == {"instagram": {"pending": 2}}
-        assert data["backend"] == {"kind": "local", "status": "available",
-                                   "name": "fake-asr", "model": "tiny"}
+        assert data["backend"] == {
+            "kind": "local",
+            "status": "available",
+            "name": "fake-asr",
+            "model": "tiny",
+        }
 
     def test_enrichment_status(self, client: TestClient) -> None:
         data = client.get("/api/v1/enrichment/status").json()
         assert data["links"] == 1
         assert data["by_state"] == [{"fetcher": "generic", "status": "ok", "count": 1}]
         assert data["domains"] == [{"domain": "example.com", "states": {"ok": 1}}]
-        assert client.get("/api/v1/enrichment/status",
-                          params={"source": "bad"}).status_code == 422
+        assert client.get("/api/v1/enrichment/status", params={"source": "bad"}).status_code == 422
 
 
 class TestServicesNotStarted:

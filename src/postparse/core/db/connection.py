@@ -42,9 +42,7 @@ def _check_sqlite_version() -> None:
     """Raise if the linked SQLite library is too old."""
     if sqlite3.sqlite_version_info < MIN_SQLITE_VERSION:
         required = ".".join(map(str, MIN_SQLITE_VERSION))
-        raise RuntimeError(
-            f"SQLite {required}+ is required, found {sqlite3.sqlite_version}"
-        )
+        raise RuntimeError(f"SQLite {required}+ is required, found {sqlite3.sqlite_version}")
 
 
 def connect(path: str | Path) -> sqlite3.Connection:

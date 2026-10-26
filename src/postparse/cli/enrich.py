@@ -87,8 +87,9 @@ def report_table(report: EnrichmentReport) -> Table:
         counts = report.by_fetcher[fetcher]
         table.add_row(fetcher, *(str(counts.get(s, 0)) for s in ("ok", "error", "skipped")))
     table.add_section()
-    table.add_row("total", str(report.ok), str(report.errors_count), str(report.skipped),
-                  style="bold")
+    table.add_row(
+        "total", str(report.ok), str(report.errors_count), str(report.skipped), style="bold"
+    )
     return table
 
 
@@ -148,15 +149,30 @@ def _run(
 
 
 _RUN_OPTIONS = [
-    click.option("--source", type=click.Choice(["all", "telegram", "instagram"]),
-                 default="all", show_default=True, help="Only links of items from this source"),
+    click.option(
+        "--source",
+        type=click.Choice(["all", "telegram", "instagram"]),
+        default="all",
+        show_default=True,
+        help="Only links of items from this source",
+    ),
     click.option("--limit", type=click.IntRange(min=1), help="Maximum links this run"),
-    click.option("--force", is_flag=True,
-                 help="Refetch every link in scope (ignores earlier results and backoff)"),
-    click.option("--no-legacy", is_flag=True,
-                 help="Do not re-enrich links whose only text was migrated from v1"),
-    click.option("--domain", "domains", multiple=True,
-                 help="Only links on this domain (repeatable, e.g. youtube.com)"),
+    click.option(
+        "--force",
+        is_flag=True,
+        help="Refetch every link in scope (ignores earlier results and backoff)",
+    ),
+    click.option(
+        "--no-legacy",
+        is_flag=True,
+        help="Do not re-enrich links whose only text was migrated from v1",
+    ),
+    click.option(
+        "--domain",
+        "domains",
+        multiple=True,
+        help="Only links on this domain (repeatable, e.g. youtube.com)",
+    ),
     click.option("--db", "db_path", type=click.Path(dir_okay=False), help=_DB_OPTION_HELP),
 ]
 
@@ -180,8 +196,15 @@ def enrich() -> None:
 @enrich.command()
 @_run_options
 @click.pass_context
-def run(ctx: click.Context, source: str, limit: int | None, force: bool, no_legacy: bool,
-        domains: tuple[str, ...], db_path: str | None) -> None:
+def run(
+    ctx: click.Context,
+    source: str,
+    limit: int | None,
+    force: bool,
+    no_legacy: bool,
+    domains: tuple[str, ...],
+    db_path: str | None,
+) -> None:
     """Fetch linked URLs and store their text for search.
 
     Instagram links are never fetched (skipped). Requests are throttled per
@@ -193,15 +216,33 @@ def run(ctx: click.Context, source: str, limit: int | None, force: bool, no_lega
         postparse enrich run --domain youtube.com --domain youtu.be
         postparse enrich run --no-legacy
     """
-    _run(ctx, source=source, limit=limit, force=force, refresh_legacy=not no_legacy,
-         domains=domains, db_path=db_path)
+    _run(
+        ctx,
+        source=source,
+        limit=limit,
+        force=force,
+        refresh_legacy=not no_legacy,
+        domains=domains,
+        db_path=db_path,
+    )
 
 
 @enrich.command()
-@click.option("--source", type=click.Choice(["all", "telegram", "instagram"]),
-              default="all", show_default=True, help="Only links of items from this source")
-@click.option("--domains", "top", type=click.IntRange(min=1), default=15, show_default=True,
-              help="Number of domains to list")
+@click.option(
+    "--source",
+    type=click.Choice(["all", "telegram", "instagram"]),
+    default="all",
+    show_default=True,
+    help="Only links of items from this source",
+)
+@click.option(
+    "--domains",
+    "top",
+    type=click.IntRange(min=1),
+    default=15,
+    show_default=True,
+    help="Number of domains to list",
+)
 @click.option("--db", "db_path", type=click.Path(dir_okay=False), help=_DB_OPTION_HELP)
 @click.pass_context
 def status(ctx: click.Context, source: str, top: int, db_path: str | None) -> None:
@@ -246,16 +287,32 @@ def status(ctx: click.Context, source: str, top: int, db_path: str | None) -> No
 @_run_options
 @click.option("--timeout", type=float, hidden=True, help="Ignored (use enrichment.timeout)")
 @click.pass_context
-def scrape(ctx: click.Context, source: str, limit: int | None, force: bool, no_legacy: bool,
-           domains: tuple[str, ...], db_path: str | None, timeout: float | None) -> None:
+def scrape(
+    ctx: click.Context,
+    source: str,
+    limit: int | None,
+    force: bool,
+    no_legacy: bool,
+    domains: tuple[str, ...],
+    db_path: str | None,
+    timeout: float | None,
+) -> None:
     """Deprecated alias of `postparse enrich run`."""
     print_warning("`enrich scrape` is deprecated; use `postparse enrich run`.")
-    _run(ctx, source=source, limit=limit, force=force, refresh_legacy=not no_legacy,
-         domains=domains, db_path=db_path)
+    _run(
+        ctx,
+        source=source,
+        limit=limit,
+        force=force,
+        refresh_legacy=not no_legacy,
+        domains=domains,
+        db_path=db_path,
+    )
 
 
-@enrich.command(deprecated=True, context_settings={"ignore_unknown_options": True,
-                                                   "allow_extra_args": True})
+@enrich.command(
+    deprecated=True, context_settings={"ignore_unknown_options": True, "allow_extra_args": True}
+)
 @click.pass_context
 def urls(ctx: click.Context) -> None:
     """Deprecated no-op: links are extracted automatically when items are stored."""

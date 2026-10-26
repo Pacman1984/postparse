@@ -34,8 +34,15 @@ class FakeClock:
 class RecordingFetcher:
     """Records (domain, clock time) of each fetch start and the max parallelism."""
 
-    def __init__(self, name: str, clock: FakeClock, *, network: bool = True,
-                 domains: tuple[str, ...] = (), hold: float = 0.0) -> None:
+    def __init__(
+        self,
+        name: str,
+        clock: FakeClock,
+        *,
+        network: bool = True,
+        domains: tuple[str, ...] = (),
+        hold: float = 0.0,
+    ) -> None:
         self.name = name
         self.uses_network = network
         self.clock = clock
@@ -70,8 +77,14 @@ def links(*specs: tuple[str, int]) -> list[Link]:
 
 def make_router(fetchers: list[Any], default: Any, clock: FakeClock, **options: Any) -> FetchRouter:
     opts = EnrichmentOptions(**{"min_domain_interval": 1.0, "concurrency": 4, **options})
-    return FetchRouter(fetchers, default, opts, clock=clock, sleep=clock.sleep,
-                       transport=httpx.MockTransport(lambda r: httpx.Response(599)))
+    return FetchRouter(
+        fetchers,
+        default,
+        opts,
+        clock=clock,
+        sleep=clock.sleep,
+        transport=httpx.MockTransport(lambda r: httpx.Response(599)),
+    )
 
 
 async def test_routing_first_match_then_default() -> None:
@@ -89,8 +102,9 @@ async def test_same_domain_requests_are_spaced_by_min_interval() -> None:
     clock = FakeClock()
     default = RecordingFetcher("generic", clock)
     async with make_router([], default, clock, min_domain_interval=1.5) as router:
-        await asyncio.gather(*(router.fetch(lk) for lk in links(("a.example", 3),
-                                                                  ("b.example", 2))))
+        await asyncio.gather(
+            *(router.fetch(lk) for lk in links(("a.example", 3), ("b.example", 2)))
+        )
     by_domain: dict[str, list[float]] = {}
     for domain, at in default.starts:
         by_domain.setdefault(domain, []).append(at)
@@ -157,8 +171,7 @@ async def test_overall_timeout_per_link() -> None:
 
 
 def test_retry_policy_exponential_backoff_and_give_up() -> None:
-    policy = RetryPolicy(max_attempts=3, backoff=timedelta(hours=1),
-                         max_backoff=timedelta(hours=3))
+    policy = RetryPolicy(max_attempts=3, backoff=timedelta(hours=1), max_backoff=timedelta(hours=3))
     assert policy.delay(1) == timedelta(hours=1)
     assert policy.delay(2) == timedelta(hours=2)
     assert policy.delay(3) == timedelta(hours=3)  # capped (would be 4 h)

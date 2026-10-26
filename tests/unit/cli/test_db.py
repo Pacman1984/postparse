@@ -66,8 +66,16 @@ class TestStats:
         path, _ = v2_db
         result = CliRunner().invoke(cli, ["db", "stats", "--db", str(path), "--detailed"])
         assert result.exit_code == 0, result.output
-        for text in ("Database Overview", "Items", "Media & transcripts", "Links",
-                     "Classification", "topics", "Top hashtags", "#pasta"):
+        for text in (
+            "Database Overview",
+            "Items",
+            "Media & transcripts",
+            "Links",
+            "Classification",
+            "topics",
+            "Top hashtags",
+            "#pasta",
+        ):
             assert text in result.output
 
     def test_empty_database_hint(self, tmp_path: Path) -> None:
@@ -116,13 +124,24 @@ class TestExport:
         assert [d["id"] for d in data] == [ids["python"], ids["pasta"], ids["cake"], ids["doc"]]
         assert data[1]["labels"] == {"topics": ["food"]}
 
-    def test_csv_export_with_filters(self, v2_db: tuple[Path, dict[str, int]],
-                                     tmp_path: Path) -> None:
+    def test_csv_export_with_filters(
+        self, v2_db: tuple[Path, dict[str, int]], tmp_path: Path
+    ) -> None:
         path, ids = v2_db
         out = tmp_path / "posts.csv"
         result = CliRunner().invoke(
-            cli, ["db", "export", str(out), "--db", str(path), "--source", "posts",
-                  "--label", "topics:food"],
+            cli,
+            [
+                "db",
+                "export",
+                str(out),
+                "--db",
+                str(path),
+                "--source",
+                "posts",
+                "--label",
+                "topics:food",
+            ],
         )
         assert result.exit_code == 0, result.output
         rows = list(csv.DictReader(io.StringIO(out.read_text(encoding="utf-8"))))
@@ -140,8 +159,9 @@ class TestExport:
             (["--from", "2024-03-01", "--to", "2024-03-31"], 2),
         ],
     )
-    def test_export_filters_and_limit(self, v2_db: tuple[Path, dict[str, int]],
-                                      tmp_path: Path, args: list[str], count: int) -> None:
+    def test_export_filters_and_limit(
+        self, v2_db: tuple[Path, dict[str, int]], tmp_path: Path, args: list[str], count: int
+    ) -> None:
         path, _ = v2_db
         out = tmp_path / "items.json"
         result = CliRunner().invoke(cli, ["db", "export", str(out), "--db", str(path), *args])
@@ -158,8 +178,9 @@ class TestExport:
         assert lines[0].startswith("id,source,external_id")
         assert len(lines) == 2
 
-    def test_format_from_extension(self, v2_db: tuple[Path, dict[str, int]],
-                                   tmp_path: Path) -> None:
+    def test_format_from_extension(
+        self, v2_db: tuple[Path, dict[str, int]], tmp_path: Path
+    ) -> None:
         path, _ = v2_db
         out = tmp_path / "x.csv"
         result = CliRunner().invoke(cli, ["db", "export", str(out), "--db", str(path)])

@@ -140,10 +140,23 @@ class LinksRepo:
         Returns:
             Fetch id.
         """
-        columns = ["link_id", "fetcher", "status", "http_status", "title", "text",
-                   "metadata", "error"]
+        columns = [
+            "link_id",
+            "fetcher",
+            "status",
+            "http_status",
+            "title",
+            "text",
+            "metadata",
+            "error",
+        ]
         values: list[object] = [
-            link_id, fetcher, status, http_status, title, text,
+            link_id,
+            fetcher,
+            status,
+            http_status,
+            title,
+            text,
             json.dumps(metadata, ensure_ascii=False) if metadata is not None else None,
             error,
         ]
@@ -152,8 +165,7 @@ class LinksRepo:
             values.append(to_db_ts(fetched_at))
         placeholders = ", ".join("?" for _ in columns)
         row = self.conn.execute(
-            f"INSERT INTO link_fetches ({', '.join(columns)}) VALUES ({placeholders}) "
-            "RETURNING id",
+            f"INSERT INTO link_fetches ({', '.join(columns)}) VALUES ({placeholders}) RETURNING id",
             values,
         ).fetchone()
         if status == "ok":
@@ -236,11 +248,12 @@ class LinksRepo:
         Returns:
             States ordered by link id; only links referenced by an item.
         """
-        params: dict[str, Any] = {"legacy": LEGACY_FETCHER, "source": source,
-                                  "domains": json.dumps(list(domains or []))}
-        domain_clause = (
-            "AND l.domain IN (SELECT value FROM json_each(:domains))" if domains else ""
-        )
+        params: dict[str, Any] = {
+            "legacy": LEGACY_FETCHER,
+            "source": source,
+            "domains": json.dumps(list(domains or [])),
+        }
+        domain_clause = "AND l.domain IN (SELECT value FROM json_each(:domains))" if domains else ""
         rows = self.conn.execute(
             f"""
             WITH scope AS (

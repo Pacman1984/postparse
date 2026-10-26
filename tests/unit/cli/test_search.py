@@ -32,13 +32,12 @@ def test_items_full_text_with_snippet(v2_db: tuple[Path, dict[str, int]]) -> Non
     assert "[pasta]" in data["items"][0]["snippet"].lower()
 
 
-def test_items_transcript_and_link_text_are_searchable(
-    v2_db: tuple[Path, dict[str, int]]
-) -> None:
+def test_items_transcript_and_link_text_are_searchable(v2_db: tuple[Path, dict[str, int]]) -> None:
     path, ids = v2_db
     assert _ids(_json(path, "items", "guanciale")) == [ids["pasta"]]
     assert _ids(_json(path, "items", "recipe", "--source", "instagram")) == [
-        ids["pasta"], ids["cake"]
+        ids["pasta"],
+        ids["cake"],
     ]
 
 
@@ -59,8 +58,9 @@ def test_items_transcript_and_link_text_are_searchable(
         (["--no-transcript", "--source", "instagram"], ["cake"]),
     ],
 )
-def test_items_filters(v2_db: tuple[Path, dict[str, int]], args: list[str],
-                       expected: list[str]) -> None:
+def test_items_filters(
+    v2_db: tuple[Path, dict[str, int]], args: list[str], expected: list[str]
+) -> None:
     path, ids = v2_db
     assert _ids(_json(path, "items", *args)) == [ids[key] for key in expected]
 
@@ -106,9 +106,7 @@ def test_messages_alias_maps_photo_type(v2_db: tuple[Path, dict[str, int]]) -> N
 
 def test_output_json_option_matches_json_flag(v2_db: tuple[Path, dict[str, int]]) -> None:
     path, _ = v2_db
-    result = CliRunner().invoke(
-        cli, ["search", "messages", "--db", str(path), "--output", "json"]
-    )
+    result = CliRunner().invoke(cli, ["search", "messages", "--db", str(path), "--output", "json"])
     assert result.exit_code == 0
     assert json.loads(result.output)["total"] == 2
 
@@ -122,8 +120,9 @@ def test_output_json_option_matches_json_flag(v2_db: tuple[Path, dict[str, int]]
         (["--limit", "0"], "between 1 and 500"),
     ],
 )
-def test_items_rejects_bad_input(v2_db: tuple[Path, dict[str, int]], args: list[str],
-                                 message: str) -> None:
+def test_items_rejects_bad_input(
+    v2_db: tuple[Path, dict[str, int]], args: list[str], message: str
+) -> None:
     path, _ = v2_db
     result = CliRunner().invoke(cli, ["search", "items", "--db", str(path), *args])
     assert result.exit_code == 2
@@ -157,7 +156,6 @@ def test_parse_label_filter() -> None:
 
 
 def test_build_item_filter_normalizes_values() -> None:
-    flt = build_item_filter(q="  ", source="all", kinds=("video", "video"),
-                            date_from="2024-01-01")
+    flt = build_item_filter(q="  ", source="all", kinds=("video", "video"), date_from="2024-01-01")
     assert flt.q is None and flt.source is None and flt.kinds == ("video",)
     assert str(flt.date_from) == "2024-01-01"

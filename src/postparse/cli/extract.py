@@ -188,13 +188,20 @@ def _run(
 
 
 def _telegram(
-    ctx: click.Context, *, db_path: str | None, session: str | None, limit: int | None,
-    full: bool, interactive: bool,
+    ctx: click.Context,
+    *,
+    db_path: str | None,
+    session: str | None,
+    limit: int | None,
+    full: bool,
+    interactive: bool,
 ) -> int:
     service = _build_service(ctx, db_path)
     print_info("Collecting Telegram Saved Messages" + (" (full re-read)" if full else ""))
     return _run(
-        ctx, "Telegram", "Telegram extraction",
+        ctx,
+        "Telegram",
+        "Telegram extraction",
         lambda view: service.telegram(
             limit=limit, full=full, interactive=interactive, session=session, progress=view
         ),
@@ -202,20 +209,37 @@ def _telegram(
 
 
 def _instagram(
-    ctx: click.Context, *, db_path: str | None, username: str | None, session: str | None,
-    limit: int | None, stop_after_known: int | None, batch_size: int, refresh_dates: bool,
-    refresh_limit: int | None, interactive: bool, transcribe: bool = False,
+    ctx: click.Context,
+    *,
+    db_path: str | None,
+    username: str | None,
+    session: str | None,
+    limit: int | None,
+    stop_after_known: int | None,
+    batch_size: int,
+    refresh_dates: bool,
+    refresh_limit: int | None,
+    interactive: bool,
+    transcribe: bool = False,
 ) -> int:
     service = _build_service(ctx, db_path)
     mode = "full walk" if stop_after_known is None else f"stop after {stop_after_known} known"
     print_info(f"Collecting saved Instagram posts ({mode})")
     started = datetime.now(UTC) - timedelta(seconds=1)
     code = _run(
-        ctx, "Instagram", "Instagram extraction",
+        ctx,
+        "Instagram",
+        "Instagram extraction",
         lambda view: service.instagram(
-            limit=limit, stop_after_known=stop_after_known, batch_size=batch_size,
-            refresh_dates=refresh_dates, interactive=interactive, session=session,
-            progress=view, username=username, refresh_limit=refresh_limit,
+            limit=limit,
+            stop_after_known=stop_after_known,
+            batch_size=batch_size,
+            refresh_dates=refresh_dates,
+            interactive=interactive,
+            session=session,
+            progress=view,
+            username=username,
+            refresh_limit=refresh_limit,
         ),
     )
     if transcribe and code in (EXIT_OK, EXIT_RATE_LIMITED):
@@ -248,16 +272,23 @@ def _transcribe_new(ctx: click.Context, db_path: str | None, since: datetime) ->
         return EXIT_OK
     print_info(f"Transcribing {len(item_ids)} newly collected post(s) with videos")
     report, code = run_transcription(
-        ctx, service, source=None, limit=None, backend=None, refetch=False,
-        item_ids=item_ids, title="Transcription of new videos",
+        ctx,
+        service,
+        source=None,
+        limit=None,
+        backend=None,
+        refetch=False,
+        item_ids=item_ids,
+        title="Transcription of new videos",
     )
     if report is None or not report.item_ids:
         return code
     get_console().print()
     try:
         summaries = _build_summarization_service(ctx, db_path)
-        run_summaries(ctx, summaries, limit=None, provider=None, force=False,
-                      item_ids=report.item_ids)
+        run_summaries(
+            ctx, summaries, limit=None, provider=None, force=False, item_ids=report.item_ids
+        )
     except click.ClickException as exc:
         print_warning(f"Summaries skipped: {exc.message}")
     except Exception as exc:
@@ -313,8 +344,13 @@ def extract(ctx: click.Context) -> None:
 @_interactive_option
 @click.pass_context
 def telegram(
-    ctx: click.Context, db_path: str | None, session: str | None, limit: int | None,
-    full: bool, force: bool, interactive: bool,
+    ctx: click.Context,
+    db_path: str | None,
+    session: str | None,
+    limit: int | None,
+    full: bool,
+    force: bool,
+    interactive: bool,
 ) -> None:
     """Collect Telegram Saved Messages (only new ones unless --full).
 
@@ -331,7 +367,11 @@ def telegram(
         password if set); enter them in this terminal.
     """
     code = _telegram(
-        ctx, db_path=db_path, session=session, limit=limit, full=full or force,
+        ctx,
+        db_path=db_path,
+        session=session,
+        limit=limit,
+        full=full or force,
         interactive=interactive,
     )
     if code:
@@ -341,7 +381,8 @@ def telegram(
 @extract.command()
 @click.option("--db", "db_path", type=click.Path(dir_okay=False), help=_DB_OPTION_HELP)
 @click.option(
-    "--username", envvar="INSTAGRAM_USERNAME",
+    "--username",
+    envvar="INSTAGRAM_USERNAME",
     help="Instagram username (default: INSTAGRAM_USERNAME).",
 )
 @click.option(
@@ -351,35 +392,54 @@ def telegram(
 )
 @click.option("--limit", type=click.IntRange(min=1), help="Maximum posts to store.")
 @click.option(
-    "--stop-after-known", type=int, default=20, show_default=True,
+    "--stop-after-known",
+    type=int,
+    default=20,
+    show_default=True,
     help="Stop after N consecutive already stored posts (0 = walk the whole feed).",
 )
 @click.option(
-    "--force", is_flag=True,
+    "--force",
+    is_flag=True,
     help="Walk the whole saved feed and update known posts too.",
 )
 @click.option(
-    "--batch-size", type=click.IntRange(min=1), default=25, show_default=True,
+    "--batch-size",
+    type=click.IntRange(min=1),
+    default=25,
+    show_default=True,
     help="Posts per database transaction.",
 )
 @click.option(
-    "--refresh-dates", is_flag=True,
+    "--refresh-dates",
+    is_flag=True,
     help="Afterwards re-fetch publication dates of posts migrated from schema v1.",
 )
 @click.option(
-    "--refresh-limit", type=click.IntRange(min=1),
+    "--refresh-limit",
+    type=click.IntRange(min=1),
     help="Maximum posts for --refresh-dates (default: all unverified).",
 )
 @click.option(
-    "--transcribe", is_flag=True,
+    "--transcribe",
+    is_flag=True,
     help="Afterwards transcribe and summarize the newly collected videos (fresh URLs).",
 )
 @_interactive_option
 @click.pass_context
 def instagram(
-    ctx: click.Context, db_path: str | None, username: str | None, session: str | None,
-    limit: int | None, stop_after_known: int, force: bool, batch_size: int,
-    refresh_dates: bool, refresh_limit: int | None, transcribe: bool, interactive: bool,
+    ctx: click.Context,
+    db_path: str | None,
+    username: str | None,
+    session: str | None,
+    limit: int | None,
+    stop_after_known: int,
+    force: bool,
+    batch_size: int,
+    refresh_dates: bool,
+    refresh_limit: int | None,
+    transcribe: bool,
+    interactive: bool,
 ) -> None:
     """Collect saved Instagram posts (newest first, stops at known posts).
 
@@ -398,9 +458,16 @@ def instagram(
         confirmation, confirm the login in the Instagram app and retry.
     """
     code = _instagram(
-        ctx, db_path=db_path, username=username, session=session, limit=limit,
-        stop_after_known=_stop_after(force, stop_after_known), batch_size=batch_size,
-        refresh_dates=refresh_dates, refresh_limit=refresh_limit, interactive=interactive,
+        ctx,
+        db_path=db_path,
+        username=username,
+        session=session,
+        limit=limit,
+        stop_after_known=_stop_after(force, stop_after_known),
+        batch_size=batch_size,
+        refresh_dates=refresh_dates,
+        refresh_limit=refresh_limit,
+        interactive=interactive,
         transcribe=transcribe,
     )
     if code:
@@ -411,14 +478,18 @@ def instagram(
 @click.option("--db", "db_path", type=click.Path(dir_okay=False), help=_DB_OPTION_HELP)
 @click.option("--limit", type=click.IntRange(min=1), help="Maximum items per platform.")
 @click.option(
-    "--force", is_flag=True,
+    "--force",
+    is_flag=True,
     help="Telegram: re-read everything; Instagram: walk the whole feed.",
 )
 @_interactive_option
 @click.pass_context
 def all_platforms(
-    ctx: click.Context, db_path: str | None = None, limit: int | None = None,
-    force: bool = False, interactive: bool = True,
+    ctx: click.Context,
+    db_path: str | None = None,
+    limit: int | None = None,
+    force: bool = False,
+    interactive: bool = True,
 ) -> None:
     """Extract from every platform whose credentials are configured.
 
@@ -435,7 +506,11 @@ def all_platforms(
     codes: dict[str, int] = {}
     if os.getenv("TELEGRAM_API_ID") and os.getenv("TELEGRAM_API_HASH"):
         codes["telegram"] = _telegram(
-            ctx, db_path=db_path, session=None, limit=limit, full=force,
+            ctx,
+            db_path=db_path,
+            session=None,
+            limit=limit,
+            full=force,
             interactive=interactive,
         )
     else:
@@ -443,9 +518,16 @@ def all_platforms(
     console.print()
     if os.getenv("INSTAGRAM_USERNAME"):
         codes["instagram"] = _instagram(
-            ctx, db_path=db_path, username=None, session=None, limit=limit,
-            stop_after_known=_stop_after(force, 20), batch_size=25, refresh_dates=False,
-            refresh_limit=None, interactive=interactive,
+            ctx,
+            db_path=db_path,
+            username=None,
+            session=None,
+            limit=limit,
+            stop_after_known=_stop_after(force, 20),
+            batch_size=25,
+            refresh_dates=False,
+            refresh_limit=None,
+            interactive=interactive,
         )
     else:
         print_warning("Skipping Instagram (set INSTAGRAM_USERNAME and INSTAGRAM_PASSWORD).")

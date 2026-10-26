@@ -65,8 +65,15 @@ def item_filter_or_400(
         )
     try:
         return build_item_filter(
-            q=q, source=source, tags=tags, authors=authors, kinds=kinds, labels=labels,
-            date_from=date_from, date_to=date_to, has_transcript=has_transcript,
+            q=q,
+            source=source,
+            tags=tags,
+            authors=authors,
+            kinds=kinds,
+            labels=labels,
+            date_from=date_from,
+            date_to=date_to,
+            has_transcript=has_transcript,
         )
     except click.BadParameter as exc:
         raise HTTPException(

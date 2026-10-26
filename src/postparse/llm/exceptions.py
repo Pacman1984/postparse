@@ -1,7 +1,5 @@
 """Custom exceptions for LLM provider abstraction."""
 
-from typing import Any, Optional
-
 
 class LLMProviderError(Exception):
     """Base exception for all LLM provider errors.
@@ -19,9 +17,9 @@ class LLMProviderError(Exception):
     def __init__(
         self,
         message: str,
-        provider_name: Optional[str] = None,
-        model_name: Optional[str] = None,
-        original_error: Optional[Exception] = None,
+        provider_name: str | None = None,
+        model_name: str | None = None,
+        original_error: Exception | None = None,
     ) -> None:
         """Initialize the exception.
 
@@ -72,9 +70,9 @@ class LLMConnectionError(LLMProviderError):
     def __init__(
         self,
         message: str = "Failed to connect to LLM service",
-        provider_name: Optional[str] = None,
-        model_name: Optional[str] = None,
-        original_error: Optional[Exception] = None,
+        provider_name: str | None = None,
+        model_name: str | None = None,
+        original_error: Exception | None = None,
     ) -> None:
         """Initialize the connection error."""
         super().__init__(message, provider_name, model_name, original_error)
@@ -97,9 +95,9 @@ class LLMAuthenticationError(LLMProviderError):
     def __init__(
         self,
         message: str = "Authentication failed - check your API key",
-        provider_name: Optional[str] = None,
-        model_name: Optional[str] = None,
-        original_error: Optional[Exception] = None,
+        provider_name: str | None = None,
+        model_name: str | None = None,
+        original_error: Exception | None = None,
     ) -> None:
         """Initialize the authentication error."""
         super().__init__(message, provider_name, model_name, original_error)
@@ -118,10 +116,10 @@ class LLMRateLimitError(LLMProviderError):
     def __init__(
         self,
         message: str = "Rate limit exceeded",
-        provider_name: Optional[str] = None,
-        model_name: Optional[str] = None,
-        original_error: Optional[Exception] = None,
-        retry_after: Optional[int] = None,
+        provider_name: str | None = None,
+        model_name: str | None = None,
+        original_error: Exception | None = None,
+        retry_after: int | None = None,
     ) -> None:
         """Initialize the rate limit error.
 
@@ -160,9 +158,9 @@ class LLMModelNotFoundError(LLMProviderError):
     def __init__(
         self,
         message: str = "Model not found or not available",
-        provider_name: Optional[str] = None,
-        model_name: Optional[str] = None,
-        original_error: Optional[Exception] = None,
+        provider_name: str | None = None,
+        model_name: str | None = None,
+        original_error: Exception | None = None,
     ) -> None:
         """Initialize the model not found error."""
         super().__init__(message, provider_name, model_name, original_error)
@@ -184,9 +182,9 @@ class LLMInvalidRequestError(LLMProviderError):
     def __init__(
         self,
         message: str = "Invalid request parameters",
-        provider_name: Optional[str] = None,
-        model_name: Optional[str] = None,
-        original_error: Optional[Exception] = None,
+        provider_name: str | None = None,
+        model_name: str | None = None,
+        original_error: Exception | None = None,
     ) -> None:
         """Initialize the invalid request error."""
         super().__init__(message, provider_name, model_name, original_error)
@@ -208,10 +206,9 @@ class LLMResponseError(LLMProviderError):
     def __init__(
         self,
         message: str = "Failed to parse LLM response",
-        provider_name: Optional[str] = None,
-        model_name: Optional[str] = None,
-        original_error: Optional[Exception] = None,
+        provider_name: str | None = None,
+        model_name: str | None = None,
+        original_error: Exception | None = None,
     ) -> None:
         """Initialize the response error."""
         super().__init__(message, provider_name, model_name, original_error)
-

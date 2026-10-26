@@ -228,9 +228,7 @@ def _ensure_wal(conn: sqlite3.Connection) -> None:
         logger.debug("journal_mode changed from %s to %s", mode, new_mode)
 
 
-def migrate(
-    conn: sqlite3.Connection, migrations: list[Migration] | None = None
-) -> list[Migration]:
+def migrate(conn: sqlite3.Connection, migrations: list[Migration] | None = None) -> list[Migration]:
     """Apply all pending migrations, each in its own transaction.
 
     Args:

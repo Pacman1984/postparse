@@ -35,8 +35,13 @@ from tests.unit.media.helpers import FakeBackend, FakeFetcher, add_video_item, g
 
 def summary_model() -> FunctionModel:
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[TextPart(json.dumps(
-            {"summary": "Ein kurzes Rezept.", "key_points": ["Nudeln kochen"]}))])
+        return ModelResponse(
+            parts=[
+                TextPart(
+                    json.dumps({"summary": "Ein kurzes Rezept.", "key_points": ["Nudeln kochen"]})
+                )
+            ]
+        )
 
     return FunctionModel(respond)
 
@@ -48,13 +53,18 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     assert settings.db_path is not None
     db = Database.open(settings.db_path)
     state: dict[str, Any] = {
-        "db": db, "settings": settings, "backend": FakeBackend(), "fetcher": FakeFetcher(),
+        "db": db,
+        "settings": settings,
+        "backend": FakeBackend(),
+        "fetcher": FakeFetcher(),
         "runs": [],
     }
 
     def build_transcription(ctx, db_path, *, interactive=False):
         svc = TranscriptionService(
-            db, settings, options=TranscriptionOptions(),
+            db,
+            settings,
+            options=TranscriptionOptions(),
             backend_factory=lambda kind: state["backend"],
             fetcher_factory=lambda refetch: state["runs"].append(refetch) or state["fetcher"],
         )
@@ -62,14 +72,18 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
     def build_summaries(ctx, db_path):
         return SummarizationService(
-            db, summarizer_factory=lambda name: Summarizer(
-                summary_model(), "native", provider_name=name or "default", model_name="llm"),
+            db,
+            summarizer_factory=lambda name: Summarizer(
+                summary_model(), "native", provider_name=name or "default", model_name="llm"
+            ),
         )
 
     monkeypatch.setattr("postparse.cli.transcribe._build_service", build_transcription)
     monkeypatch.setattr("postparse.cli.summarize._build_service", build_summaries)
-    monkeypatch.setattr("postparse.cli.extract._build_transcription_service",
-                        lambda ctx, db_path: build_transcription(ctx, db_path))
+    monkeypatch.setattr(
+        "postparse.cli.extract._build_transcription_service",
+        lambda ctx, db_path: build_transcription(ctx, db_path),
+    )
     monkeypatch.setattr("postparse.cli.extract._build_summarization_service", build_summaries)
     return state
 
@@ -96,10 +110,13 @@ def test_transcribe_run_no_refetch_and_item(env) -> None:
     assert [f[0] for f in env["fetcher"].fetched] == [mid]
 
 
-@pytest.mark.parametrize(("error", "code"), [
-    (InstagramRateLimited("429"), 3),
-    (InstagramAuthRequired("checkpoint"), 2),
-])
+@pytest.mark.parametrize(
+    ("error", "code"),
+    [
+        (InstagramRateLimited("429"), 3),
+        (InstagramAuthRequired("checkpoint"), 2),
+    ],
+)
 def test_transcribe_run_exit_codes(env, error: Exception, code: int) -> None:
     add_video_item(env["db"], "X")
     env["fetcher"].errors["X"] = error
@@ -150,23 +167,33 @@ def test_summarize_run(env) -> None:
 
 def test_extract_instagram_transcribe(env, monkeypatch: pytest.MonkeyPatch) -> None:
     db: Database = env["db"]
-    feed = Feed([
-        ig_post(ig_node("VID1", "GraphVideo", video_url="https://cdn.test/vid1.mp4")),
-        ig_post(ig_node("IMG1")),
-        ig_post(ig_node("VID2", "GraphVideo")),  # no video_url in the feed node
-    ])
+    feed = Feed(
+        [
+            ig_post(ig_node("VID1", "GraphVideo", video_url="https://cdn.test/vid1.mp4")),
+            ig_post(ig_node("IMG1")),
+            ig_post(ig_node("VID2", "GraphVideo")),  # no video_url in the feed node
+        ]
+    )
     old_item, (old_mid,) = add_video_item(db, "OLD")  # backlog: must not be touched
 
     def build(ctx, db_path):
         return ExtractionService(
-            db, env["settings"],
-            instagram_overrides={"loader_factory": loader_factory(FakeLoader()),
-                                 "saved_posts": feed, "sleep": SleepRecorder()},
+            db,
+            env["settings"],
+            instagram_overrides={
+                "loader_factory": loader_factory(FakeLoader()),
+                "saved_posts": feed,
+                "sleep": SleepRecorder(),
+            },
         )
 
     monkeypatch.setattr("postparse.cli.extract._build_service", build)
-    result = invoke("extract", "instagram", "--transcribe",
-                    env_vars={"INSTAGRAM_USERNAME": "me", "INSTAGRAM_PASSWORD": "pw"})
+    result = invoke(
+        "extract",
+        "instagram",
+        "--transcribe",
+        env_vars={"INSTAGRAM_USERNAME": "me", "INSTAGRAM_PASSWORD": "pw"},
+    )
     assert result.exit_code == 0, result.output
     assert "Transcription of new videos" in result.output
     assert "1 summaries stored" in result.output
@@ -181,12 +208,21 @@ def test_extract_instagram_transcribe(env, monkeypatch: pytest.MonkeyPatch) -> N
 
 def test_extract_instagram_without_transcribe_flag(env, monkeypatch) -> None:
     feed = Feed([ig_post(ig_node("VID1", "GraphVideo", video_url="https://cdn.test/v.mp4"))])
-    monkeypatch.setattr("postparse.cli.extract._build_service", lambda ctx, db_path:
-                        ExtractionService(env["db"], env["settings"], instagram_overrides={
-                            "loader_factory": loader_factory(FakeLoader()),
-                            "saved_posts": feed, "sleep": SleepRecorder()}))
-    result = invoke("extract", "instagram",
-                    env_vars={"INSTAGRAM_USERNAME": "me", "INSTAGRAM_PASSWORD": "pw"})
+    monkeypatch.setattr(
+        "postparse.cli.extract._build_service",
+        lambda ctx, db_path: ExtractionService(
+            env["db"],
+            env["settings"],
+            instagram_overrides={
+                "loader_factory": loader_factory(FakeLoader()),
+                "saved_posts": feed,
+                "sleep": SleepRecorder(),
+            },
+        ),
+    )
+    result = invoke(
+        "extract", "instagram", env_vars={"INSTAGRAM_USERNAME": "me", "INSTAGRAM_PASSWORD": "pw"}
+    )
     assert result.exit_code == 0, result.output
     assert env["runs"] == [] and "Transcription" not in result.output
 

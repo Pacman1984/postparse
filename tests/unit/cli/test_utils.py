@@ -7,7 +7,6 @@ console output, config loading, schema v2 database access and async operations.
 
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -15,13 +14,12 @@ from rich.console import Console
 
 from postparse.cli.utils import (
     config_path_from_ctx,
-    emit_json,
-    legacy_db_key_warning,
-    open_database,
-    resolve_db_path,
     create_progress,
+    emit_json,
     get_console,
+    legacy_db_key_warning,
     load_config,
+    open_database,
     parse_date,
     print_error,
     print_info,
@@ -29,6 +27,7 @@ from postparse.cli.utils import (
     print_success,
     print_table,
     print_warning,
+    resolve_db_path,
     run_async,
     truncate_text,
     validate_credentials,
@@ -175,9 +174,13 @@ port = 8000
         with pytest.raises(Exception) as exc_info:
             load_config("/nonexistent/path/config.toml")
 
-        assert "Config file not found" in str(exc_info.value) or "Failed to load config" in str(exc_info.value)
+        assert "Config file not found" in str(exc_info.value) or "Failed to load config" in str(
+            exc_info.value
+        )
 
-    def test_load_config_finds_default_location(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_load_config_finds_default_location(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Test that load_config finds config in default locations."""
         # Create config in default location
         config_dir = tmp_path / "config"
@@ -286,7 +289,7 @@ class TestUtilityFunctions:
     def test_validate_credentials_all_missing(self) -> None:
         """Test credential validation when all are missing."""
         required = ["api_id", "api_hash"]
-        provided: Dict[str, str] = {}
+        provided: dict[str, str] = {}
 
         missing = validate_credentials(required, provided)
 
@@ -305,6 +308,7 @@ class TestAsyncOperations:
         Tests the actual async execution logic without mocking the core
         functionality, only testing at the boundary (event loop).
         """
+
         async def simple_coro() -> str:
             return "test_result"
 
@@ -314,6 +318,7 @@ class TestAsyncOperations:
 
     def test_run_async_with_return_value(self) -> None:
         """Test running async function that returns a value."""
+
         async def coro_with_value() -> int:
             return 42
 
@@ -324,6 +329,7 @@ class TestAsyncOperations:
 
     def test_run_async_with_exception(self) -> None:
         """Test that run_async propagates exceptions correctly."""
+
         async def failing_coro() -> None:
             raise ValueError("Test error")
 
@@ -340,7 +346,6 @@ class TestAsyncOperations:
         assert progress is not None
         # Progress should have console set
         assert hasattr(progress, "console")
-
 
 
 class TestDatabaseHelpers:

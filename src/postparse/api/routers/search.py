@@ -118,8 +118,10 @@ def _search(
         total_count=query.count(item_filter),
         filters_applied=filters_applied,
         pagination=PaginationMetadata(
-            cursor=cursor, next_cursor=page.next_cursor,
-            has_more=page.next_cursor is not None, limit=limit,
+            cursor=cursor,
+            next_cursor=page.next_cursor,
+            has_more=page.next_cursor is not None,
+            limit=limit,
         ),
     ).model_dump(mode="json")
     cache.set(key, payload, ttl=cache.search_ttl)
@@ -135,17 +137,19 @@ def _posts(views: list[ItemView], query: QueryService) -> list[PostSearchResult]
     results = []
     for v in views:
         ig, _, media = details[v.id]
-        results.append(PostSearchResult(
-            shortcode=ig.shortcode if ig else v.external_id,
-            owner_username=v.author or "",
-            caption=v.text[:200] if v.text else None,
-            is_video=v.kind == "video" or any(m.media_type == "video" for m in media),
-            likes=max(0, (ig.likes if ig else 0) or 0),
-            hashtags=_hashtags(v),
-            created_at=v.created_at,
-            item_id=v.id,
-            snippet=v.snippet,
-        ))
+        results.append(
+            PostSearchResult(
+                shortcode=ig.shortcode if ig else v.external_id,
+                owner_username=v.author or "",
+                caption=v.text[:200] if v.text else None,
+                is_video=v.kind == "video" or any(m.media_type == "video" for m in media),
+                likes=max(0, (ig.likes if ig else 0) or 0),
+                hashtags=_hashtags(v),
+                created_at=v.created_at,
+                item_id=v.id,
+                snippet=v.snippet,
+            )
+        )
     return results
 
 
@@ -155,17 +159,19 @@ def _messages(views: list[ItemView], query: QueryService) -> list[MessageSearchR
     for v in views:
         _, tg, _ = details[v.id]
         tail = v.external_id.rpartition(":")[2]
-        results.append(MessageSearchResult(
-            message_id=tg.message_id if tg else (int(tail) if tail.isdigit() else 0),
-            chat_id=tg.chat_id if tg else None,
-            channel_username=v.author,
-            content=v.text[:200] if v.text else None,
-            content_type=v.kind,
-            hashtags=_hashtags(v),
-            created_at=v.created_at,
-            item_id=v.id,
-            snippet=v.snippet,
-        ))
+        results.append(
+            MessageSearchResult(
+                message_id=tg.message_id if tg else (int(tail) if tail.isdigit() else 0),
+                chat_id=tg.chat_id if tg else None,
+                channel_username=v.author,
+                content=v.text[:200] if v.text else None,
+                content_type=v.kind,
+                hashtags=_hashtags(v),
+                created_at=v.created_at,
+                item_id=v.id,
+                snippet=v.snippet,
+            )
+        )
     return results
 
 
@@ -198,18 +204,34 @@ def search_posts(
     """Search Instagram posts."""
     all_tags = [*hashtags, *tags]
     item_filter = _build_filter(
-        "instagram", tags=all_tags, authors=[owner_username] if owner_username else [],
-        content_type=content_type, start_date=start_date, end_date=end_date, q=q,
+        "instagram",
+        tags=all_tags,
+        authors=[owner_username] if owner_username else [],
+        content_type=content_type,
+        start_date=start_date,
+        end_date=end_date,
+        q=q,
     )
     applied = _filters_applied(
         hashtags=all_tags,
-        date_range=({"start_date": start_date, "end_date": end_date}
-                    if start_date or end_date else None),
+        date_range=(
+            {"start_date": start_date, "end_date": end_date} if start_date or end_date else None
+        ),
         content_type=content_type.value if content_type else None,
-        owner_username=owner_username, q=q,
+        owner_username=owner_username,
+        q=q,
     )
-    return _search("search:posts", response, cache, query, item_filter, cursor=cursor,
-                   limit=limit, filters_applied=applied, convert=_posts)
+    return _search(
+        "search:posts",
+        response,
+        cache,
+        query,
+        item_filter,
+        cursor=cursor,
+        limit=limit,
+        filters_applied=applied,
+        convert=_posts,
+    )
 
 
 @router.get(
@@ -240,18 +262,34 @@ def search_messages(
     all_tags = [*hashtags, *tags]
     author = channel_username.lstrip("@") if channel_username else None
     item_filter = _build_filter(
-        "telegram", tags=all_tags, authors=[author] if author else [],
-        content_type=content_type, start_date=start_date, end_date=end_date, q=q,
+        "telegram",
+        tags=all_tags,
+        authors=[author] if author else [],
+        content_type=content_type,
+        start_date=start_date,
+        end_date=end_date,
+        q=q,
     )
     applied = _filters_applied(
         hashtags=all_tags,
-        date_range=({"start_date": start_date, "end_date": end_date}
-                    if start_date or end_date else None),
+        date_range=(
+            {"start_date": start_date, "end_date": end_date} if start_date or end_date else None
+        ),
         content_type=content_type.value if content_type else None,
-        channel_username=author, q=q,
+        channel_username=author,
+        q=q,
     )
-    return _search("search:messages", response, cache, query, item_filter, cursor=cursor,
-                   limit=limit, filters_applied=applied, convert=_messages)
+    return _search(
+        "search:messages",
+        response,
+        cache,
+        query,
+        item_filter,
+        cursor=cursor,
+        limit=limit,
+        filters_applied=applied,
+        convert=_messages,
+    )
 
 
 @router.get(
@@ -274,6 +312,13 @@ def list_hashtags(
     for row in rows:
         ig, tg = int(row["instagram"]), int(row["telegram"])
         source = "both" if ig and tg else ("instagram" if ig else "telegram")
-        hashtags.append({"tag": row["tag"], "count": row["count"], "source": source,
-                         "instagram": ig, "telegram": tg})
+        hashtags.append(
+            {
+                "tag": row["tag"],
+                "count": row["count"],
+                "source": source,
+                "instagram": ig,
+                "telegram": tg,
+            }
+        )
     return {"hashtags": hashtags}

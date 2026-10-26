@@ -132,8 +132,13 @@ class TestSearch:
     def test_hashtags(self, client: TestClient) -> None:
         data = client.get("/api/v1/search/hashtags").json()["hashtags"]
         pasta = next(h for h in data if h["tag"] == "pasta")
-        assert pasta == {"tag": "pasta", "count": 2, "source": "both", "instagram": 1,
-                         "telegram": 1}
+        assert pasta == {
+            "tag": "pasta",
+            "count": 2,
+            "source": "both",
+            "instagram": 1,
+            "telegram": 1,
+        }
         python = next(h for h in data if h["tag"] == "python")
         assert python["source"] == "telegram"
         limited = client.get("/api/v1/search/hashtags", params={"limit": 2}).json()

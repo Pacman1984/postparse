@@ -32,8 +32,9 @@ def test_probe_rejects_non_media(tmp_path: Path) -> None:
         probe(junk)
 
 
-@pytest.mark.parametrize(("fmt", "codec", "suffix"), [("m4a", "aac", ".m4a"),
-                                                      ("wav16k", "pcm_s16le", ".wav")])
+@pytest.mark.parametrize(
+    ("fmt", "codec", "suffix"), [("m4a", "aac", ".m4a"), ("wav16k", "pcm_s16le", ".wav")]
+)
 def test_extract_audio(tmp_path: Path, fmt: str, codec: str, suffix: str) -> None:
     src = make_media_file(tmp_path / "av.mp4", seconds=1.0)
     out = extract_audio(src, tmp_path / f"out{suffix}", fmt)  # type: ignore[arg-type]

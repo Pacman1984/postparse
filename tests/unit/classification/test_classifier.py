@@ -107,7 +107,8 @@ def test_invalid_output_is_retried() -> None:
 def test_retries_are_limited_to_two() -> None:
     calls: list[AgentInfo] = []
     clf = TaxonomyClassifier(
-        SINGLE, json_model({"reasoning": "", "label": "pasta", "confidence": 0.5}, calls=calls),
+        SINGLE,
+        json_model({"reasoning": "", "label": "pasta", "confidence": 0.5}, calls=calls),
         "native",
     )
     with pytest.raises(ClassificationError):
@@ -191,9 +192,9 @@ def test_from_provider_uses_provider_defaults(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_real_model_requests_are_blocked_in_tests() -> None:
-    local = ProviderConfig(name="llama_cpp", model="x", api_base="http://127.0.0.1:9/v1",
-                           discover_model=False)
+    local = ProviderConfig(
+        name="llama_cpp", model="x", api_base="http://127.0.0.1:9/v1", discover_model=False
+    )
     clf = TaxonomyClassifier.from_provider(SINGLE, local)
     with pytest.raises(ClassificationError, match="ALLOW_MODEL_REQUESTS"):
         clf.classify("pasta")
-

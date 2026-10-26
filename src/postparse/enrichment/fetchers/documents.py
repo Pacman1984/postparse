@@ -47,8 +47,15 @@ DOCUMENT_TYPES: dict[str, str] = {
 DOCUMENT_EXTENSIONS: frozenset[str] = frozenset(DOCUMENT_TYPES.values())
 #: Text starting like this is the raw file, not converted content.
 _RAW_MARKERS = ("%PDF", "PK\x03\x04", "\xd0\xcf\x11\xe0")
-GENERIC_TYPES = frozenset({"", "application/octet-stream", "binary/octet-stream",
-                            "application/download", "application/force-download"})
+GENERIC_TYPES = frozenset(
+    {
+        "",
+        "application/octet-stream",
+        "binary/octet-stream",
+        "application/download",
+        "application/force-download",
+    }
+)
 
 
 def url_extension(url: str) -> str:
@@ -129,15 +136,17 @@ async def convert_document(
     text = text.strip()
     if text.startswith(_RAW_MARKERS):
         # markitdown falls back to its plain-text converter for unparsable files.
-        result = FetchResult.skip("document could not be parsed", http_status=http_status,
-                                  **metadata)
+        result = FetchResult.skip(
+            "document could not be parsed", http_status=http_status, **metadata
+        )
     elif not text:
         result = FetchResult.skip("document contains no text", http_status=http_status, **metadata)
     else:
         if not title:
             title = PurePosixPath(urlsplit(url).path).name or None
-        result = FetchResult("ok", http_status=http_status, title=title, text=text,
-                             metadata=metadata)
+        result = FetchResult(
+            "ok", http_status=http_status, title=title, text=text, metadata=metadata
+        )
     result.fetcher = DocumentFetcher.name
     return result
 

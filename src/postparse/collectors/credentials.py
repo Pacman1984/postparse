@@ -67,7 +67,8 @@ def telegram_credentials(env: Mapping[str, str] | None = None) -> TelegramCreden
     api_id = _get(env, "TELEGRAM_API_ID")
     api_hash = _get(env, "TELEGRAM_API_HASH")
     missing = tuple(
-        name for name, value in (("TELEGRAM_API_ID", api_id), ("TELEGRAM_API_HASH", api_hash))
+        name
+        for name, value in (("TELEGRAM_API_ID", api_id), ("TELEGRAM_API_HASH", api_hash))
         if value is None
     )
     if missing:

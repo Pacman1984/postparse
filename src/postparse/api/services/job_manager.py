@@ -65,8 +65,7 @@ def _sanitize_job_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
             continue
         if isinstance(value, list):
             sanitized[key] = [
-                _sanitize_job_metadata(item) if isinstance(item, dict) else item
-                for item in value
+                _sanitize_job_metadata(item) if isinstance(item, dict) else item for item in value
             ]
             continue
         sanitized[key] = value
@@ -394,9 +393,7 @@ class JobManager:
 
         with self._lock:
             jobs_to_remove = [
-                job_id
-                for job_id, job in self._jobs.items()
-                if job.start_time < cutoff_time
+                job_id for job_id, job in self._jobs.items() if job.start_time < cutoff_time
             ]
 
             for job_id in jobs_to_remove:

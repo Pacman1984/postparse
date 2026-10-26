@@ -202,7 +202,10 @@ class FasterWhisperBackend:
         self.load_seconds = time.perf_counter() - started
         logger.info(
             "Loaded faster-whisper model %s on %s (%s) in %.1fs",
-            self.model, device, compute, self.load_seconds,
+            self.model,
+            device,
+            compute,
+            self.load_seconds,
         )
         with _models_lock:
             return _models.setdefault(key, (whisper, device, compute))[0]
@@ -232,9 +235,7 @@ class FasterWhisperBackend:
             try:
                 whisper = self._create(device, compute)
             except Exception as exc2:
-                raise BackendUnavailable(
-                    f"Could not load faster-whisper model: {exc2}"
-                ) from exc2
+                raise BackendUnavailable(f"Could not load faster-whisper model: {exc2}") from exc2
         self._whisper = whisper
         self.active_device, self.active_compute_type = device, compute
         return whisper

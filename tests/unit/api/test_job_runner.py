@@ -82,7 +82,10 @@ async def test_report_stop_reason_fails_job_and_keeps_counts() -> None:
     await runner.wait(job_id, timeout=5)
     job = jobs.get_job(job_id)
     assert (job.status, job.error_code, job.messages_processed) == (
-        ExtractionStatus.FAILED, "suspected_block", 4)
+        ExtractionStatus.FAILED,
+        "suspected_block",
+        4,
+    )
     assert job.errors == ["blocked"]
     assert cache.invalidations == 1  # partial runs may have written data
 

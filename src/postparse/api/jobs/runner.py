@@ -143,9 +143,7 @@ class JobRunner:
         cache: Response cache to invalidate after jobs (``None``: no cache).
     """
 
-    def __init__(
-        self, jobs: JobManager, ws: WebSocketManager, cache: Any = None
-    ) -> None:
+    def __init__(self, jobs: JobManager, ws: WebSocketManager, cache: Any = None) -> None:
         self.jobs = jobs
         self.ws = ws
         self.cache = cache
@@ -246,9 +244,7 @@ class JobRunner:
         progress.post = post  # type: ignore[attr-defined]
         return progress
 
-    async def _send_events(
-        self, job_id: str, queue: asyncio.Queue[dict[str, Any] | None]
-    ) -> None:
+    async def _send_events(self, job_id: str, queue: asyncio.Queue[dict[str, Any] | None]) -> None:
         while True:
             payload = await queue.get()
             if payload is None:
@@ -281,7 +277,10 @@ class JobRunner:
             if reason in FAILURE_STOP_REASONS:
                 message = (data or {}).get("error") or str(reason).replace("_", " ")
                 self.jobs.mark_job_failed(
-                    job_id, str(message), error_code=str(reason), result=data,
+                    job_id,
+                    str(message),
+                    error_code=str(reason),
+                    result=data,
                     messages_processed=processed,
                 )
             else:

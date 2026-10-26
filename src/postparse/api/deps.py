@@ -104,23 +104,43 @@ class LLMHealthCache:
         from postparse.llm.config import LLMConfig
 
         if self.config is None:
-            return {"status": "not_configured", "provider": None, "model": None,
-                    "latency_ms": None, "error": "No configuration file"}
+            return {
+                "status": "not_configured",
+                "provider": None,
+                "model": None,
+                "latency_ms": None,
+                "error": "No configuration file",
+            }
         try:
             provider = select_provider(LLMConfig.from_config_manager(self.config), None)
         except (ValueError, TypeError) as exc:
-            return {"status": "not_configured", "provider": None, "model": None,
-                    "latency_ms": None, "error": str(exc)}
+            return {
+                "status": "not_configured",
+                "provider": None,
+                "model": None,
+                "latency_ms": None,
+                "error": str(exc),
+            }
         checker = self._checker
         if checker is None:
             from postparse.llm.health import check_provider as checker
         try:
             result = checker(provider, chat=True, timeout=self.timeout)
         except Exception as exc:  # noqa: BLE001 - health checks never raise
-            return {"status": "error", "provider": provider.name, "model": provider.model,
-                    "latency_ms": None, "error": str(exc)}
-        return {"status": result.status, "provider": result.provider, "model": result.model,
-                "latency_ms": result.latency_ms, "error": result.error}
+            return {
+                "status": "error",
+                "provider": provider.name,
+                "model": provider.model,
+                "latency_ms": None,
+                "error": str(exc),
+            }
+        return {
+            "status": result.status,
+            "provider": result.provider,
+            "model": result.model,
+            "latency_ms": result.latency_ms,
+            "error": result.error,
+        }
 
 
 @dataclass

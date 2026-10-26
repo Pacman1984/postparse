@@ -52,8 +52,14 @@ def item_schema(view: ItemView) -> ItemSchema:
 
 def _transcript(t: Transcript) -> TranscriptSchema:
     return TranscriptSchema(
-        id=t.id, backend=t.backend, model=t.model, language=t.language, text=t.text,
-        segments=t.segments, duration_s=t.duration_s, created_at=t.created_at,
+        id=t.id,
+        backend=t.backend,
+        model=t.model,
+        language=t.language,
+        text=t.text,
+        segments=t.segments,
+        duration_s=t.duration_s,
+        created_at=t.created_at,
     )
 
 
@@ -61,8 +67,12 @@ def summary_response(summary: Summary) -> SummaryResponse:
     """Split a stored summary into summary text and key points."""
     text, points = parse_summary_text(summary.text)
     return SummaryResponse(
-        item_id=summary.item_id, summary=text, key_points=points,
-        provider=summary.provider, model=summary.model, created_at=summary.created_at,
+        item_id=summary.item_id,
+        summary=text,
+        key_points=points,
+        provider=summary.provider,
+        model=summary.model,
+        created_at=summary.created_at,
     )
 
 
@@ -83,11 +93,17 @@ def item_detail(detail: ItemDetail) -> ItemDetailResponse:
         detail=extra,
         media=[
             MediaSchema(
-                id=v.media.id, position=v.media.position, media_type=v.media.media_type,
-                local_path=v.media.local_path, remote_url=v.media.remote_url,
-                mime=v.media.mime, duration_s=v.media.duration_s,
-                transcript_status=v.media.transcript_status, attempts=v.media.attempts,
-                last_error=v.media.last_error, has_transcript=v.transcript is not None,
+                id=v.media.id,
+                position=v.media.position,
+                media_type=v.media.media_type,
+                local_path=v.media.local_path,
+                remote_url=v.media.remote_url,
+                mime=v.media.mime,
+                duration_s=v.media.duration_s,
+                transcript_status=v.media.transcript_status,
+                attempts=v.media.attempts,
+                last_error=v.media.last_error,
+                has_transcript=v.transcript is not None,
             )
             for v in detail.media
         ],
@@ -96,7 +112,9 @@ def item_detail(detail: ItemDetail) -> ItemDetailResponse:
         summary=summary_response(detail.summary) if detail.summary else None,
         links=[
             LinkSchema(
-                id=lv.link.id, url=lv.link.url, domain=lv.link.domain,
+                id=lv.link.id,
+                url=lv.link.url,
+                domain=lv.link.domain,
                 fetcher=lv.fetch.fetcher if lv.fetch else None,
                 status=lv.fetch.status if lv.fetch else None,
                 title=lv.fetch.title if lv.fetch else None,
@@ -107,9 +125,15 @@ def item_detail(detail: ItemDetail) -> ItemDetailResponse:
         ],
         classifications=[
             ClassificationSchema(
-                taxonomy=c.taxonomy, status=c.status, labels=list(c.labels),
-                confidence=c.confidence, reasoning=c.reasoning, provider=c.provider,
-                model=c.model, run_id=c.run_id, result_id=c.result_id,
+                taxonomy=c.taxonomy,
+                status=c.status,
+                labels=list(c.labels),
+                confidence=c.confidence,
+                reasoning=c.reasoning,
+                provider=c.provider,
+                model=c.model,
+                run_id=c.run_id,
+                result_id=c.result_id,
                 created_at=c.created_at,
             )
             for c in detail.classifications
@@ -124,7 +148,9 @@ def transcript_response(detail: ItemDetail) -> TranscriptResponse:
         text=detail.transcript_text,
         media=[
             TranscriptMediaSchema(
-                media_id=v.media.id, position=v.media.position, media_type=v.media.media_type,
+                media_id=v.media.id,
+                position=v.media.position,
+                media_type=v.media.media_type,
                 transcript_status=v.media.transcript_status,
                 transcript=_transcript(v.transcript) if v.transcript else None,
             )

@@ -43,34 +43,28 @@ class HealthResponse(BaseModel):
         }
     """
 
-    model_config = ConfigDict(json_schema_extra={
-        "examples": [
-            {
-                "status": "ok",
-                "version": "0.1.0",
-                "timestamp": "2025-11-19T10:30:00Z",
-                "details": {"database": "connected", "llm_provider": "available"}
-            }
-        ]
-    })
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "status": "ok",
+                    "version": "0.1.0",
+                    "timestamp": "2025-11-19T10:30:00Z",
+                    "details": {"database": "connected", "llm_provider": "available"},
+                }
+            ]
+        }
+    )
 
     status: str = Field(
-        ...,
-        description="Service health status",
-        examples=["ok", "degraded", "error"]
+        ..., description="Service health status", examples=["ok", "degraded", "error"]
     )
-    version: str = Field(
-        ...,
-        description="Application version",
-        examples=["0.1.0"]
-    )
+    version: str = Field(..., description="Application version", examples=["0.1.0"])
     timestamp: datetime = Field(
-        default_factory=lambda: datetime.now(UTC),
-        description="Current server timestamp"
+        default_factory=lambda: datetime.now(UTC), description="Current server timestamp"
     )
     details: dict[str, Any] | None = Field(
-        default=None,
-        description="Additional health check details"
+        default=None, description="Additional health check details"
     )
 
 
@@ -93,35 +87,34 @@ class ErrorResponse(BaseModel):
         }
     """
 
-    model_config = ConfigDict(json_schema_extra={
-        "examples": [
-            {
-                "error_code": "INVALID_REQUEST",
-                "message": "Text field is required",
-                "details": {"field": "text", "issue": "missing"}
-            },
-            {
-                "error_code": "LLM_PROVIDER_ERROR",
-                "message": "Failed to connect to LLM provider",
-                "details": {"provider": "ollama", "error": "Connection timeout"}
-            }
-        ]
-    })
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "error_code": "INVALID_REQUEST",
+                    "message": "Text field is required",
+                    "details": {"field": "text", "issue": "missing"},
+                },
+                {
+                    "error_code": "LLM_PROVIDER_ERROR",
+                    "message": "Failed to connect to LLM provider",
+                    "details": {"provider": "ollama", "error": "Connection timeout"},
+                },
+            ]
+        }
+    )
 
     error_code: str = Field(
         ...,
         description="Machine-readable error code",
-        examples=["INVALID_REQUEST", "NOT_FOUND", "INTERNAL_ERROR"]
+        examples=["INVALID_REQUEST", "NOT_FOUND", "INTERNAL_ERROR"],
     )
     message: str = Field(
         ...,
         description="Human-readable error message",
-        examples=["Text field is required", "Resource not found"]
+        examples=["Text field is required", "Resource not found"],
     )
-    details: dict[str, Any] | None = Field(
-        default=None,
-        description="Additional error context"
-    )
+    details: dict[str, Any] | None = Field(default=None, description="Additional error context")
 
 
 class SuccessResponse(BaseModel):
@@ -141,24 +134,18 @@ class SuccessResponse(BaseModel):
         }
     """
 
-    model_config = ConfigDict(json_schema_extra={
-        "examples": [
-            {
-                "message": "Operation completed successfully",
-                "data": {"items_processed": 42}
-            }
-        ]
-    })
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {"message": "Operation completed successfully", "data": {"items_processed": 42}}
+            ]
+        }
+    )
 
     message: str = Field(
-        ...,
-        description="Success message",
-        examples=["Operation completed successfully"]
+        ..., description="Success message", examples=["Operation completed successfully"]
     )
-    data: dict[str, Any] | None = Field(
-        default=None,
-        description="Additional response data"
-    )
+    data: dict[str, Any] | None = Field(default=None, description="Additional response data")
 
 
 class PaginationParams(BaseModel):
@@ -180,27 +167,18 @@ class PaginationParams(BaseModel):
         ?limit=20&cursor=eyJpZCI6MTIzfQ==
     """
 
-    model_config = ConfigDict(json_schema_extra={
-        "examples": [
-            {"limit": 20, "offset": 0},
-            {"limit": 50, "cursor": "eyJpZCI6MTIzfQ=="}
-        ]
-    })
-
-    limit: int = Field(
-        default=50,
-        ge=1,
-        le=100,
-        description="Maximum number of items to return"
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [{"limit": 20, "offset": 0}, {"limit": 50, "cursor": "eyJpZCI6MTIzfQ=="}]
+        }
     )
+
+    limit: int = Field(default=50, ge=1, le=100, description="Maximum number of items to return")
     offset: int | None = Field(
-        default=0,
-        ge=0,
-        description="Number of items to skip (offset-based pagination)"
+        default=0, ge=0, description="Number of items to skip (offset-based pagination)"
     )
     cursor: str | None = Field(
-        default=None,
-        description="Cursor for next page (cursor-based pagination)"
+        default=None, description="Cursor for next page (cursor-based pagination)"
     )
 
 
@@ -232,45 +210,29 @@ class PaginatedResponse(BaseModel, Generic[T]):  # noqa: UP046
         }
     """
 
-    model_config = ConfigDict(from_attributes=True, json_schema_extra={
-        "examples": [
-            {
-                "items": [],
-                "total": 150,
-                "limit": 50,
-                "offset": 0,
-                "next_cursor": None,
-                "has_more": True
-            }
-        ]
-    })
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
+            "examples": [
+                {
+                    "items": [],
+                    "total": 150,
+                    "limit": 50,
+                    "offset": 0,
+                    "next_cursor": None,
+                    "has_more": True,
+                }
+            ]
+        },
+    )
 
-    items: list[T] = Field(
-        ...,
-        description="List of items for current page"
-    )
-    total: int = Field(
-        ...,
-        ge=0,
-        description="Total number of items across all pages"
-    )
-    limit: int = Field(
-        ...,
-        ge=1,
-        description="Maximum items per page"
-    )
+    items: list[T] = Field(..., description="List of items for current page")
+    total: int = Field(..., ge=0, description="Total number of items across all pages")
+    limit: int = Field(..., ge=1, description="Maximum items per page")
     offset: int | None = Field(
-        default=None,
-        ge=0,
-        description="Current offset (offset-based pagination)"
+        default=None, ge=0, description="Current offset (offset-based pagination)"
     )
     next_cursor: str | None = Field(
-        default=None,
-        description="Cursor for next page (cursor-based pagination)"
+        default=None, description="Cursor for next page (cursor-based pagination)"
     )
-    has_more: bool = Field(
-        ...,
-        description="Whether more items are available"
-    )
-
-
+    has_more: bool = Field(..., description="Whether more items are available")

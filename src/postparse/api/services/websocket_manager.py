@@ -58,10 +58,7 @@ class WebSocketManager:
             self._active_connections[job_id].append(websocket)
 
         connection_count = len(self._active_connections[job_id])
-        logger.info(
-            f"WebSocket connected for job {job_id} "
-            f"(total connections: {connection_count})"
-        )
+        logger.info(f"WebSocket connected for job {job_id} (total connections: {connection_count})")
 
     async def disconnect(self, job_id: str, websocket: WebSocket) -> None:
         """
@@ -135,9 +132,7 @@ class WebSocketManager:
             try:
                 await websocket.send_json(progress_data)
             except Exception as e:
-                logger.warning(
-                    f"Failed to send to WebSocket for job {job_id}: {e}"
-                )
+                logger.warning(f"Failed to send to WebSocket for job {job_id}: {e}")
                 disconnected.append(websocket)
 
         # Remove disconnected clients

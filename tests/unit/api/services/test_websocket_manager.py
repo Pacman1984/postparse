@@ -6,15 +6,13 @@ WebSocket connections and progress broadcasting for extraction jobs.
 """
 
 import asyncio
-from datetime import datetime
-from typing import List
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
-from postparse.api.services.websocket_manager import WebSocketManager
-from postparse.api.services.job_manager import Job
 from postparse.api.schemas.telegram import ExtractionStatus
+from postparse.api.services.job_manager import Job
+from postparse.api.services.websocket_manager import WebSocketManager
 
 
 @pytest.fixture
@@ -50,12 +48,14 @@ def mock_websocket_factory():
             ws1 = mock_websocket_factory()
             ws2 = mock_websocket_factory()
     """
+
     def _create_mock_websocket():
         ws = AsyncMock()
         ws.accept = AsyncMock()
         ws.send_json = AsyncMock()
         ws.close = AsyncMock()
         return ws
+
     return _create_mock_websocket
 
 
@@ -110,9 +110,7 @@ class TestWebSocketManagerConnect:
         mock_websocket.accept.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_connect_stores_websocket_for_job(
-        self, mock_websocket: AsyncMock
-    ) -> None:
+    async def test_connect_stores_websocket_for_job(self, mock_websocket: AsyncMock) -> None:
         """
         Test connect stores the WebSocket for the job ID.
 
@@ -126,9 +124,7 @@ class TestWebSocketManagerConnect:
         assert mock_websocket in manager._active_connections["job-123"]
 
     @pytest.mark.asyncio
-    async def test_connect_creates_list_for_new_job(
-        self, mock_websocket: AsyncMock
-    ) -> None:
+    async def test_connect_creates_list_for_new_job(self, mock_websocket: AsyncMock) -> None:
         """
         Test connect creates connection list for new job ID.
 
@@ -162,9 +158,7 @@ class TestWebSocketManagerConnect:
         assert len(manager._active_connections["job-123"]) == 3
 
     @pytest.mark.asyncio
-    async def test_connect_multiple_jobs_are_independent(
-        self, mock_websocket_factory
-    ) -> None:
+    async def test_connect_multiple_jobs_are_independent(self, mock_websocket_factory) -> None:
         """
         Test connections for different jobs are stored separately.
 
@@ -187,9 +181,7 @@ class TestWebSocketManagerDisconnect:
     """Tests for WebSocketManager.disconnect()."""
 
     @pytest.mark.asyncio
-    async def test_disconnect_removes_websocket(
-        self, mock_websocket: AsyncMock
-    ) -> None:
+    async def test_disconnect_removes_websocket(self, mock_websocket: AsyncMock) -> None:
         """
         Test disconnect removes the WebSocket from connection list.
 
@@ -203,9 +195,7 @@ class TestWebSocketManagerDisconnect:
         assert mock_websocket not in manager._active_connections.get("job-123", [])
 
     @pytest.mark.asyncio
-    async def test_disconnect_closes_websocket(
-        self, mock_websocket: AsyncMock
-    ) -> None:
+    async def test_disconnect_closes_websocket(self, mock_websocket: AsyncMock) -> None:
         """
         Test disconnect calls websocket.close().
 
@@ -219,9 +209,7 @@ class TestWebSocketManagerDisconnect:
         mock_websocket.close.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_disconnect_removes_empty_job_list(
-        self, mock_websocket: AsyncMock
-    ) -> None:
+    async def test_disconnect_removes_empty_job_list(self, mock_websocket: AsyncMock) -> None:
         """
         Test disconnect removes job entry when no connections remain.
 
@@ -235,9 +223,7 @@ class TestWebSocketManagerDisconnect:
         assert "job-123" not in manager._active_connections
 
     @pytest.mark.asyncio
-    async def test_disconnect_keeps_other_connections(
-        self, mock_websocket_factory
-    ) -> None:
+    async def test_disconnect_keeps_other_connections(self, mock_websocket_factory) -> None:
         """
         Test disconnect only removes the specified WebSocket.
 
@@ -255,9 +241,7 @@ class TestWebSocketManagerDisconnect:
         assert ws2 in manager._active_connections["job-123"]
 
     @pytest.mark.asyncio
-    async def test_disconnect_handles_nonexistent_job(
-        self, mock_websocket: AsyncMock
-    ) -> None:
+    async def test_disconnect_handles_nonexistent_job(self, mock_websocket: AsyncMock) -> None:
         """
         Test disconnect handles disconnecting from nonexistent job gracefully.
 
@@ -269,9 +253,7 @@ class TestWebSocketManagerDisconnect:
         await manager.disconnect("nonexistent-job", mock_websocket)
 
     @pytest.mark.asyncio
-    async def test_disconnect_handles_close_error(
-        self, mock_websocket: AsyncMock
-    ) -> None:
+    async def test_disconnect_handles_close_error(self, mock_websocket: AsyncMock) -> None:
         """
         Test disconnect handles websocket.close() errors gracefully.
 
@@ -289,9 +271,7 @@ class TestWebSocketManagerBroadcastProgress:
     """Tests for WebSocketManager.broadcast_progress()."""
 
     @pytest.mark.asyncio
-    async def test_broadcast_sends_to_all_connections(
-        self, mock_websocket_factory
-    ) -> None:
+    async def test_broadcast_sends_to_all_connections(self, mock_websocket_factory) -> None:
         """
         Test broadcast_progress sends to all connected WebSockets.
 
@@ -314,9 +294,7 @@ class TestWebSocketManagerBroadcastProgress:
         ws3.send_json.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_broadcast_adds_timestamp_if_missing(
-        self, mock_websocket: AsyncMock
-    ) -> None:
+    async def test_broadcast_adds_timestamp_if_missing(self, mock_websocket: AsyncMock) -> None:
         """
         Test broadcast_progress adds timestamp if not present.
 
@@ -333,9 +311,7 @@ class TestWebSocketManagerBroadcastProgress:
         assert "timestamp" in sent_data
 
     @pytest.mark.asyncio
-    async def test_broadcast_preserves_existing_timestamp(
-        self, mock_websocket: AsyncMock
-    ) -> None:
+    async def test_broadcast_preserves_existing_timestamp(self, mock_websocket: AsyncMock) -> None:
         """
         Test broadcast_progress preserves existing timestamp.
 
@@ -371,9 +347,7 @@ class TestWebSocketManagerBroadcastProgress:
         await manager.broadcast_progress("nonexistent-job", progress_data)
 
     @pytest.mark.asyncio
-    async def test_broadcast_removes_disconnected_clients(
-        self, mock_websocket_factory
-    ) -> None:
+    async def test_broadcast_removes_disconnected_clients(self, mock_websocket_factory) -> None:
         """
         Test broadcast_progress removes clients that fail to receive.
 
@@ -396,9 +370,7 @@ class TestWebSocketManagerBroadcastProgress:
         assert ws_good in manager._active_connections["job-123"]
 
     @pytest.mark.asyncio
-    async def test_broadcast_only_to_specific_job(
-        self, mock_websocket_factory
-    ) -> None:
+    async def test_broadcast_only_to_specific_job(self, mock_websocket_factory) -> None:
         """
         Test broadcast_progress only sends to the specified job's connections.
 
@@ -497,9 +469,7 @@ class TestWebSocketManagerGetConnectionCount:
         assert count == 0
 
     @pytest.mark.asyncio
-    async def test_get_connection_count_returns_correct_count(
-        self, mock_websocket_factory
-    ) -> None:
+    async def test_get_connection_count_returns_correct_count(self, mock_websocket_factory) -> None:
         """
         Test get_connection_count returns accurate count.
 
@@ -541,9 +511,7 @@ class TestWebSocketManagerGetConnectionCount:
         assert manager.get_connection_count("job-123") == 1
 
     @pytest.mark.asyncio
-    async def test_get_connection_count_different_jobs(
-        self, mock_websocket_factory
-    ) -> None:
+    async def test_get_connection_count_different_jobs(self, mock_websocket_factory) -> None:
         """
         Test get_connection_count returns count per job.
 
@@ -576,17 +544,13 @@ class TestWebSocketManagerConcurrency:
         websockets = [mock_websocket_factory() for _ in range(10)]
 
         # Connect all websockets concurrently
-        await asyncio.gather(
-            *[manager.connect("job-123", ws) for ws in websockets]
-        )
+        await asyncio.gather(*[manager.connect("job-123", ws) for ws in websockets])
 
         # All should be connected
         assert manager.get_connection_count("job-123") == 10
 
     @pytest.mark.asyncio
-    async def test_concurrent_broadcast_and_disconnect(
-        self, mock_websocket_factory
-    ) -> None:
+    async def test_concurrent_broadcast_and_disconnect(self, mock_websocket_factory) -> None:
         """
         Test concurrent broadcast and disconnect operations.
 
@@ -608,5 +572,3 @@ class TestWebSocketManagerConcurrency:
 
         # Should not raise
         await asyncio.gather(*tasks)
-
-

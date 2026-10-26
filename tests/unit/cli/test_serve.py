@@ -7,7 +7,6 @@ configuration options.
 
 from unittest.mock import MagicMock, patch
 
-import pytest
 from click.testing import CliRunner
 
 from postparse.cli.main import cli
@@ -49,7 +48,7 @@ class TestServeCommand:
                     assert kwargs["workers"] == 1
                     assert kwargs["log_level"] == "info"
                     raise KeyboardInterrupt()
-                
+
                 mock_uvicorn_run.side_effect = verify_config_and_interrupt
 
                 result = runner.invoke(cli, ["serve"])
@@ -79,7 +78,7 @@ class TestServeCommand:
                 def verify_custom_host(app, **kwargs):
                     assert kwargs["host"] == "127.0.0.1"
                     raise KeyboardInterrupt()
-                
+
                 mock_uvicorn_run.side_effect = verify_custom_host
 
                 result = runner.invoke(cli, ["serve", "--host", "127.0.0.1"])
@@ -108,7 +107,7 @@ class TestServeCommand:
                 def verify_custom_port(app, **kwargs):
                     assert kwargs["port"] == 8080
                     raise KeyboardInterrupt()
-                
+
                 mock_uvicorn_run.side_effect = verify_custom_port
 
                 result = runner.invoke(cli, ["serve", "--port", "8080"])
@@ -139,7 +138,7 @@ class TestServeCommand:
                     # Workers should be 1 when reload is enabled
                     assert kwargs["workers"] == 1
                     raise KeyboardInterrupt()
-                
+
                 mock_uvicorn_run.side_effect = verify_reload_config
 
                 result = runner.invoke(cli, ["serve", "--reload"])
@@ -168,7 +167,7 @@ class TestServeCommand:
                 def verify_workers(app, **kwargs):
                     assert kwargs["workers"] == 4
                     raise KeyboardInterrupt()
-                
+
                 mock_uvicorn_run.side_effect = verify_workers
 
                 result = runner.invoke(cli, ["serve", "--workers", "4"])
@@ -197,7 +196,7 @@ class TestServeCommand:
                 def verify_log_level(app, **kwargs):
                     assert kwargs["log_level"] == "debug"
                     raise KeyboardInterrupt()
-                
+
                 mock_uvicorn_run.side_effect = verify_log_level
 
                 result = runner.invoke(cli, ["serve", "--log-level", "debug"])
@@ -284,7 +283,7 @@ class TestServeCommand:
                     assert kwargs["workers"] == 1
                     assert kwargs["log_level"] == "warning"
                     raise KeyboardInterrupt()
-                
+
                 mock_uvicorn_run.side_effect = verify_config_settings
 
                 result = runner.invoke(cli, ["serve"])
@@ -315,12 +314,10 @@ class TestServeCommand:
                     assert kwargs["port"] == 9999
                     assert kwargs["workers"] == 8
                     raise KeyboardInterrupt()
-                
+
                 mock_uvicorn_run.side_effect = verify_cli_override
 
-                result = runner.invoke(
-                    cli, ["serve", "--port", "9999", "--workers", "8"]
-                )
+                result = runner.invoke(cli, ["serve", "--port", "9999", "--workers", "8"])
 
                 assert result.exit_code == 0
                 mock_uvicorn_run.assert_called_once()
@@ -347,7 +344,7 @@ class TestServeCommand:
                 def verify_app_path(app, **kwargs):
                     assert app == "postparse.api.main:app"
                     raise KeyboardInterrupt()
-                
+
                 mock_uvicorn_run.side_effect = verify_app_path
 
                 result = runner.invoke(cli, ["serve"])
@@ -418,7 +415,7 @@ class TestServeConfiguration:
                 # Verify config is used, then interrupt
                 def verify_and_interrupt(app, **kwargs):
                     raise KeyboardInterrupt()
-                
+
                 mock_uvicorn_run.side_effect = verify_and_interrupt
 
                 result = runner.invoke(cli, ["serve"])
@@ -449,7 +446,7 @@ class TestServeConfiguration:
                 # Verify config is used, then interrupt
                 def verify_and_interrupt(app, **kwargs):
                     raise KeyboardInterrupt()
-                
+
                 mock_uvicorn_run.side_effect = verify_and_interrupt
 
                 result = runner.invoke(cli, ["serve"])
@@ -457,5 +454,6 @@ class TestServeConfiguration:
                 assert result.exit_code == 0
                 # Should show rate limiting status in startup output
                 output_lower = result.output.lower()
-                assert "rate" in output_lower or "limiting" in output_lower or "true" in output_lower
-
+                assert (
+                    "rate" in output_lower or "limiting" in output_lower or "true" in output_lower
+                )

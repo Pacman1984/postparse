@@ -1,6 +1,7 @@
 """Incremental collector for the Instagram saved feed (instaloader).
 
-The saved feed is newest-first. The collector walks it and stops after
+The saved feed (private API ``api/v1/feed/saved/posts/``) is newest-first,
+paginated with ``max_id``. The collector walks it and stops after
 ``stop_after_known`` consecutive posts that are already stored, so a routine
 run costs only a page or two of feed requests. New posts are mapped from the
 feed node itself (no per-post request), throttled with a jittered pause and
@@ -8,7 +9,12 @@ written in batches of ``batch_size`` (one transaction each).
 
 Nothing is downloaded and no expiring image CDN URL is stored; for videos a
 pending-transcription media row is created (with the video URL only when the
-feed node already carries it).
+feed item already carries it).
+
+The saved session is verified with a single request to the private user-info
+endpoint (no legacy GraphQL ``query_hash``). Only a definitive "not logged in"
+answer falls back to the password login; a throttled or failed check raises
+:class:`InstagramSessionCheckFailed` and leaves the session file alone.
 
 Example:
     >>> with InstagramCollector(db, settings, creds) as collector:
@@ -32,6 +38,7 @@ from postparse.collectors.base import (
     CollectStats,
     InstagramAuthRequired,
     InstagramRateLimited,
+    InstagramSessionCheckFailed,
     ProgressCallback,
     emit,
     jitter,
@@ -47,7 +54,9 @@ __all__ = [
     "LEGACY_SESSION_FILE",
     "InstagramCollector",
     "InstagramOptions",
+    "iter_saved_feed",
     "map_post",
+    "post_from_iphone_media",
     "resolve_session_path",
 ]
 
@@ -60,6 +69,14 @@ LoaderFactory = Callable[["InstagramOptions"], Any]
 SavedPostsFn = Callable[[Any], Iterable[Any]]
 PostFromShortcode = Callable[[Any, str], Any]
 PromptFn = Callable[[str], str]
+
+#: Private API (``i.instagram.com``) user info; also used by instaloader itself.
+USER_INFO_PATH = "api/v1/users/{user_id}/info/"
+#: Private API saved feed (all saved posts, newest saved first).
+SAVED_FEED_PATH = "api/v1/feed/saved/posts/"
+
+#: ``media_type`` of private API media -> GraphQL ``__typename`` (as instaloader maps it).
+_IPHONE_MEDIA_TYPES: dict[int, str] = {1: "GraphImage", 2: "GraphVideo", 8: "GraphSidecar"}
 
 _TYPENAME_KIND: dict[str, ItemKind] = {
     "GraphImage": "image",
@@ -171,10 +188,91 @@ def _default_loader_factory(options: InstagramOptions) -> Any:
 
 def _default_saved_posts(loader: Any) -> Iterable[Any]:
     """Iterate the logged-in user's saved posts (newest saved first)."""
+    return iter_saved_feed(loader.context)
+
+
+def iter_saved_feed(context: Any) -> Iterator[Any]:
+    """Iterate the saved feed through the private API (newest saved first).
+
+    Pages of ``api/v1/feed/saved/posts/`` are requested lazily via
+    ``context.get_iphone_json`` (``max_id`` = previous ``next_max_id``), so a
+    consumer that stops early costs no further page request. instaloader's
+    ``Profile.get_saved_posts()`` (4.15.5) still uses a legacy GraphQL
+    ``query_hash`` and needs ``Profile.own_profile()``, which uses another one;
+    Instagram answers that endpoint family with 401 "Please wait a few minutes".
+
+    Args:
+        context: Logged-in ``InstaloaderContext`` (``user_id`` set).
+
+    Yields:
+        instaloader ``Post`` objects built from the private API media structs.
+    """
+    max_id: str | None = None
+    while True:
+        params: dict[str, Any] = {"include_igtv_preview": "false"}
+        if max_id:
+            params["max_id"] = max_id
+        data = context.get_iphone_json(SAVED_FEED_PATH, params)
+        items = data.get("items") or []
+        for item in items:
+            media = item.get("media", item) if isinstance(item, dict) else None
+            if isinstance(media, dict) and media.get("code"):
+                yield post_from_iphone_media(context, media)
+        next_max_id = data.get("next_max_id") or data.get("max_id")
+        if not items or not data.get("more_available") or not next_max_id:
+            return
+        if str(next_max_id) == max_id:
+            logger.warning("Instagram saved feed returned the same cursor twice; stopping")
+            return
+        max_id = str(next_max_id)
+
+
+def post_from_iphone_media(context: Any, media: dict[str, Any]) -> Any:
+    """Build an instaloader ``Post`` from a private API media struct.
+
+    Uses ``Post.from_iphone_struct``; if the struct lacks a key that instaloader
+    requires (e.g. ``like_count`` hidden, unknown ``media_type``), a minimal
+    node with the same keys is built instead so the post is not lost.
+    """
     import instaloader
 
-    saved: Iterable[Any] = instaloader.Profile.own_profile(loader.context).get_saved_posts()
-    return saved
+    try:
+        return instaloader.Post.from_iphone_struct(context, media)
+    except (KeyError, TypeError, ValueError, AttributeError, IndexError):
+        logger.debug("Building a minimal node for saved post %s", media.get("code"))
+        return instaloader.Post(context, _minimal_iphone_node(media))
+
+
+def _minimal_iphone_node(media: dict[str, Any]) -> dict[str, Any]:
+    """Tolerant version of the node ``Post.from_iphone_struct`` builds."""
+    media_type = media.get("media_type")
+    typename = _IPHONE_MEDIA_TYPES.get(media_type) if isinstance(media_type, int) else None
+    caption = media.get("caption")
+    node: dict[str, Any] = {
+        "shortcode": media["code"],
+        "id": media.get("pk"),
+        "__typename": typename,
+        "is_video": typename == "GraphVideo",
+        "date": media.get("taken_at"),
+        "caption": caption.get("text") if isinstance(caption, dict) else None,
+        "comments": media.get("comment_count"),
+        "iphone_struct": media,
+    }
+    if isinstance(media.get("like_count"), int):
+        node["edge_media_preview_like"] = {"count": media["like_count"]}
+    video_url = _first_url(media.get("video_versions"))
+    if video_url is not None:
+        node["video_url"] = video_url
+        node["video_duration"] = media.get("video_duration")
+    return node
+
+
+def _first_url(versions: Any) -> str | None:
+    """First ``url`` of an ``image_versions2.candidates`` / ``video_versions`` list."""
+    if isinstance(versions, list) and versions and isinstance(versions[0], dict):
+        url = versions[0].get("url")
+        return url if isinstance(url, str) and url else None
+    return None
 
 
 def _default_post_from_shortcode(loader: Any, shortcode: str) -> Any:
@@ -195,13 +293,55 @@ def _node(post: Any) -> dict[str, Any]:
 
 
 def _count(node: dict[str, Any], *keys: str) -> int | None:
+    """First count among ``keys`` (GraphQL ``{"count": n}`` edges or plain ints)."""
     for key in keys:
         value = node.get(key)
         if isinstance(value, dict):
-            count = value.get("count")
-            if isinstance(count, int):
-                return count
+            value = value.get("count")
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
     return None
+
+
+def _iphone_struct(node: dict[str, Any]) -> dict[str, Any]:
+    """The private API media struct a node was built from (empty for GraphQL nodes)."""
+    struct = node.get("iphone_struct")
+    return struct if isinstance(struct, dict) else {}
+
+
+def _owner(node: dict[str, Any]) -> tuple[Any, str | None]:
+    """``(owner id, username)`` from a GraphQL node or its private API struct."""
+    owner = node.get("owner")
+    if isinstance(owner, dict) and owner:
+        return owner.get("id"), owner.get("username") or None
+    user = _iphone_struct(node).get("user")
+    if isinstance(user, dict):
+        return user.get("pk", user.get("id")), user.get("username") or None
+    return None, None
+
+
+def _children(node: dict[str, Any]) -> list[dict[str, Any]]:
+    """Carousel children as nodes with ``is_video`` / ``video_url`` / ``video_duration``.
+
+    Private API structs are read directly (``carousel_media``): instaloader's
+    conversion drops the child durations and, if one child lacks an image, all
+    children.
+    """
+    carousel = _iphone_struct(node).get("carousel_media")
+    if isinstance(carousel, list):
+        children: list[dict[str, Any]] = []
+        for media in carousel:
+            media = media if isinstance(media, dict) else {}
+            child: dict[str, Any] = {"is_video": media.get("media_type") == 2}
+            video_url = _first_url(media.get("video_versions"))
+            if video_url is not None:
+                child["video_url"] = video_url
+            if "video_duration" in media:
+                child["video_duration"] = media["video_duration"]
+            children.append(child)
+        return children
+    edges = (node.get("edge_sidecar_to_children") or {}).get("edges") or []
+    return [edge.get("node") or {} for edge in edges]
 
 
 def _caption(node: dict[str, Any]) -> str | None:
@@ -233,6 +373,10 @@ def post_date_utc(post: Any) -> datetime | None:
 def map_post(post: Any, rank: int | None) -> ItemUpsert:
     """Build the :class:`ItemUpsert` of a saved post from its feed node only.
 
+    Works with GraphQL nodes and with nodes built from private API media
+    structs (``Post.from_iphone_struct``; the struct is read for the owner and
+    the carousel children).
+
     No property that could trigger an extra instaloader request is used.
 
     Args:
@@ -251,15 +395,12 @@ def map_post(post: Any, rank: int | None) -> ItemUpsert:
     if kind is None:
         kind = "video" if node.get("is_video") else "other"
     caption = _caption(node)
-    owner = node.get("owner") or {}
-    owner_id = owner.get("id")
+    owner_id, owner_name = _owner(node)
     media: list[MediaInput] = []
     if kind == "video":
         media.append(_video_media(0, node))
     elif kind == "carousel":
-        edges = (node.get("edge_sidecar_to_children") or {}).get("edges") or []
-        for index, edge in enumerate(edges):
-            child = edge.get("node") or {}
+        for index, child in enumerate(_children(node)):
             if child.get("is_video"):
                 media.append(_video_media(index, child))
     return ItemUpsert(
@@ -267,7 +408,7 @@ def map_post(post: Any, rank: int | None) -> ItemUpsert:
         external_id=shortcode,
         kind=kind,
         text=caption,
-        author=owner.get("username") or None,
+        author=owner_name,
         url=f"https://www.instagram.com/p/{shortcode}/",
         created_at=post_date_utc(post),
         detail=InstagramDetail(
@@ -275,7 +416,9 @@ def map_post(post: Any, rank: int | None) -> ItemUpsert:
             owner_id=int(owner_id) if owner_id is not None else None,
             typename=typename,
             likes=_count(node, "edge_media_preview_like", "edge_liked_by"),
-            comments=_count(node, "edge_media_to_comment", "edge_media_to_parent_comment"),
+            comments=_count(
+                node, "edge_media_to_comment", "edge_media_to_parent_comment", "comments"
+            ),
             saved_feed_rank=rank,
             date_status="verified" if post_date_utc(post) is not None else None,
         ),
@@ -300,8 +443,20 @@ def _video_media(position: int, node: dict[str, Any]) -> MediaInput:
 # Error translation
 # ---------------------------------------------------------------------------
 
-_CHALLENGE_MARKERS = ("checkpoint", "challenge", "feedback_required", "login_required")
+_CHALLENGE_MARKERS = (
+    "checkpoint",
+    "challenge",
+    "feedback_required",
+    "login_required",
+    "redirected to login page",
+)
 _RATE_MARKERS = ("429", "too many requests", "please wait a few minutes", "rate limit")
+#: Session-check answers that are throttles (checked first; no bare "429": URLs carry ids).
+_THROTTLE_MARKERS = ("too many requests", "please wait a few minutes", "rate limit", "401 ")
+#: Session-check answers that positively mean "this session is not logged in".
+_LOGGED_OUT_MARKERS = ("login_required", "redirected to login page", "require_login")
+#: Session-check answers that need the user (a password login would not help).
+_USER_ACTION_MARKERS = ("checkpoint", "challenge", "feedback_required")
 
 
 def translate_error(exc: BaseException) -> BaseException:
@@ -322,6 +477,7 @@ def translate_error(exc: BaseException) -> BaseException:
     if name in ("LoginRequiredException", "LoginException") or (
         name
         in (
+            "AbortDownloadException",
             "ConnectionException",
             "QueryReturnedBadRequestException",
             "QueryReturnedForbiddenException",
@@ -330,6 +486,35 @@ def translate_error(exc: BaseException) -> BaseException:
     ):
         return InstagramAuthRequired("Instagram requires a confirmation or a new login.")
     return exc
+
+
+def _session_check_verdict(exc: BaseException) -> str:
+    """Classify a failed session check: ``logged_out``, ``user_action`` or ``failed``.
+
+    Only ``logged_out`` (login redirect, ``login_required``) justifies a
+    password login. Throttles (401 "please wait", 429), connection errors and
+    anything unknown are ``failed``: they say nothing about the session.
+    """
+    name = type(exc).__name__
+    if name == "LoginRequiredException":
+        return "logged_out"
+    text = str(exc).lower()
+    if name == "TooManyRequestsException" or any(m in text for m in _THROTTLE_MARKERS):
+        return "failed"
+    if any(marker in text for marker in _USER_ACTION_MARKERS):
+        return "user_action"
+    if any(marker in text for marker in _LOGGED_OUT_MARKERS):
+        return "logged_out"
+    return "failed"
+
+
+def _session_cookies(loader: Any) -> dict[str, Any]:
+    """Cookies of the loaded session (``Instaloader.save_session``; never logged)."""
+    try:
+        cookies = loader.save_session()
+    except Exception:
+        return {}
+    return cookies if isinstance(cookies, dict) else {}
 
 
 # ---------------------------------------------------------------------------
@@ -402,34 +587,97 @@ class InstagramCollector:
     def login(self) -> None:
         """Load the saved session or log in.
 
+        The password login (when ``INSTAGRAM_PASSWORD`` is set) is only tried
+        when there is no session file or the session check positively shows
+        that the session is not logged in (see :meth:`_check_session`).
+
         Raises:
             InstagramAuthRequired: No valid session and the login failed or
-                needs user interaction that is not allowed.
+                needs user interaction that is not allowed; or Instagram asks
+                for a confirmation (checkpoint).
+            InstagramSessionCheckFailed: The session check was throttled or
+                failed; no password login was attempted.
             InstagramRateLimited: Instagram rate-limited the login.
         """
         self.loader = self._loader_factory(self.options)
         username = self.credentials.username
         if self.load_path.exists():
             logger.info("Loading Instagram session from %s", self.load_path)
+            valid = False
             try:
                 self.loader.load_session_from_file(username, str(self.load_path))
-                current = self.loader.test_login()
             except Exception as exc:
-                translated = translate_error(exc)
-                if isinstance(translated, InstagramRateLimited):
-                    raise translated from exc
-                logger.warning("Instagram session could not be used: %s", type(exc).__name__)
-                current = None
-            if current and current.lower() == username.lower():
+                logger.warning("Instagram session file could not be read: %s", type(exc).__name__)
+            else:
+                valid = self._check_session()
+            if valid:
                 self.logged_in = True
                 logger.info("Instagram session is valid")
                 return
-            logger.info("Instagram session is no longer valid")
+            logger.info("Instagram session is not logged in")
         else:
             logger.info("No Instagram session file at %s", self.load_path)
         if not self.credentials.password:
             raise InstagramAuthRequired("No valid session and INSTAGRAM_PASSWORD is not set.")
+        logger.info("Falling back to the Instagram password login")
         self._password_login()
+
+    def _check_session(self) -> bool:
+        """Verify the loaded session with at most one request.
+
+        The ``sessionid`` / ``ds_user_id`` cookies are checked locally first
+        (missing: not logged in, no request). Then the private user-info
+        endpoint (``api/v1/users/<ds_user_id>/info/``) is asked once, with
+        ``max_connection_attempts`` temporarily set to 1. instaloader's
+        ``test_login()`` is not used: it queries a legacy GraphQL
+        ``query_hash`` and turns every error (including throttles) into
+        "not logged in".
+
+        Returns:
+            ``True`` if the session is usable, ``False`` if it is positively
+            not logged in (or belongs to another account).
+
+        Raises:
+            InstagramAuthRequired: Instagram asks for a confirmation.
+            InstagramSessionCheckFailed: Throttled, unreachable or unknown error.
+        """
+        cookies = _session_cookies(self.loader)
+        user_id = str(cookies.get("ds_user_id") or "")
+        if not cookies.get("sessionid") or not user_id.isdigit():
+            logger.info("Instagram session file has no login cookies")
+            return False
+        context = self.loader.context
+        context.user_id = int(user_id)  # sent as ig-intended-user-id by get_iphone_json
+        attempts = context.max_connection_attempts
+        context.max_connection_attempts = 1
+        try:
+            data = context.get_iphone_json(USER_INFO_PATH.format(user_id=user_id), {})
+        except Exception as exc:
+            verdict = _session_check_verdict(exc)
+            if verdict == "logged_out":
+                logger.info("Instagram session check: not logged in (%s)", type(exc).__name__)
+                return False
+            if verdict == "user_action":
+                logger.warning("Instagram session check: confirmation required")
+                raise InstagramAuthRequired(
+                    "Instagram asks for a confirmation of the saved session."
+                ) from exc
+            logger.warning(
+                "Instagram session check failed (%s); no password login attempted",
+                type(exc).__name__,
+            )
+            raise InstagramSessionCheckFailed(str(exc) or type(exc).__name__) from exc
+        finally:
+            context.max_connection_attempts = attempts
+        user = data.get("user") if isinstance(data, dict) else None
+        current = user.get("username") if isinstance(user, dict) else None
+        if not isinstance(current, str) or not current:
+            logger.warning("Instagram session check returned no username; using the session")
+            return True
+        if current.lower() != self.credentials.username.lower():
+            logger.info("Instagram session belongs to another account")
+            return False
+        return True
 
     def _password_login(self) -> None:
         """Log in with the password (and a 2FA code when interactive)."""

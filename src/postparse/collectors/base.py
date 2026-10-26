@@ -27,6 +27,7 @@ __all__ = [
     "CredentialsMissing",
     "InstagramAuthRequired",
     "InstagramRateLimited",
+    "InstagramSessionCheckFailed",
     "ProgressCallback",
     "ProgressEvent",
     "RateLimited",
@@ -109,6 +110,24 @@ class InstagramRateLimited(RateLimited):
     def __init__(self, detail: str | None = None, retry_after: float | None = None) -> None:
         message = "Instagram rate limit hit; wait a while (ideally hours) before retrying."
         super().__init__(f"{message} ({detail})" if detail else message, retry_after)
+
+
+class InstagramSessionCheckFailed(InstagramRateLimited):
+    """The saved Instagram session could not be verified (throttled or unreachable).
+
+    Raised instead of falling back to a password login: Instagram answered the
+    session check with a throttle ("please wait a few minutes", 401/429) or did
+    not answer at all, which says nothing about the session itself. Repeated
+    scripted password logins are what triggers checkpoints, so none is tried.
+    """
+
+    def __init__(self, detail: str | None = None, retry_after: float | None = None) -> None:
+        message = (
+            "Instagram did not confirm the saved session (throttled or unreachable). "
+            "No password login was attempted, the session file was kept and nothing "
+            "was lost; wait a while (ideally hours) before retrying."
+        )
+        RateLimited.__init__(self, f"{message} ({detail})" if detail else message, retry_after)
 
 
 class TelegramRateLimited(RateLimited):

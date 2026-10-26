@@ -185,6 +185,17 @@ postparse db reindex
   then retry. If the saved session keeps failing, delete
   `data/sessions/instagram_<username>` and log in again (needs
   `INSTAGRAM_PASSWORD`).
+* **"Instagram did not confirm the saved session"**: exit code 3. The session
+  check (one request to `i.instagram.com/api/v1/users/<id>/info/`, a single
+  attempt) was throttled (401 "Please wait a few minutes", 429) or Instagram
+  was unreachable. This says nothing about the session itself, so **no password
+  login is attempted** and the session file is left untouched; nothing was
+  collected or lost. Wait a few hours and retry. A password login (with
+  `INSTAGRAM_PASSWORD`) only happens when the check positively says the session
+  is logged out (login redirect, `login_required`, session of another account,
+  no `sessionid` cookie) or when there is no session file. Repeated scripted
+  password logins are what triggers checkpoints, so do not delete a session
+  file just because of this message.
 * **Rate limit (429) / soft block**: exit code 3. Instagram sometimes answers a
   soft-blocked session with errors that look like deleted posts; the
   transcription circuit breaker stops after

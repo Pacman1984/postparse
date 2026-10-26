@@ -6,17 +6,44 @@ import json
 import logging
 import sqlite3
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
 from postparse.core.db.models import FetchStatus, Link, LinkFetch
 from postparse.core.db.repos.search import SearchRepo
-from postparse.core.timeutil import to_db_ts
+from postparse.core.timeutil import from_db_ts, to_db_ts
 from postparse.core.urls import normalize_url, url_domain
 
-__all__ = ["LinksRepo"]
+__all__ = ["LEGACY_FETCHER", "LinkEnrichmentState", "LinksRepo"]
 
 logger = logging.getLogger(__name__)
+
+#: Fetcher name of the link texts migrated from schema v1.
+LEGACY_FETCHER = "legacy_v1"
+
+
+@dataclass(frozen=True, slots=True)
+class LinkEnrichmentState:
+    """Fetch history summary of one linked URL (see :meth:`LinksRepo.enrichment_states`).
+
+    Attributes:
+        link: The link.
+        last_fetcher: Fetcher of the newest non-legacy fetch (``None``: never fetched).
+        last_status: Its status.
+        last_fetched_at: Its time.
+        failures: Non-legacy ``error`` fetches since the last non-error fetch.
+        has_ok: A non-legacy fetch succeeded at some point.
+        has_legacy_ok: A ``legacy_v1`` fetch with text exists.
+    """
+
+    link: Link
+    last_fetcher: str | None
+    last_status: FetchStatus | None
+    last_fetched_at: datetime | None
+    failures: int
+    has_ok: bool
+    has_legacy_ok: bool
 
 
 class LinksRepo:
@@ -193,3 +220,96 @@ class LinksRepo:
             {"fetcher": fetcher, "limit": limit},
         ).fetchall()
         return [Link(row[0], row[1], row[2]) for row in rows]
+
+    def enrichment_states(
+        self,
+        *,
+        source: str | None = None,
+        domains: Sequence[str] | None = None,
+    ) -> list[LinkEnrichmentState]:
+        """Summarize the fetch history of every linked URL (legacy fetches separated).
+
+        Args:
+            source: Only links of items from this source (``None``: all).
+            domains: Only links on these domains (``links.domain``; ``None``: all).
+
+        Returns:
+            States ordered by link id; only links referenced by an item.
+        """
+        params: dict[str, Any] = {"legacy": LEGACY_FETCHER, "source": source,
+                                  "domains": json.dumps(list(domains or []))}
+        domain_clause = (
+            "AND l.domain IN (SELECT value FROM json_each(:domains))" if domains else ""
+        )
+        rows = self.conn.execute(
+            f"""
+            WITH scope AS (
+                SELECT l.id, l.url, l.domain,
+                       (SELECT lf.id FROM link_fetches AS lf
+                         WHERE lf.link_id = l.id AND lf.fetcher <> :legacy
+                         ORDER BY lf.fetched_at DESC, lf.id DESC LIMIT 1) AS last_id,
+                       (SELECT max(lf.fetched_at) FROM link_fetches AS lf
+                         WHERE lf.link_id = l.id AND lf.fetcher <> :legacy
+                           AND lf.status <> 'error') AS last_good_at
+                  FROM links AS l
+                 WHERE EXISTS (
+                        SELECT 1 FROM item_links AS il JOIN items AS i ON i.id = il.item_id
+                         WHERE il.link_id = l.id AND (:source IS NULL OR i.source = :source))
+                   {domain_clause}
+            )
+            SELECT s.id, s.url, s.domain, lf.fetcher, lf.status, lf.fetched_at,
+                   (SELECT count(*) FROM link_fetches AS e
+                     WHERE e.link_id = s.id AND e.fetcher <> :legacy AND e.status = 'error'
+                       AND e.fetched_at > coalesce(s.last_good_at, '')) AS failures,
+                   EXISTS (SELECT 1 FROM link_fetches AS o
+                            WHERE o.link_id = s.id AND o.fetcher <> :legacy
+                              AND o.status = 'ok') AS has_ok,
+                   EXISTS (SELECT 1 FROM link_fetches AS o
+                            WHERE o.link_id = s.id AND o.fetcher = :legacy
+                              AND o.status = 'ok') AS has_legacy_ok
+              FROM scope AS s LEFT JOIN link_fetches AS lf ON lf.id = s.last_id
+             ORDER BY s.id
+            """,
+            params,
+        ).fetchall()
+        return [
+            LinkEnrichmentState(
+                link=Link(row[0], row[1], row[2]),
+                last_fetcher=row[3],
+                last_status=row[4],
+                last_fetched_at=from_db_ts(row[5]) if row[5] else None,
+                failures=int(row[6]),
+                has_ok=bool(row[7]),
+                has_legacy_ok=bool(row[8]),
+            )
+            for row in rows
+        ]
+
+    def items_for_link(self, link_id: int) -> list[int]:
+        """Return the ids of the items linking to ``link_id``."""
+        rows = self.conn.execute(
+            "SELECT item_id FROM item_links WHERE link_id = ? ORDER BY item_id", (link_id,)
+        ).fetchall()
+        return [int(row[0]) for row in rows]
+
+    def legacy_text_settled(self, item_id: int) -> bool:
+        """True if every link of the item has a fresh (non-legacy) result.
+
+        A link counts as settled when a non-legacy fetch succeeded or when its
+        newest non-legacy fetch was ``skipped`` by the ``instagram`` fetcher
+        (Instagram links never had scraped text). Items without links are
+        never settled.
+        """
+        row = self.conn.execute(
+            """
+            SELECT count(*),
+                   sum(EXISTS (SELECT 1 FROM link_fetches AS o
+                                WHERE o.link_id = il.link_id AND o.fetcher <> :legacy
+                                  AND (o.status = 'ok'
+                                       OR (o.status = 'skipped' AND o.fetcher = 'instagram'))))
+              FROM item_links AS il WHERE il.item_id = :item
+            """,
+            {"legacy": LEGACY_FETCHER, "item": item_id},
+        ).fetchone()
+        total, settled = int(row[0]), int(row[1] or 0)
+        return total > 0 and settled == total

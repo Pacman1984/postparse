@@ -261,6 +261,7 @@ def info():
     commands.add_row("check", "Check for new content")
     commands.add_row("extract", "Extract from Telegram/Instagram")
     commands.add_row("classify", "Classify content (ML/LLM)")
+    commands.add_row("enrich", "Fetch linked pages, videos and posts")
     commands.add_row("transcribe", "Transcribe saved videos")
     commands.add_row("summarize", "Summarize transcribed items")
     commands.add_row("search", "Search posts and messages")

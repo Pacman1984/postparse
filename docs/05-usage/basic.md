@@ -33,7 +33,7 @@ postparse search messages --hashtag recipe
 
 ```bash
 postparse extract all
-postparse enrich scrape
+postparse enrich run
 postparse classify db --classifier multilabel
 ```
 

@@ -85,14 +85,18 @@ result = clf.predict_multilabel("...")
 ## Enrichment
 
 ```python
-from postparse.services.enrichment import YouTubeEnricher, LinkScraper, XEnricher
+from postparse.config import get_settings
+from postparse.core.db import Database
+from postparse.services.enrichment import EnrichmentService
 
-yt = YouTubeEnricher(timeout=10)
-result = yt.enrich("", source_url="https://youtube.com/watch?v=abc")
-
-scraper = LinkScraper(timeout=15)
-result = scraper.enrich("", source_url="https://example.com/article")
-
-x = XEnricher(timeout=10)
-result = x.enrich("", source_url="https://x.com/user/status/123")
+settings = get_settings()
+service = EnrichmentService(Database.open(settings.db_path), settings)
+report = service.run(source="telegram", limit=100)  # due links only
+print(report.ok, report.errors_count, report.skipped, report.by_fetcher)
+print(service.status()["due"])
 ```
+
+Fetchers live in `postparse.enrichment.fetchers` (`GenericFetcher` with
+trafilatura/readability, `DocumentFetcher` with markitdown, `YouTubeFetcher`,
+`XFetcher`, `InstagramFetcher` which always skips) and are dispatched by
+`FetchRouter` (per-domain throttle, bounded concurrency).

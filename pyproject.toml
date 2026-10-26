@@ -35,7 +35,7 @@ dependencies = [
     "rich>=13.0.0,<14.0.0",
     "rich-click>=1.8.0,<2.0.0",
     "httpx>=0.27.0",
-    "lxml>=5.0.0,<6.0.0",
+    "lxml>=5.4.0,<7",
     "pydantic-settings>=2.4,<3",
     "tzdata>=2024.1",
     "pydantic-ai-slim[anthropic,openai]>=2.61.0,<3",
@@ -43,6 +43,11 @@ dependencies = [
     "tenacity>=8.2,<10",
     # Audio probing/extraction for video transcription (bundles FFmpeg; no system ffmpeg).
     "av>=14",
+    # Link enrichment: article extraction, documents, YouTube transcripts.
+    "trafilatura>=2.3,<3",
+    "readability-lxml>=0.9,<1",
+    "markitdown[pdf,docx,pptx,xlsx]>=0.1.9,<0.2",
+    "youtube-transcript-api>=1.2,<2",
 ]
 
 [project.scripts]
@@ -74,6 +79,7 @@ dev = [
     "pylint>=2.17.5",
     "httpx>=0.27.0",
     "fakeredis>=2.20.0,<3.0.0",
+    "respx>=0.23,<1",
 ]
 docs = [
     "mkdocs",
@@ -92,6 +98,13 @@ all = [
 ]
 migrate = [
     "ftfy>=6.2",
+]
+# YouTube metadata (description, chapters, tags, duration) via yt-dlp. Pinned to an
+# exact release whose PyPI provenance (Trusted Publishing from yt-dlp/yt-dlp,
+# release.yml@refs/heads/master) was checked; without it YouTube links still get
+# oEmbed data and transcripts.
+youtube = [
+    "yt-dlp==2026.8.19",
 ]
 # Local speech recognition (faster-whisper / CTranslate2). The NVIDIA wheels provide
 # the CUDA 12 cuBLAS and cuDNN 9 libraries, so no system CUDA toolkit is needed.
@@ -119,6 +132,7 @@ dev = [
     "isort>=5.12.0",
     "mypy>=1.5.0",
     "pylint>=2.17.5",
+    "respx>=0.23,<1",
 ]
 
 [tool.uv]

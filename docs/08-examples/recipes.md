@@ -6,7 +6,7 @@ Copy-pastable examples for common tasks.
 
 ```bash
 uv run postparse extract all
-uv run postparse enrich scrape
+uv run postparse enrich run
 uv run postparse classify db --classifier multilabel
 ```
 
@@ -75,30 +75,35 @@ postparse search messages --hashtag cooking
 uv run postparse classify db --classifier multilabel --source telegram --limit 100
 ```
 
-## 6. Enrich with URL Scraping
+## 6. Enrich Links
 
 ```bash
-# Scrape URLs (YouTube, X, generic links) → content_expanded
-uv run postparse enrich scrape --source telegram --limit 100
-
-# Classify (uses content + content_expanded)
-uv run postparse classify db --classifier multilabel
+# Fetch linked pages, PDFs, YouTube videos (oEmbed, yt-dlp, transcript) and X posts
+uv run postparse enrich run --source telegram --limit 100
+uv run postparse enrich run --domain youtube.com --domain youtu.be
+uv run postparse enrich status
 ```
 
-Scraped text (title, description, body) is stored in `content_expanded`. Classify uses `content` + `content_expanded` when both exist.
+Each fetch is stored per link (`link_fetches`); the newest successful fetch is
+part of the item's search document. Instagram links are never fetched. Failed
+links are retried with exponential backoff on later runs. YouTube metadata
+beyond oEmbed needs the `youtube` extra (`uv sync --extra youtube`).
 
 ## 7. Programmatic Enrichment
 
 ```python
-from postparse.services.enrichment import YouTubeEnricher, LinkScraper
+import asyncio
 
-# YouTube
-yt = YouTubeEnricher(timeout=10.0)
-result = yt.enrich("", source_url="https://youtube.com/watch?v=abc")
-print(result.metadata["title"], result.metadata["author"])
+from postparse.core.db.models import Link
+from postparse.enrichment import EnrichmentOptions
+from postparse.enrichment.fetchers import FetchRouter
 
-# Generic link
-scraper = LinkScraper(timeout=15.0)
-result = scraper.enrich("", source_url="https://arxiv.org/abs/2401.00001")
-print(result.generated_text)
+
+async def main() -> None:
+    async with FetchRouter.default_router(EnrichmentOptions()) as router:
+        result = await router.fetch(Link(0, "https://arxiv.org/abs/2401.00001", "arxiv.org"))
+        print(result.status, result.title, (result.text or "")[:200])
+
+
+asyncio.run(main())
 ```

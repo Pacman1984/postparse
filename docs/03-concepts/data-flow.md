@@ -6,8 +6,8 @@
 Telegram / Instagram
         ↓  extract
   telegram_messages / instagram_posts
-        ↓  enrich scrape (extracts URLs + fetches pages)
-  content_expanded: scraped title, description, body text
+        ↓  enrich run (fetches the links stored with each item)
+  link_fetches: title, text and metadata per link (newest ok fetch is searchable)
         ↓  classify db (LLM, uses content + content_expanded)
   content_analysis: labels per item (multi-label, run_id grouped)
 ```
@@ -18,8 +18,8 @@ Telegram / Instagram
 # 1. Extract new content (incremental)
 uv run postparse extract all
 
-# 2. Scrape URLs (YouTube, X, generic links)
-uv run postparse enrich scrape
+# 2. Fetch linked pages, documents, YouTube videos and X posts
+uv run postparse enrich run
 
 # 3. Classify with multi-label
 uv run postparse classify db --classifier multilabel

@@ -1,0 +1,46 @@
+site_name: PostParse
+site_description: Archive saved Telegram and Instagram posts in SQLite; search, transcribe, enrich, summarize and classify them.
+repo_url: https://github.com/Pacman1984/postparse
+edit_uri: edit/master/docs/
+docs_dir: docs
+strict: true
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - content.code.copy
+
+nav:
+  - Overview: index.md
+  - Concepts:
+      - Architecture: architecture.md
+      - Database: database.md
+      - Configuration: configuration.md
+  - Features:
+      - Taxonomies: taxonomies.md
+      - Transcription: transcription.md
+      - Enrichment: enrichment.md
+  - Reference:
+      - CLI: cli-reference.md
+      - REST API: api-reference.md
+  - Operations:
+      - Runbook: operations.md
+      - Testing: testing.md
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn

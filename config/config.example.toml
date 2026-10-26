@@ -1,0 +1,237 @@
+# PostParse configuration example.
+#
+# Copy to config/config.toml (git-ignored) and adjust. Every key is optional
+# unless noted; the values shown are the built-in defaults. Secrets do NOT
+# belong here: put credentials into config/.env (see config/.env.example) or
+# the process environment.
+#
+# Config file discovery (first match wins): the root option `--config PATH`,
+# ./config/config.toml, ./config.toml, <project root>/config/config.toml.
+# The API server additionally honours POSTPARSE_CONFIG (set by `postparse serve`).
+#
+# Check the result with:
+#   postparse config validate
+#   postparse config show --section transcription
+
+# ---------------------------------------------------------------------------
+# Paths and database
+# ---------------------------------------------------------------------------
+# Relative paths resolve against the current working directory. Environment
+# variables win over the file: POSTPARSE_DATA_DIR, POSTPARSE_SESSIONS_DIR,
+# POSTPARSE_DOWNLOADS_DIR, POSTPARSE_TMP_DIR, POSTPARSE_DB_PATH.
+[paths]
+data_dir = "data"                  # root of all local data
+sessions_dir = ""                  # login sessions; empty = <data_dir>/sessions
+downloads_dir = ""                 # downloaded Telegram media; empty = <data_dir>/downloads
+tmp_dir = ""                       # scratch space (transcription); empty = <data_dir>/tmp
+
+[database]
+db_path = ""                       # schema v2 SQLite file; empty = <data_dir>/postparse.db
+# The schema v1 keys `default_db_path` and `path` are ignored (config validate
+# warns about them). Convert a v1 file with `postparse db migrate-v1`.
+
+# ---------------------------------------------------------------------------
+# LLM providers (classification and summaries, via pydantic-ai)
+# ---------------------------------------------------------------------------
+[llm]
+default_provider = "llama_cpp"     # required; must match one [[llm.providers]] name
+# enable_fallback / cache_responses are accepted but not used yet.
+
+# Any OpenAI-compatible server: llama.cpp (llama-server), LM Studio, Ollama, vLLM.
+[[llm.providers]]
+name = "llama_cpp"
+model = "local"                    # required; replaced by the served model when discovered
+api_base = "http://<host>:1235/v1" # replace <host>; OpenAI-compatible base URL
+timeout = 120                      # seconds per request (default 30)
+max_retries = 3                    # SDK retries (default 3)
+temperature = 0.0                  # 0.0-2.0 (default 0.7)
+# max_tokens = 1024                # default: server default
+# api_type = "openai"              # "openai" | "anthropic"; default: from the name
+#                                  # (anthropic*/claude* -> anthropic, else openai)
+# output_mode = "native"           # "native" | "tool" | "prompted"; default: native
+#                                  # when api_base is set, tool for cloud APIs
+max_concurrency = 1                # default: 1 for LAN/localhost endpoints, 4 for cloud APIs
+discover_model = true              # ask /v1/models (or Ollama /api/ps) which model is served;
+#                                  # default: on for LAN/localhost endpoints
+# custom_params = { top_k = 20 }   # extra request body fields (OpenAI-compatible only)
+
+# Cloud and other local examples. API keys come from the environment:
+# OPENAI_API_KEY for names "openai" and "lm_studio", ANTHROPIC_API_KEY for
+# "anthropic" (or set api_key here, which is not recommended).
+#
+# [[llm.providers]]
+# name = "openai"
+# model = "gpt-4o-mini"
+#
+# [[llm.providers]]
+# name = "anthropic"
+# model = "claude-sonnet-4-5"
+#
+# [[llm.providers]]
+# name = "ollama"                  # "/v1" is appended to the base URL automatically
+# model = "qwen2.5:7b"
+# api_base = "http://localhost:11434"
+#
+# [[llm.providers]]
+# name = "lm_studio"
+# model = "qwen/qwen3-8b"
+# api_base = "http://localhost:1234/v1"
+
+# ---------------------------------------------------------------------------
+# Classification (taxonomies)
+# ---------------------------------------------------------------------------
+[classification]
+max_input_chars = 8000             # composed input per item is cut to this length
+
+# One table per taxonomy. Changing names, descriptions or the mode creates a
+# new taxonomy version (label-set hash); see docs/taxonomies.md.
+[[classification.taxonomies]]
+name = "topics"                    # unique; `classify run` defaults to "topics"
+mode = "multi"                     # "multi": 0..N labels, "single": exactly one label
+max_labels = 3                     # optional, multi only
+sources = []                       # optional: ["instagram"], ["telegram"]; empty = all
+instructions = "Posts are mostly German. Choose labels by the main content, not by hashtags alone."
+labels = [
+    { name = "recipe", description = "Cooking or baking instructions, ingredient lists, dishes to make at home" },
+    { name = "travel", description = "Places, trips, hotels, restaurants or sights worth visiting" },
+    { name = "tech", description = "Software, programming, gadgets, AI tools and tutorials" },
+    { name = "fitness", description = "Workouts, exercises, training plans, nutrition for sport" },
+    { name = "finance", description = "Personal finance, investing, taxes, budgeting" },
+]
+
+# A single-label example:
+# [[classification.taxonomies]]
+# name = "content_type"
+# mode = "single"
+# labels = [
+#     { name = "tutorial", description = "Step-by-step how-to content" },
+#     { name = "news", description = "Announcements, releases, current events" },
+#     { name = "opinion", description = "Commentary, reviews, personal takes" },
+# ]
+
+# ---------------------------------------------------------------------------
+# Video transcription
+# ---------------------------------------------------------------------------
+[transcription]
+backend = "local"                  # "local" (faster-whisper, needs the `asr` extra) or "api"
+limit = 50                         # media per `postparse transcribe run`
+max_attempts = 5                   # failed media are retried this many times in total
+backoff_minutes = 10               # first retry delay; doubles per failure ...
+max_backoff_hours = 24             # ... up to this cap
+remote_url_max_age_hours = 6       # stored video URLs older than this are re-fetched
+refetch_min_delay = 20             # pause between Instagram post re-fetches (seconds) ...
+refetch_max_delay = 60             # ... uniformly jittered between min and max
+max_consecutive_refetch_failures = 3  # stop the run (suspected Instagram block); 0 = never
+download_timeout = 60              # HTTP timeout per video download (seconds)
+max_download_mb = 200              # abort downloads larger than this
+max_duration_minutes = 30          # longer media are marked 'skipped'
+language = ""                      # force a language ("de", "en"); empty = auto-detect
+
+[transcription.local]              # faster-whisper / CTranslate2
+model = "large-v3-turbo"
+device = "auto"                    # "auto" (CUDA if available), "cuda" or "cpu"
+compute_type = "auto"              # auto: int8_float16 on CUDA, int8 on CPU
+beam_size = 5
+vad_filter = true
+download_root = ""                 # model cache dir; empty = Hugging Face cache
+cpu_threads = 0                    # 0 = CTranslate2 default
+
+[transcription.api]                # any OpenAI-compatible /v1/audio/transcriptions
+base_url = ""                      # e.g. "http://speaches.lan:8000/v1"; empty = api.openai.com
+api_key_env = "OPENAI_API_KEY"     # NAME of the env var holding the key (not the key)
+model = "whisper-1"                # e.g. "Systran/faster-whisper-large-v3" (speaches)
+timeout = 300                      # seconds per request
+upload_format = "m4a"              # "m4a" (small AAC) or "wav16k"
+
+# ---------------------------------------------------------------------------
+# Summaries of transcribed items
+# ---------------------------------------------------------------------------
+[summarization]
+provider = ""                      # [[llm.providers]] name; empty = llm.default_provider
+max_input_chars = 12000            # caption + transcripts + link texts are cut to this length
+output_retries = 2                 # retries when the model returns invalid structured output
+
+# ---------------------------------------------------------------------------
+# Link enrichment
+# ---------------------------------------------------------------------------
+[enrichment]
+concurrency = 4                    # links fetched in parallel (all domains)
+min_domain_interval = 1.0          # seconds between two requests to the same domain
+timeout = 15                       # HTTP timeout per request (seconds)
+max_body_mb = 5                    # larger HTML/text responses are skipped
+max_document_mb = 20               # larger PDF/Office documents are skipped
+max_text_chars = 20000             # stored text is cut to this length
+min_text_chars = 200               # shorter trafilatura output -> try readability too
+max_attempts = 4                   # failed links are retried this many times in total
+backoff_minutes = 60               # first retry delay; doubles per failure ...
+max_backoff_hours = 168            # ... up to this cap (7 days)
+transcript_languages = ["de", "en"]  # preferred YouTube transcript languages
+youtube_transcripts = true         # fetch YouTube transcripts (best effort)
+user_agent = ""                    # empty: "postparse/<version> (+project URL)"
+
+# ---------------------------------------------------------------------------
+# Collectors (credentials: TELEGRAM_* / INSTAGRAM_* in config/.env)
+# ---------------------------------------------------------------------------
+[telegram]
+batch_size = 50                    # messages per write transaction
+flood_sleep_threshold = 60         # FloodWaits up to this many seconds are slept through;
+#                                  # longer ones stop the run (exit code 3)
+max_download_mb = 50               # larger files are recorded without download
+media_delay_min = 0.5              # pause after a media download (seconds) ...
+media_delay_max = 1.5              # ... jittered between min and max
+media_timeout_image = 30           # download timeout for photos (seconds)
+media_timeout_document = 120       # download timeout for documents (seconds)
+connection_retries = 5             # Telethon connection_retries
+retry_delay = 1                    # Telethon retry_delay (seconds)
+auto_reconnect = true              # Telethon auto_reconnect
+request_retries = 5                # Telethon request_retries
+
+[instagram]
+default_min_delay = 5.0            # pause between new posts (seconds) ...
+default_max_delay = 15.0           # ... jittered between min and max
+refresh_min_delay = 5.0            # pause between `--refresh-dates` fetches; default: the
+refresh_max_delay = 15.0           # default_min/max_delay values
+request_timeout = 30.0             # instaloader request timeout (seconds)
+max_connection_attempts = 3        # instaloader connection attempts
+# user_agent = "..."               # custom user agent; unset = instaloader default
+
+# ---------------------------------------------------------------------------
+# REST API (`postparse serve`)
+# ---------------------------------------------------------------------------
+[api]
+host = "0.0.0.0"                   # `serve` bind address (use "127.0.0.1" for local only)
+port = 8000                        # 1024-65535 (config validate checks this)
+reload = false                     # auto-reload (development)
+workers = 1                        # keep 1: jobs live in process memory (see docs/api-reference.md)
+log_level = "info"                 # debug | info | warning | error
+log_format = "text"                # request log format: "text" or "json"
+log_request_body = false
+log_response_body = false
+environment = "development"        # "production" hides exception details in 500 responses
+
+[api.auth]
+enabled = false                    # require "Authorization: Bearer <JWT>" (health/docs stay public)
+algorithm = "HS256"
+# secret_key: set JWT_SECRET_KEY in the environment instead of writing it here.
+
+[api.cors]
+allowed_origins = ["http://localhost:3000", "http://localhost:3001"]
+allow_credentials = true
+allowed_methods = ["*"]
+allowed_headers = ["*"]
+
+[api.rate_limiting]
+enabled = false                    # token bucket per client IP; 429 RATE_LIMIT_EXCEEDED
+requests_per_minute = 60
+burst_size = 10
+
+[api.cache]
+enabled = false                    # cache search/list responses (X-Cache-Status: HIT|MISS)
+redis_url = "redis://localhost:6379/0"  # falls back to an in-memory cache when unreachable
+default_ttl = 300                  # seconds
+search_ttl = 600                   # seconds, search and list endpoints
+max_entries = 1000                 # size of the in-memory fallback
+
+[api.jobs]
+max_job_age_hours = 24             # finished jobs older than this are dropped ...
+cleanup_interval_minutes = 60      # ... by a cleanup task running this often

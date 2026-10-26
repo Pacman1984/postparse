@@ -4,19 +4,59 @@ build-backend = "hatchling.build"
 
 [project]
 name = "postparse"
-version = "0.1.0"
+version = "0.2.0"
 authors = [
     { name = "Sebastian Pachl"}
 ]
-description = "A package for parsing and analyzing data"
+description = "Collect saved Instagram and Telegram posts into a local SQLite archive, then search, classify, enrich, transcribe and summarize them via CLI or REST API"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 classifiers = [
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
 dependencies = [
+    "tqdm",
+    "python-dotenv>=1.1",
+    "instaloader>=4.15.5",
+    # Telethon 2 is a full API rewrite; stay on the 1.x line until migrated.
+    "telethon>=1.45,<2",
+    "pydantic>=2.7.4",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "PyJWT>=2.8",
+    "python-multipart>=0.0.9",
+    "websockets>=12.0",
+    "redis>=5.0.0",
+    "python-json-logger>=3.1",
+    "click>=8.1.0",
+    "rich>=13.0.0",
+    "rich-click>=1.9",
+    "httpx>=0.27.0",
+    "lxml>=5.4.0",
+    "pydantic-settings>=2.4",
+    "tzdata>=2024.1",
+    "pydantic-ai-slim[anthropic,openai]>=2.61.0",
+    "openai>=3.37.0",
+    # Audio probing/extraction for video transcription (bundles FFmpeg; no system ffmpeg).
+    "av>=14",
+    # Link enrichment: article extraction, documents, YouTube transcripts.
+    "trafilatura>=2.3",
+    "readability-lxml>=0.9",
+    # markitdown is pre-1.0: minor releases may break the converter API.
+    "markitdown[pdf,docx,pptx,xlsx]>=0.1.9,<0.2",
+    "youtube-transcript-api>=1.2",
+]
+
+[project.scripts]
+postparse = "postparse.cli.main:main"
+
+[project.optional-dependencies]
+# Data-science stack used only by exploratory notebooks (not imported by src/ or tests/).
+notebooks = [
     "xgboost",
     "matplotlib",
     "numpy",
@@ -25,106 +65,149 @@ dependencies = [
     "optuna-integration",
     "scikit-learn",
     "scipy",
-    "toml",
-    "tqdm",
     "ipywidgets",
-    "python-dotenv",
-    "instaloader>=4.10.0",
-    "telethon>=1.32.0",
-    "nest-asyncio>=1.5.0",
-    "langchain-core>=1.0.0,<2.0.0",
-    "litellm>=1.0.0,<2.0.0",
-    "langchain-community>=0.3.0,<1.0.0",
-    "langchain-litellm>=0.3.0,<1.0.0",
-    "pydantic>=2.7.4,<3.0.0",
-    "fastapi>=0.115.0,<1.0.0",
-    "uvicorn[standard]>=0.32.0,<1.0.0",
-    "python-jose[cryptography]>=3.3.0,<4.0.0",
-    "python-multipart>=0.0.9,<1.0.0",
-    "email-validator>=2.0.0,<3.0.0",
-    "websockets>=12.0,<13.0.0",
-    "redis>=5.0.0,<6.0.0",
-    "python-json-logger>=2.0.0,<3.0.0",
-    "click>=8.1.0,<9.0.0",
-    "rich>=13.0.0,<14.0.0",
-    "rich-click>=1.8.0,<2.0.0",
-    "httpx>=0.27.0",
-    "lxml>=5.0.0,<6.0.0",
+]
+migrate = [
+    "ftfy>=6.2",
+]
+# YouTube metadata (description, chapters, tags, duration) via yt-dlp. Pinned to an
+# exact release whose PyPI provenance (Trusted Publishing from yt-dlp/yt-dlp,
+# release.yml@refs/heads/master) was checked; without it YouTube links still get
+# oEmbed data and transcripts.
+youtube = [
+    "yt-dlp==2026.8.19",
+]
+# Local speech recognition (faster-whisper / CTranslate2). The NVIDIA wheels provide
+# the CUDA 12 cuBLAS and cuDNN 9 libraries, so no system CUDA toolkit is needed.
+asr = [
+    "faster-whisper>=1.1",
+    "nvidia-cublas-cu12; (sys_platform == 'win32' or sys_platform == 'linux') and platform_machine != 'aarch64'",
+    "nvidia-cudnn-cu12>=9,<10; (sys_platform == 'win32' or sys_platform == 'linux') and platform_machine != 'aarch64'",
 ]
 
-[project.scripts]
-postparse = "backend.postparse.cli.main:cli"
+[project.urls]
+Homepage = "https://github.com/Pacman1984/postparse"
+Repository = "https://github.com/Pacman1984/postparse"
 
-[project.optional-dependencies]
+[tool.hatch.build.targets.wheel]
+packages = ["src/postparse"]
+
+[dependency-groups]
 dev = [
-    "pytest>=7.4.0",
-    "pytest-asyncio>=0.21.0",
-    "pytest-cov>=4.1.0",
-    "pytest-mock>=3.12.0",
-    "black>=23.7.0",
-    "isort>=5.12.0",
-    "mypy>=1.5.0",
-    "pylint>=2.17.5",
-    "httpx>=0.27.0",
-    "fakeredis>=2.20.0,<3.0.0",
+    "pytest>=9.0",
+    "pytest-asyncio>=1.3",
+    "pytest-cov>=7.0",
+    "pytest-mock>=3.14",
+    "pytest-socket>=0.7.0",
+    "ruff>=0.17",
+    "mypy>=1.18",
+    "fakeredis>=2.32",
+    "respx>=0.23",
 ]
 docs = [
     "mkdocs",
     "mkdocs-material",
-]
-all = [
-    "pytest>=7.4.0",
-    "pytest-asyncio>=0.21.0",
-    "pytest-cov>=4.1.0",
-    "black>=23.7.0",
-    "isort>=5.12.0",
-    "mypy>=1.5.0",
-    "pylint>=2.17.5",
-    "mkdocs",
-    "mkdocs-material",
-]
-
-[project.urls]
-Homepage = "https://github.com/sebpachl/postparse"
-
-[tool.hatch.build.targets.wheel]
-packages = ["backend"]
-
-[dependency-groups]
-dev = [
-    "pytest>=7.4.0",
-    "pytest-asyncio>=0.21.0",
-    "pytest-cov>=4.1.0",
-    "pytest-mock>=3.12.0",
-    "black>=23.7.0",
-    "isort>=5.12.0",
-    "mypy>=1.5.0",
-    "pylint>=2.17.5",
 ]
 
 [tool.uv]
 package = true
 
 [tool.pytest.ini_options]
-# Pytest-asyncio configuration
+# pytest-asyncio: every async test and fixture gets its own function-scoped loop.
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+asyncio_default_test_loop_scope = "function"
 
-# Filter out known harmless warnings from dependencies
+# Block real network access (pytest-socket); only loopback connections are allowed.
+# --disable-socket is not used because asyncio on Windows needs AF_INET socketpairs.
+# Tests marked `live` are skipped unless --run-live is passed (see tests/conftest.py).
+addopts = "--allow-hosts=127.0.0.1,localhost,::1"
+
 filterwarnings = [
-    # Suppress Pydantic serialization warnings from LiteLLM when using local LLM servers
-    # These occur because LM Studio/Ollama return simplified responses vs full OpenAI API format
-    "ignore:Pydantic serializer warnings:UserWarning",
-    # Suppress asyncio event loop warnings from LiteLLM's internal logging
-    "ignore:There is no current event loop:DeprecationWarning",
+    # Deprecated APIs must not be used by postparse itself.
+    "error::DeprecationWarning:postparse",
+    "error::PendingDeprecationWarning:postparse",
     # Suppress Telethon cleanup warnings during test teardown
     "ignore::ResourceWarning",
     "ignore:coroutine.*was never awaited:RuntimeWarning",
-    # Suppress deprecation warnings we're actively fixing
-    "ignore:datetime.datetime.utcnow.*is deprecated:DeprecationWarning",
 ]
 # Register custom markers
 markers = [
     "integration: marks tests as integration tests requiring external services",
     "slow: marks tests as slow running tests (deselect with '-m \"not slow\"')",
     "cache: marks tests requiring Redis or cache functionality",
+    "live: talks to real LLM servers or external APIs (skipped unless --run-live)",
 ]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = ["playground", "notebooks", "docs", "instructions", "dist"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+
+# The CLI prints the INFORMATION SOURCE emoji on purpose.
+allowed-confusables = ["ℹ"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI dependency markers in parameter defaults are the framework idiom.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Path", "fastapi.Body"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src"]
+mypy_path = "src"
+plugins = ["pydantic.mypy"]
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+show_error_codes = true
+check_untyped_defs = true
+no_implicit_optional = true
+strict_equality = true
+extra_checks = true
+
+# Library core: fully strict.
+[[tool.mypy.overrides]]
+module = [
+    "postparse.core.*",
+    "postparse.services.*",
+    "postparse.collectors.*",
+    "postparse.media.*",
+    "postparse.classification.*",
+    "postparse.llm.*",
+    "postparse.enrichment.*",
+    "postparse.summarization.*",
+    "postparse.config",
+]
+# The flags of `strict = true`, spelled out: mypy applies a per-module `strict`
+# to the whole run, so it cannot be used to make only these packages strict.
+disallow_any_generics = true
+disallow_subclassing_any = true
+disallow_untyped_calls = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+disallow_untyped_decorators = true
+warn_return_any = true
+no_implicit_reexport = true
+
+# Third-party packages without type information (no py.typed, no stubs on PyPI).
+# lxml: lxml-stubs 0.5 (2024) types lxml.html.fromstring() as a plain _Element and
+# produces false positives, so lxml is treated as untyped as well.
+[[tool.mypy.overrides]]
+module = [
+    "telethon",
+    "ctranslate2",
+    "faster_whisper",
+    "readability",
+    "yt_dlp",
+    "lxml",
+    "lxml.*",
+]
+ignore_missing_imports = true
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true

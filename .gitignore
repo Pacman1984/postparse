@@ -50,8 +50,9 @@ coverage.xml
 # Django stuff:
 *.log
 
-# Sphinx documentation
+# Sphinx / MkDocs documentation output
 docs/_build/
+/site/
 
 # PyBuilder
 target/
@@ -91,8 +92,7 @@ target/
 # Virtual environment (UV and others)
 .venv/
 
-# UV-specific files
-.python-version
+# .python-version is committed (default interpreter for uv: 3.13).
 
 # Session files (credential-bearing; never commit)
 # Policy: All session artifacts live under data/sessions/ (gitignored via /data/).
@@ -101,6 +101,14 @@ target/
 telegram_session*
 instagram_session*
 
-# Sensitive configuration (may contain secrets) - keep out of VCS
+# Sensitive configuration (may contain secrets) - keep out of VCS.
+# The templates config/config.example.toml and config/.env.example are tracked.
 config/config.toml
 config/.env
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+
+# Stray directory created when a mocked config is used as a path
+MagicMock/

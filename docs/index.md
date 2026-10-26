@@ -1,52 +1,25 @@
-# PostParse Documentation
+# PostParse documentation
 
-## Start Here
+PostParse collects your **saved Telegram messages** and **saved Instagram posts**
+into a local SQLite archive (schema v2) and makes them useful: full-text search,
+video transcription, link enrichment, LLM summaries and LLM classification into
+your own taxonomies. Everything is available through the `postparse` CLI and a
+FastAPI REST API that runs on the same services.
 
-| Document | Purpose |
-|----------|---------|
-| [01-overview](01-overview.md) | What PostParse is, who it's for, key features |
-| [02-quickstart](02-quickstart.md) | Prerequisites, install, minimal example |
-| [04-installation](04-installation.md) | Dependencies, env vars, common issues |
+Start with the [README](https://github.com/Pacman1984/postparse#readme) for
+installation and the quick start, then use these pages:
 
-## Concepts
+| Page | Contents |
+|---|---|
+| [Architecture](architecture.md) | Module map, services, data flow |
+| [Database](database.md) | Schema v2: tables, views, timestamps, full-text search, migrations, v1 → v2 mapping |
+| [Configuration](configuration.md) | `config.toml` sections, `.env`, `POSTPARSE_*` variables, discovery order |
+| [Taxonomies](taxonomies.md) | Defining `[[classification.taxonomies]]`, versioning, scopes, ad-hoc labels |
+| [Transcription](transcription.md) | Video transcription backends, CUDA on Windows, throttled backlog |
+| [Enrichment](enrichment.md) | Per-link fetching: articles, documents, YouTube, X posts |
+| [CLI reference](cli-reference.md) | Every command and option (generated from `--help`) |
+| [API reference](api-reference.md) | REST endpoints, jobs, WebSocket, errors, auth, cache |
+| [Operations runbook](operations.md) | Backup, migration, daily pipeline, reprocessing, troubleshooting |
+| [Testing](testing.md) | Test layout, isolation guards, live tests, fakes, CI |
 
-| Document | Purpose |
-|----------|---------|
-| [03-concepts/architecture](03-concepts/architecture.md) | System architecture |
-| [03-concepts/data-flow](03-concepts/data-flow.md) | Pipeline data flow |
-| [03-concepts/database](03-concepts/database.md) | Database schema, classification storage |
-| [03-concepts/glossary](03-concepts/glossary.md) | Core terms |
-
-## Usage
-
-| Document | Purpose |
-|----------|---------|
-| [05-usage/basic](05-usage/basic.md) | Basic CLI commands |
-| [05-usage/cli-reference](05-usage/cli-reference.md) | Full CLI reference |
-| [05-usage/advanced](05-usage/advanced.md) | Batch extraction, custom providers |
-| [05-usage/patterns](05-usage/patterns.md) | Do/don't patterns |
-
-## API
-
-| Document | Purpose |
-|----------|---------|
-| [06-api/endpoints](06-api/endpoints.md) | REST endpoints, WebSocket |
-| [06-api/python-reference](06-api/python-reference.md) | Python API (Database, parsers, classifiers) |
-| [06-api/schemas](06-api/schemas.md) | Request/response schemas |
-| [06-api/errors](06-api/errors.md) | Error codes |
-
-## Configuration & Examples
-
-| Document | Purpose |
-|----------|---------|
-| [07-configuration](07-configuration.md) | Config format, LLM providers, troubleshooting |
-| [08-examples/recipes](08-examples/recipes.md) | Copy-pastable examples |
-
-## Reference
-
-| Document | Purpose |
-|----------|---------|
-| [09-troubleshooting](09-troubleshooting.md) | Common errors, fixes |
-| [10-testing](10-testing.md) | Run tests, write tests |
-| [11-contributing](11-contributing.md) | Dev setup, PR process |
-| [14-license](14-license.md) | License, acknowledgements |
+The project history is in the [changelog](https://github.com/Pacman1984/postparse/blob/master/CHANGELOG.md).

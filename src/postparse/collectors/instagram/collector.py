@@ -462,6 +462,33 @@ class InstagramCollector:
         if not self.logged_in or self.loader is None:
             raise RuntimeError("InstagramCollector is not logged in; use 'with'")
 
+    # -- single posts ----------------------------------------------------
+
+    def fetch_post(self, shortcode: str) -> Any:
+        """Fetch one post with full metadata (one request).
+
+        Args:
+            shortcode: Post shortcode.
+
+        Returns:
+            instaloader ``Post``.
+
+        Raises:
+            InstagramRateLimited: Instagram rate-limited the request.
+            InstagramAuthRequired: The session became invalid.
+            Exception: Other instaloader errors unchanged (e.g.
+                ``QueryReturnedNotFoundException`` / ``BadResponseException``
+                for deleted or inaccessible posts).
+        """
+        self._require_login()
+        try:
+            return self._post_from_shortcode(self.loader, shortcode)
+        except Exception as exc:
+            translated = translate_error(exc)
+            if translated is not exc:
+                raise translated from exc
+            raise
+
     # -- collection ------------------------------------------------------
 
     def collect_saved(

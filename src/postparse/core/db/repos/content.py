@@ -152,3 +152,41 @@ class SummariesRepo:
             (json.dumps(list(item_ids)),),
         ).fetchall()
         return {row["item_id"]: Summary.from_row(row) for row in rows}
+
+    def items_needing_summary(
+        self,
+        *,
+        limit: int | None = None,
+        force: bool = False,
+        item_ids: Sequence[int] | None = None,
+    ) -> list[int]:
+        """Return items with a transcript and no summary newer than their newest transcript.
+
+        Args:
+            limit: Maximum items.
+            force: Ignore existing summaries (every item with a transcript).
+            item_ids: Restrict to these items.
+
+        Returns:
+            Item ids, oldest first.
+        """
+        sql = (
+            "SELECT m.item_id, max(t.created_at) AS newest FROM media AS m "
+            "JOIN transcripts AS t ON t.media_id = m.id "
+        )
+        params: list[object] = []
+        if item_ids is not None:
+            sql += "WHERE m.item_id IN (SELECT value FROM json_each(?)) "
+            params.append(json.dumps(list(item_ids)))
+        sql += "GROUP BY m.item_id"
+        outer = f"SELECT x.item_id FROM ({sql}) AS x "
+        if not force:
+            outer += (
+                "WHERE NOT EXISTS (SELECT 1 FROM summaries AS s WHERE s.item_id = x.item_id "
+                "AND s.created_at >= x.newest) "
+            )
+        outer += "ORDER BY x.item_id"
+        if limit is not None:
+            outer += " LIMIT ?"
+            params.append(limit)
+        return [int(row[0]) for row in self.conn.execute(outer, params).fetchall()]

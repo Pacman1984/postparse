@@ -12,6 +12,7 @@ Example:
     $ postparse extract telegram --full       # re-read everything
     $ postparse extract instagram --stop-after-known 20
     $ postparse extract instagram --refresh-dates --refresh-limit 50
+    $ postparse extract instagram --transcribe   # + transcripts/summaries of new videos
     $ postparse extract all
 """
 
@@ -20,6 +21,7 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -202,12 +204,13 @@ def _telegram(
 def _instagram(
     ctx: click.Context, *, db_path: str | None, username: str | None, session: str | None,
     limit: int | None, stop_after_known: int | None, batch_size: int, refresh_dates: bool,
-    refresh_limit: int | None, interactive: bool,
+    refresh_limit: int | None, interactive: bool, transcribe: bool = False,
 ) -> int:
     service = _build_service(ctx, db_path)
     mode = "full walk" if stop_after_known is None else f"stop after {stop_after_known} known"
     print_info(f"Collecting saved Instagram posts ({mode})")
-    return _run(
+    started = datetime.now(UTC) - timedelta(seconds=1)
+    code = _run(
         ctx, "Instagram", "Instagram extraction",
         lambda view: service.instagram(
             limit=limit, stop_after_known=stop_after_known, batch_size=batch_size,
@@ -215,6 +218,58 @@ def _instagram(
             progress=view, username=username, refresh_limit=refresh_limit,
         ),
     )
+    if transcribe and code in (EXIT_OK, EXIT_RATE_LIMITED):
+        code = _most_severe([code, _transcribe_new(ctx, db_path, started)])
+    return code
+
+
+def _build_transcription_service(ctx: click.Context, db_path: str | None) -> Any:
+    from postparse.cli.transcribe import _build_service as build
+
+    return build(ctx, db_path)
+
+
+def _build_summarization_service(ctx: click.Context, db_path: str | None) -> Any:
+    from postparse.cli.summarize import _build_service as build
+
+    return build(ctx, db_path)
+
+
+def _transcribe_new(ctx: click.Context, db_path: str | None, since: datetime) -> int:
+    """Transcribe + summarize videos collected in this run (their URLs are fresh)."""
+    from postparse.cli.summarize import run_summaries
+    from postparse.cli.transcribe import run_transcription
+
+    service = _build_transcription_service(ctx, db_path)
+    item_ids = service.items_with_fresh_urls("instagram", since)
+    get_console().print()
+    if not item_ids:
+        print_info("No newly collected videos to transcribe.")
+        return EXIT_OK
+    print_info(f"Transcribing {len(item_ids)} newly collected post(s) with videos")
+    report, code = run_transcription(
+        ctx, service, source=None, limit=None, backend=None, refetch=False,
+        item_ids=item_ids, title="Transcription of new videos",
+    )
+    if report is None or not report.item_ids:
+        return code
+    get_console().print()
+    try:
+        summaries = _build_summarization_service(ctx, db_path)
+        run_summaries(ctx, summaries, limit=None, provider=None, force=False,
+                      item_ids=report.item_ids)
+    except click.ClickException as exc:
+        print_warning(f"Summaries skipped: {exc.message}")
+    except Exception as exc:
+        logger.debug("Summarization failed", exc_info=True)
+        print_warning(f"Summaries skipped: {type(exc).__name__}: {exc}")
+    return code
+
+
+def _most_severe(codes: list[int]) -> int:
+    """Return the most severe exit code (3 rate limited > 2 login > 1 error > 0)."""
+    severity = {EXIT_RATE_LIMITED: 4, EXIT_AUTH: 3, EXIT_ERROR: 2, 130: 1}
+    return max(codes, key=lambda c: severity.get(c, 0)) if codes else EXIT_OK
 
 
 def _stop_after(force: bool, stop_after_known: int) -> int | None:
@@ -315,12 +370,16 @@ def telegram(
     "--refresh-limit", type=click.IntRange(min=1),
     help="Maximum posts for --refresh-dates (default: all unverified).",
 )
+@click.option(
+    "--transcribe", is_flag=True,
+    help="Afterwards transcribe and summarize the newly collected videos (fresh URLs).",
+)
 @_interactive_option
 @click.pass_context
 def instagram(
     ctx: click.Context, db_path: str | None, username: str | None, session: str | None,
     limit: int | None, stop_after_known: int, force: bool, batch_size: int,
-    refresh_dates: bool, refresh_limit: int | None, interactive: bool,
+    refresh_dates: bool, refresh_limit: int | None, transcribe: bool, interactive: bool,
 ) -> None:
     """Collect saved Instagram posts (newest first, stops at known posts).
 
@@ -332,6 +391,7 @@ def instagram(
         postparse extract instagram --limit 50
         postparse extract instagram --force
         postparse extract instagram --refresh-dates --refresh-limit 100
+        postparse extract instagram --transcribe
 
     Note:
         New posts are throttled (several seconds each). If Instagram asks for a
@@ -341,6 +401,7 @@ def instagram(
         ctx, db_path=db_path, username=username, session=session, limit=limit,
         stop_after_known=_stop_after(force, stop_after_known), batch_size=batch_size,
         refresh_dates=refresh_dates, refresh_limit=refresh_limit, interactive=interactive,
+        transcribe=transcribe,
     )
     if code:
         ctx.exit(code)

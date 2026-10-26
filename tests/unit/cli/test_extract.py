@@ -182,7 +182,8 @@ def test_help(command: str) -> None:
     result = CliRunner().invoke(cli, ["extract", command, "--help"])
     assert result.exit_code == 0
     assert "--limit" in result.output
-    assert "--transcribe" not in result.output
+    # Only `extract instagram` chains transcription (WP6).
+    assert ("--transcribe" in result.output) == (command == "instagram")
 
 
 def test_help_lists_new_options() -> None:

@@ -261,6 +261,8 @@ def info():
     commands.add_row("check", "Check for new content")
     commands.add_row("extract", "Extract from Telegram/Instagram")
     commands.add_row("classify", "Classify content (ML/LLM)")
+    commands.add_row("transcribe", "Transcribe saved videos")
+    commands.add_row("summarize", "Summarize transcribed items")
     commands.add_row("search", "Search posts and messages")
     commands.add_row("serve", "Start API server")
     commands.add_row("db", "Database operations")
@@ -272,6 +274,7 @@ def info():
 
 # Register subcommands
 from postparse.cli import extract, classify, search, serve, db, config, check, enrich
+from postparse.cli import transcribe, summarize
 
 cli.add_command(extract.extract)
 cli.add_command(classify.classify)
@@ -281,6 +284,8 @@ cli.add_command(db.db)
 cli.add_command(config.config)
 cli.add_command(check.check)
 cli.add_command(enrich.enrich)
+cli.add_command(transcribe.transcribe)
+cli.add_command(summarize.summarize)
 
 # Add stats as a top-level alias for convenience
 cli.add_command(db.stats, name='stats')

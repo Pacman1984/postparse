@@ -157,12 +157,15 @@ class MediaRepo:
         params.append(limit)
         return [Media.from_row(row) for row in self.conn.execute(sql, params).fetchall()]
 
-    def mark_transcribed(self, media_id: int, status: str = "transcribed") -> None:
+    def mark_transcribed(
+        self, media_id: int, status: str = "transcribed", reason: str | None = None
+    ) -> None:
         """Mark media as finished.
 
         Args:
             media_id: Media id.
             status: ``transcribed``, ``no_audio`` or ``skipped``.
+            reason: Why (stored in ``last_error``; e.g. why media was skipped).
 
         Raises:
             ValueError: For any other status.
@@ -170,10 +173,95 @@ class MediaRepo:
         if status not in ("transcribed", "no_audio", "skipped"):
             raise ValueError(f"Not a terminal transcript status: {status!r}")
         self.conn.execute(
-            "UPDATE media SET transcript_status = ?, last_error = NULL, next_attempt_at = NULL, "
+            "UPDATE media SET transcript_status = ?, last_error = ?, next_attempt_at = NULL, "
             "updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",
-            (status, media_id),
+            (status, reason, media_id),
         )
+
+    def set_duration(self, media_id: int, duration_s: float | None) -> None:
+        """Store the media duration (seconds) if it is known."""
+        if duration_s is None:
+            return
+        self.conn.execute(
+            "UPDATE media SET duration_s = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') "
+            "WHERE id = ?",
+            (float(duration_s), media_id),
+        )
+
+    def transcribable_for_items(self, item_ids: Sequence[int]) -> list[Media]:
+        """Return pending/failed media of the given items (backoff and attempts ignored).
+
+        Used for explicit requests (``transcribe run --item``) and right after
+        collection.
+
+        Returns:
+            Media ordered by item and position.
+        """
+        if not item_ids:
+            return []
+        rows = self.conn.execute(
+            "SELECT * FROM media WHERE item_id IN (SELECT value FROM json_each(?)) "
+            "AND transcript_status IN ('pending', 'failed') ORDER BY item_id, position",
+            (json.dumps(list(item_ids)),),
+        ).fetchall()
+        return [Media.from_row(row) for row in rows]
+
+    def items_with_fresh_urls(self, source: Source, since: datetime) -> list[int]:
+        """Return items with pending media whose URL was observed at/after ``since``."""
+        rows = self.conn.execute(
+            "SELECT DISTINCT m.item_id FROM media AS m JOIN items AS i ON i.id = m.item_id "
+            "WHERE i.source = ? AND m.transcript_status IN ('pending', 'failed') "
+            "AND m.remote_url IS NOT NULL AND m.remote_url_seen_at >= ? ORDER BY m.item_id",
+            (source, to_db_ts(since)),
+        ).fetchall()
+        return [int(row[0]) for row in rows]
+
+    def queue_stats(
+        self, *, max_attempts: int = 5, now: datetime | None = None
+    ) -> dict[str, object]:
+        """Return transcription queue statistics.
+
+        Returns:
+            ``{"counts": {(source, status): n}, "due": {source: n},
+            "exhausted": {source: n}, "next_attempt_at": {source: ts | None},
+            "transcripts": n, "transcribed_seconds": s}``.
+        """
+        now_ts = to_db_ts(now) if now is not None else utcnow_ts()
+        counts = {
+            (row[0], row[1]): int(row[2])
+            for row in self.conn.execute(
+                "SELECT i.source, m.transcript_status, count(*) FROM media AS m "
+                "JOIN items AS i ON i.id = m.item_id GROUP BY 1, 2 ORDER BY 1, 2"
+            ).fetchall()
+        }
+        due: dict[str, int] = {}
+        exhausted: dict[str, int] = {}
+        next_at: dict[str, str | None] = {}
+        for row in self.conn.execute(
+            "SELECT i.source, "
+            " sum(CASE WHEN m.attempts < ? AND (m.next_attempt_at IS NULL "
+            "          OR m.next_attempt_at <= ?) THEN 1 ELSE 0 END), "
+            " sum(CASE WHEN m.attempts >= ? THEN 1 ELSE 0 END), "
+            " min(CASE WHEN m.attempts < ? AND m.next_attempt_at > ? "
+            "          THEN m.next_attempt_at END) "
+            "FROM media AS m JOIN items AS i ON i.id = m.item_id "
+            "WHERE m.transcript_status IN ('pending', 'failed') GROUP BY 1",
+            (max_attempts, now_ts, max_attempts, max_attempts, now_ts),
+        ).fetchall():
+            due[row[0]] = int(row[1] or 0)
+            exhausted[row[0]] = int(row[2] or 0)
+            next_at[row[0]] = row[3]
+        totals = self.conn.execute(
+            "SELECT count(*), coalesce(sum(duration_s), 0) FROM transcripts"
+        ).fetchone()
+        return {
+            "counts": counts,
+            "due": due,
+            "exhausted": exhausted,
+            "next_attempt_at": next_at,
+            "transcripts": int(totals[0]),
+            "transcribed_seconds": float(totals[1]),
+        }
 
     def mark_failed(
         self,

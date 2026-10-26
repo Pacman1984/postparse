@@ -54,7 +54,8 @@ def list_jobs(
     summary="Check job status",
     description="""
     Status of any background job. Failed jobs carry an `error_code`
-    (`auth_required`, `credentials_missing`, `rate_limited`, `suspected_block`,
+    (`auth_required`, `credentials_missing`, `rate_limited`, `feed_unavailable`,
+    `suspected_block`,
     `backend_unavailable`, `llm_error`, `invalid_request`, `cancelled`,
     `internal_error`); finished jobs carry the service report in `result`.
     """,

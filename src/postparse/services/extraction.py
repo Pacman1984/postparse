@@ -25,6 +25,7 @@ from typing import Any
 from postparse.collectors.base import (
     AuthRequired,
     CollectStats,
+    InstagramFeedUnavailable,
     ProgressCallback,
     RateLimited,
     StopReason,
@@ -54,8 +55,9 @@ class ExtractionReport:
         last_external_id: Last committed item (how far the run got).
         errors: Non-fatal per-item problems plus the fatal error, if any.
         stopped_reason: ``early_stop``, ``limit``, ``end_of_feed``,
-            ``rate_limited`` or ``auth_required`` (``None`` after an
-            unexpected error).
+            ``rate_limited``, ``auth_required`` or ``feed_unavailable``
+            (Instagram refused the saved feed; ``None`` after an unexpected
+            error).
         error: Message of the error that ended the run, if any.
         duration_s: Wall-clock duration in seconds.
     """
@@ -242,7 +244,7 @@ class ExtractionService:
                 InstagramOptions.from_config(self.config),
                 interactive=interactive,
                 session=session,
-                **self.instagram_overrides,
+                **{"progress": progress, **self.instagram_overrides},
             )
             with collector:
                 collector.collect_saved(
@@ -272,7 +274,12 @@ class ExtractionService:
             if stats is not None
             else ExtractionReport(source=source, duration_s=duration)
         )
-        report.stopped_reason = "rate_limited" if isinstance(exc, RateLimited) else "auth_required"
+        if isinstance(exc, InstagramFeedUnavailable):
+            report.stopped_reason = "feed_unavailable"
+        elif isinstance(exc, RateLimited):
+            report.stopped_reason = "rate_limited"
+        else:
+            report.stopped_reason = "auth_required"
         report.error = str(exc)
         report.errors.append(str(exc))
         logger.warning("%s extraction stopped: %s", source, exc)

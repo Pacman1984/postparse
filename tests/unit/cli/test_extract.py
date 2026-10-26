@@ -9,10 +9,14 @@ from click.testing import CliRunner
 from instaloader.exceptions import LoginException, TooManyRequestsException
 
 from postparse.cli.main import cli
+from postparse.collectors.base import InstagramFeedUnavailable
+from postparse.collectors.instagram.collector import iter_saved_feed
 from postparse.config import Settings
 from postparse.core.db import Database
 from postparse.services.extraction import ExtractionService
 from tests.unit.collectors.fakes import (
+    IG_SAVED_FEED,
+    IG_USER_INFO,
     THROTTLED_401,
     FakeLoader,
     FakeTelegramClient,
@@ -157,6 +161,85 @@ def test_instagram_throttled_session_check_exit_3(env, tmp_path: Path) -> None:
     assert env["loader"].logins == []
     assert session.read_text() == "original-session"
     assert_no_secrets(result.output)
+
+
+FEED_FAIL = (
+    '200 OK - "fail" status, message "We\'re sorry, but something went wrong. Please try again."'
+)
+
+
+def test_instagram_feed_refused_exit_3_keeps_progress(env, tmp_path: Path) -> None:
+    env["feed"] = Feed(
+        [ig_post(ig_node(c)) for c in "abc"],
+        fail_at=2,
+        error=InstagramFeedUnavailable("web", "We're sorry, but something went wrong."),
+    )
+    result = invoke(["instagram", "--batch-size", "1"], SECRETS)
+
+    assert result.exit_code == 3, result.output
+    text = " ".join(result.output.split())
+    assert "feed refused by Instagram" in text
+    assert "session is fine" in text and 'instagram.feed_api = "iphone"' in text
+    assert "Everything committed before the feed was refused has been kept." in text
+    assert "ConnectionException" not in text
+    with Database.open(Settings(data_dir=tmp_path / "data").db_path).read() as conn:
+        assert conn.execute("SELECT count(*) FROM items").fetchone()[0] == 2
+    assert_no_secrets(result.output)
+
+
+def test_instagram_feed_fail_status_from_the_web_feed_exit_3(env, tmp_path: Path) -> None:
+    """The real feed iterator against the fake context: one request, typed error."""
+    session = Settings(data_dir=tmp_path / "data").sessions_dir / "instagram_me"
+    session.parent.mkdir(parents=True)
+    session.write_text("original-session")
+    loader = FakeLoader(session_user="me")
+    loader.context.web_responses[IG_SAVED_FEED] = ig_error(FEED_FAIL, IG_SAVED_FEED)
+    env["loader"] = loader
+    env["feed"] = lambda ldr: iter_saved_feed(ldr.context, "web", "me")
+
+    result = invoke(["instagram"], SECRETS)
+
+    assert result.exit_code == 3, result.output
+    assert [r[:2] for r in loader.context.requests] == [
+        ("iphone", IG_USER_INFO),
+        ("web", IG_SAVED_FEED),
+    ]
+    assert "something went wrong" in " ".join(result.output.split())
+    assert loader.logins == []
+
+
+def test_instagram_prints_verified_session(env, tmp_path: Path) -> None:
+    session = Settings(data_dir=tmp_path / "data").sessions_dir / "instagram_me"
+    session.parent.mkdir(parents=True)
+    session.write_text("original-session")
+    env["loader"] = FakeLoader(session_user="me")
+    result = invoke(["instagram"], SECRETS)
+    assert result.exit_code == 0, result.output
+    assert "Instagram session verified (no password login)" in result.output
+    assert "password (" not in result.output
+    assert_no_secrets(result.output)
+
+
+def test_instagram_prints_password_login(env) -> None:
+    result = invoke(["instagram"], SECRETS)  # no session file
+    assert result.exit_code == 0, result.output
+    text = " ".join(result.output.split())
+    assert "Logging in to Instagram with the password (no session file)" in text
+    assert "session verified" not in text
+    assert_no_secrets(result.output)
+
+
+def test_instagram_invalid_feed_api_is_a_clear_error(env, monkeypatch: pytest.MonkeyPatch) -> None:
+    from postparse.collectors.instagram import InstagramOptions
+
+    def broken(config):
+        return InstagramOptions(feed_api="graphql")  # type: ignore[arg-type]
+
+    monkeypatch.setattr(InstagramOptions, "from_config", staticmethod(broken))
+    result = invoke(["instagram"], SECRETS)
+    assert result.exit_code == 1
+    assert "instagram.feed_api must be one of 'web', 'iphone'" in " ".join(result.output.split())
+    assert env["loader"].logins == []
 
 
 def test_instagram_checkpoint_exit_2(env) -> None:

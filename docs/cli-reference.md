@@ -34,7 +34,7 @@ Running `postparse` without a command shows a welcome banner.
 | `0` | success |
 | `1` | error (also: a failed check in `config validate` / `check` / `db check`, ASR backend unavailable) |
 | `2` | login required (`extract`, `transcribe run`: Telegram/Instagram session invalid or 2FA needed in non-interactive mode); also click usage errors |
-| `3` | rate limited (Telegram FloodWait above the threshold, Instagram 429) or suspected Instagram soft block (`transcribe run`) |
+| `3` | rate limited (Telegram FloodWait above the threshold, Instagram 429), Instagram refused the saved feed (`"fail"` status; see `instagram.feed_api`) or suspected Instagram soft block (`transcribe run`) |
 | `130` | interrupted (Ctrl-C) |
 
 `extract all` returns the most severe code of the platforms (3 > 2 > 1).

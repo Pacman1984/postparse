@@ -196,6 +196,27 @@ postparse db reindex
   no `sessionid` cookie) or when there is no session file. Repeated scripted
   password logins are what triggers checkpoints, so do not delete a session
   file just because of this message.
+* **Session outcome on the console**: every `extract instagram` run prints
+  either "Instagram session verified (no password login)" or a warning
+  "Logging in to Instagram with the password (...)" with the reason (no
+  session file, session not logged in, session file unreadable). A password
+  login is never silent.
+* **"Instagram refused the saved feed ... something went wrong"**: exit code 3
+  (`stopped_reason` / job `error_code` `feed_unavailable`). The session check
+  passed, so the session is fine and no password login is attempted; Instagram
+  answered the feed request (`api/v1/feed/saved/posts/`) with HTTP 200 and
+  `"status": "fail"`. Everything committed before is kept. Feed pages get a
+  single attempt (only network errors such as timeouts are retried, up to
+  `instagram.max_connection_attempts`), so a refusal costs one request. The
+  answer depends on how the feed is requested, so the API is configurable:
+  `instagram.feed_api = "web"` (default) requests
+  `https://www.instagram.com/api/v1/feed/saved/posts/` with the web app's
+  headers (`X-IG-App-ID`, `X-CSRFToken` from the session cookie,
+  `X-Requested-With`, `X-ASBD-ID`, `X-IG-WWW-Claim`, the saved page as
+  `Referer`), which fits a session created on the website; `"iphone"` uses
+  the private API on `i.instagram.com` with instaloader's iPad headers. If one
+  keeps failing, switch to the other in `config/config.toml` and retry once;
+  if both fail, wait a few hours.
 * **Rate limit (429) / soft block**: exit code 3. Instagram sometimes answers a
   soft-blocked session with errors that look like deleted posts; the
   transcription circuit breaker stops after

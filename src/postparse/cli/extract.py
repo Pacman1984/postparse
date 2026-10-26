@@ -5,7 +5,8 @@ Credentials come from the environment (``config/.env`` is loaded by the CLI):
 ``TELEGRAM_API_ID``, ``TELEGRAM_API_HASH``, ``TELEGRAM_PHONE`` and
 ``INSTAGRAM_USERNAME``, ``INSTAGRAM_PASSWORD``.
 
-Exit codes: 0 success, 1 unexpected error, 2 login required, 3 rate limited.
+Exit codes: 0 success, 1 unexpected error, 2 login required, 3 rate limited
+or Instagram refused the saved feed (retry later; nothing stored is lost).
 
 Example:
     $ postparse extract telegram              # new messages only
@@ -91,6 +92,14 @@ class _ProgressView:
         self.task: Any = None
 
     def __call__(self, event: ProgressEvent) -> None:
+        if event.phase in _SESSION_PHASES:
+            # Session outcome: one visible line (a password login always shows as a warning).
+            self.stop()
+            if event.phase == "login":
+                print_warning(event.message or "Logging in to Instagram with the password")
+            else:
+                print_info(event.message or "Instagram session verified")
+            return
         if self.progress is None:
             self.progress = Progress(
                 SpinnerColumn(),
@@ -117,12 +126,16 @@ class _ProgressView:
             self.progress = None
 
 
+#: Progress phases that report the Instagram session outcome (printed as a line).
+_SESSION_PHASES = ("session", "login")
+
 _REASONS = {
     "end_of_feed": "reached the end",
     "early_stop": "stopped at known posts",
     "limit": "limit reached",
     "rate_limited": "rate limited",
     "auth_required": "login required",
+    "feed_unavailable": "feed refused by Instagram",
 }
 
 
@@ -162,6 +175,10 @@ def _exit_code(report: ExtractionReport) -> int:
     if report.stopped_reason == "rate_limited":
         print_warning(report.error or "Rate limited; retry later.")
         print_info("Everything committed before the limit was hit has been kept.")
+        return EXIT_RATE_LIMITED
+    if report.stopped_reason == "feed_unavailable":
+        print_warning(report.error or "Instagram refused the saved feed; retry later.")
+        print_info("Everything committed before the feed was refused has been kept.")
         return EXIT_RATE_LIMITED
     print_success(f"{report.source.capitalize()} extraction completed.")
     return EXIT_OK

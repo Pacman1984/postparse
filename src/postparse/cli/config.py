@@ -338,6 +338,7 @@ def _validate_features(manager: Any, results: list[dict[str, str]], providers: s
     import importlib.util
 
     from postparse.classification.taxonomy import load_taxonomies
+    from postparse.collectors.instagram import InstagramOptions
     from postparse.enrichment.options import EnrichmentOptions
     from postparse.media.options import TranscriptionOptions
 
@@ -384,6 +385,12 @@ def _validate_features(manager: Any, results: list[dict[str, str]], providers: s
         )
     except ValueError as exc:
         _add(results, "Enrichment", "fail", str(exc))
+
+    try:
+        instagram = InstagramOptions.from_config(manager)
+        _add(results, "Instagram", "pass", f"feed_api {instagram.feed_api}")
+    except ValueError as exc:
+        _add(results, "Instagram", "fail", str(exc))
 
 
 @config.command()

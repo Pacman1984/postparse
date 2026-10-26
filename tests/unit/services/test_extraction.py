@@ -96,6 +96,21 @@ def test_instagram_rate_limit_gives_partial_report(db: Database, settings: Setti
     assert "rate limit" in report.error
 
 
+def test_instagram_feed_unavailable_gives_partial_report(db: Database, settings: Settings) -> None:
+    from postparse.collectors.base import InstagramFeedUnavailable
+
+    feed = Feed(
+        [ig_post(ig_node(c)) for c in "abcd"],
+        fail_at=3,
+        error=InstagramFeedUnavailable("web", "something went wrong"),
+    )
+    report = service(db, settings, IG_ENV, feed=feed).instagram(batch_size=2)
+
+    assert report.stopped_reason == "feed_unavailable" and not report.ok
+    assert report.new == 3 and report.last_external_id == "c"
+    assert "session is fine" in report.error
+
+
 def test_instagram_refresh_dates_keeps_collect_reason(db: Database, settings: Settings) -> None:
     from postparse.core.db.models import InstagramDetail, ItemUpsert
     from postparse.core.db.repos import ItemsRepo

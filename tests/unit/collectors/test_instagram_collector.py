@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import pickle
 from pathlib import Path
+from typing import Any
 
 import instaloader
 import pytest
@@ -21,12 +22,14 @@ from instaloader.exceptions import (
 
 from postparse.collectors.base import (
     InstagramAuthRequired,
+    InstagramFeedUnavailable,
     InstagramRateLimited,
     InstagramSessionCheckFailed,
 )
 from postparse.collectors.credentials import InstagramCredentials
 from postparse.collectors.instagram.collector import (
     InstagramCollector,
+    InstagramOptions,
     iter_saved_feed,
     map_post,
     post_from_iphone_media,
@@ -603,7 +606,7 @@ def test_valid_session_check_uses_one_attempt_and_no_legacy_hash(
 ) -> None:
     _existing_session(settings)
     loader = FakeLoader(session_user="Me")  # usernames compare case-insensitively
-    loader.context.iphone_responses[IG_SAVED_FEED] = saved_feed_pages(
+    loader.context.web_responses[IG_SAVED_FEED] = saved_feed_pages(
         saved_page([ig_iphone_media("a")])
     )
     collector = InstagramCollector(
@@ -614,10 +617,10 @@ def test_valid_session_check_uses_one_attempt_and_no_legacy_hash(
 
     assert loader.logins == []
     assert loader.legacy_hash_requests() == []
-    assert [r[0] for r in loader.context.requests] == ["iphone", "iphone"]
+    assert [r[0] for r in loader.context.requests] == ["iphone", "web"]
     (check, feed) = loader.context.requests
     assert check[1] == IG_USER_INFO and check[3] == 1  # single connection attempt
-    assert feed[1] == IG_SAVED_FEED and feed[3] == 3  # feed keeps the configured attempts
+    assert feed[1] == IG_SAVED_FEED and feed[3] == 1  # feed pages: one attempt as well
     assert loader.context.max_connection_attempts == 3  # restored
     assert loader.context.user_id == int(IG_USER_ID)
 
@@ -656,18 +659,39 @@ def test_unreadable_session_file_falls_back_to_password(db: Database, settings: 
 
 
 # ---------------------------------------------------------------------------
-# Saved feed via the private API
+# Saved feed (web REST API by default, private iPhone API as fallback)
 # ---------------------------------------------------------------------------
+
+FEED_APIS = pytest.mark.parametrize("feed_api", ["web", "iphone"])
+#: First-page parameters per feed API.
+BASE_PARAMS = {"web": {"count": "50"}, "iphone": {"include_igtv_preview": "false"}}
+#: ``FakeIgContext.requests`` kind per feed API.
+KIND = {"web": "web", "iphone": "iphone"}
+
+FEED_FAIL_200 = (
+    '200 OK - "fail" status, message "We\'re sorry, but something went wrong. Please try again."'
+)
+
+
+def _feed_table(loader: FakeLoader | FakeIgContext, feed_api: str) -> dict:
+    context = loader.context if isinstance(loader, FakeLoader) else loader
+    return context.web_responses if feed_api == "web" else context.iphone_responses
 
 
 def _feed_collector(
-    db: Database, settings: Settings, *pages: dict
+    db: Database, settings: Settings, *pages: dict, feed_api: str = "web", **kwargs
 ) -> tuple[InstagramCollector, FakeLoader]:
     _existing_session(settings)
     loader = FakeLoader(session_user="me")
-    loader.context.iphone_responses[IG_SAVED_FEED] = saved_feed_pages(*pages)
+    _feed_table(loader, feed_api)[IG_SAVED_FEED] = saved_feed_pages(*pages)
     collector = InstagramCollector(
-        db, settings, CREDS, loader_factory=loader_factory(loader), sleep=SleepRecorder()
+        db,
+        settings,
+        CREDS,
+        InstagramOptions(feed_api=feed_api),
+        loader_factory=loader_factory(loader),
+        sleep=SleepRecorder(),
+        **kwargs,
     )
     return collector, loader
 
@@ -676,27 +700,85 @@ def _feed_requests(loader: FakeLoader) -> list[dict]:
     return [r[2] for r in loader.context.requests if r[1] == IG_SAVED_FEED]
 
 
-def test_saved_feed_paginates_with_max_id(db: Database, settings: Settings) -> None:
+@FEED_APIS
+def test_saved_feed_paginates_with_max_id(db: Database, settings: Settings, feed_api: str) -> None:
     collector, loader = _feed_collector(
         db,
         settings,
         saved_page([ig_iphone_media("a"), ig_iphone_media("b")], next_max_id="cursor-1"),
         saved_page([ig_iphone_media("c")], next_max_id="cursor-2"),
         saved_page([ig_iphone_media("d")]),
+        feed_api=feed_api,
     )
     with collector:
         stats = collector.collect_saved()
 
     assert (stats.new, stats.stopped_reason) == (4, "end_of_feed")
+    base = BASE_PARAMS[feed_api]
     assert _feed_requests(loader) == [
-        {"include_igtv_preview": "false"},
-        {"include_igtv_preview": "false", "max_id": "cursor-1"},
-        {"include_igtv_preview": "false", "max_id": "cursor-2"},
+        base,
+        {**base, "max_id": "cursor-1"},
+        {**base, "max_id": "cursor-2"},
     ]
+    # Only the configured API is used for the feed (the session check is always iphone).
+    feed_kinds = {r[0] for r in loader.context.requests if r[1] == IG_SAVED_FEED}
+    assert feed_kinds == {KIND[feed_api]}
     assert [get(db, c)[1].saved_feed_rank for c in "abcd"] == [0, 1, 2, 3]
 
 
-def test_saved_feed_early_stop_skips_further_pages(db: Database, settings: Settings) -> None:
+def test_default_feed_api_is_web_and_never_calls_the_iphone_feed(
+    db: Database, settings: Settings
+) -> None:
+    _existing_session(settings)
+    loader = FakeLoader(session_user="me")
+    loader.context.web_responses[IG_SAVED_FEED] = saved_feed_pages(
+        saved_page([ig_iphone_media("w1")])
+    )
+    # An iphone feed request would raise NetworkUsed (no scripted answer).
+    collector = InstagramCollector(
+        db, settings, CREDS, loader_factory=loader_factory(loader), sleep=SleepRecorder()
+    )
+    with collector:
+        collector.collect_saved()
+    assert ("iphone", IG_SAVED_FEED) not in [r[:2] for r in loader.context.requests]
+    assert count(db) == 1
+
+
+def test_web_feed_sends_the_web_app_headers(db: Database, settings: Settings) -> None:
+    collector, loader = _feed_collector(
+        db, settings, saved_page([ig_iphone_media("a")], next_max_id="c1"), saved_page([])
+    )
+    pages = saved_feed_pages(saved_page([ig_iphone_media("a")], next_max_id="c1"))
+    claims: list[str] = []
+
+    def answer(params: dict) -> dict:
+        claims.append(loader.context.web_headers[-1]["X-IG-WWW-Claim"])
+        return pages(params) if "max_id" not in params else saved_page([])
+
+    loader.context.web_responses[IG_SAVED_FEED] = answer
+    with collector:
+        collector.collect_saved()
+
+    headers = loader.context.web_headers[0]
+    lower = {k.lower(): v for k, v in headers.items()}
+    assert lower["x-ig-app-id"] == "936619743392459"
+    assert lower["x-csrftoken"] == SESSION_COOKIES["csrftoken"]  # from the session cookie
+    assert lower["x-requested-with"] == "XMLHttpRequest"
+    assert lower["x-asbd-id"] == "129477"
+    assert lower["referer"] == "https://www.instagram.com/me/saved/all-posts/"
+    assert lower["origin"] == "https://www.instagram.com"
+    assert lower["sec-fetch-site"] == "same-origin"
+    assert "x-instagram-ajax" not in lower and "content-length" not in lower
+    assert claims == ["0", "0"]
+    # The main session is left unchanged (headers live on a temporary copy).
+    main = {k.lower() for k in loader.context._session.headers}
+    assert "x-asbd-id" not in main and "x-ig-www-claim" not in main
+
+
+@FEED_APIS
+def test_saved_feed_early_stop_skips_further_pages(
+    db: Database, settings: Settings, feed_api: str
+) -> None:
     store(db, "k1", "k2")
     collector, loader = _feed_collector(
         db,
@@ -704,6 +786,7 @@ def test_saved_feed_early_stop_skips_further_pages(db: Database, settings: Setti
         saved_page([ig_iphone_media("n1"), ig_iphone_media("k1")], next_max_id="c1"),
         saved_page([ig_iphone_media("k2"), ig_iphone_media("n2")], next_max_id="c2"),
         saved_page([ig_iphone_media("n3")]),
+        feed_api=feed_api,
     )
     with collector:
         stats = collector.collect_saved(stop_after_known=2)
@@ -712,43 +795,192 @@ def test_saved_feed_early_stop_skips_further_pages(db: Database, settings: Setti
     assert len(_feed_requests(loader)) == 2  # the third page is never requested
 
 
+@FEED_APIS
+def test_saved_feed_early_stop_on_page_one(db: Database, settings: Settings, feed_api: str) -> None:
+    store(db, "k1")
+    collector, loader = _feed_collector(
+        db,
+        settings,
+        saved_page([ig_iphone_media("k1"), ig_iphone_media("n1")], next_max_id="c1"),
+        saved_page([ig_iphone_media("n2")]),
+        feed_api=feed_api,
+    )
+    with collector:
+        stats = collector.collect_saved(stop_after_known=1)
+    assert (stats.new, stats.stopped_reason) == (0, "early_stop")
+    assert _feed_requests(loader) == [BASE_PARAMS[feed_api]]  # page 2 never requested
+
+
+@FEED_APIS
 def test_saved_feed_stops_on_empty_page_and_repeated_cursor(
-    db: Database, settings: Settings
+    db: Database, settings: Settings, feed_api: str
 ) -> None:
     collector, loader = _feed_collector(
-        db, settings, saved_page([ig_iphone_media("a")], next_max_id="same")
+        db, settings, saved_page([ig_iphone_media("a")], next_max_id="same"), feed_api=feed_api
     )
     # The second request (max_id=same) answers the same cursor again.
-    loader.context.iphone_responses[IG_SAVED_FEED] = lambda params: saved_page(
+    _feed_table(loader, feed_api)[IG_SAVED_FEED] = lambda params: saved_page(
         [ig_iphone_media("a" if "max_id" not in params else "b")], next_max_id="same"
     )
     with collector:
         stats = collector.collect_saved()
     assert stats.new == 2 and len(_feed_requests(loader)) == 2
 
-    empty = iter_saved_feed(_context_with_feed(saved_page([], next_max_id="x")))
-    assert list(empty) == []
+    context = _context_with_feed(saved_page([], next_max_id="x"), feed_api=feed_api)
+    assert list(iter_saved_feed(context, feed_api)) == []
+    assert len(context.requests) == 1
 
 
-def _context_with_feed(*pages: dict) -> FakeIgContext:
+def test_saved_feed_accepts_bare_media_items() -> None:
+    """Items may be ``{"media": {...}}`` or the media struct itself; others are skipped."""
+    page = saved_page([ig_iphone_media("wrapped")])
+    page["items"] += [ig_iphone_media("bare"), {"media": {"no": "code"}}, "junk"]
+    context = _context_with_feed(page)
+    assert [p.shortcode for p in iter_saved_feed(context, "web", "me")] == ["wrapped", "bare"]
+
+
+def test_unknown_feed_api_is_rejected() -> None:
+    with pytest.raises(ValueError, match="unknown feed_api"):
+        list(iter_saved_feed(FakeIgContext("me"), "graphql"))  # type: ignore[arg-type]
+
+
+def _context_with_feed(*pages: dict, feed_api: str = "web") -> FakeIgContext:
     context = FakeIgContext("me")
-    context.iphone_responses[IG_SAVED_FEED] = saved_feed_pages(*pages)
+    _feed_table(context, feed_api)[IG_SAVED_FEED] = saved_feed_pages(*pages)
     return context
 
 
-def test_saved_feed_rate_limit_keeps_progress(db: Database, settings: Settings) -> None:
-    collector, loader = _feed_collector(
-        db, settings, saved_page([ig_iphone_media("a"), ig_iphone_media("b")], next_max_id="c1")
-    )
+@FEED_APIS
+def test_saved_feed_rate_limit_keeps_progress(
+    db: Database, settings: Settings, feed_api: str
+) -> None:
+    collector, loader = _feed_collector(db, settings, feed_api=feed_api)
     pages = saved_feed_pages(
         saved_page([ig_iphone_media("a"), ig_iphone_media("b")], next_max_id="c1")
     )
-    loader.context.iphone_responses[IG_SAVED_FEED] = lambda params: (
+    _feed_table(loader, feed_api)[IG_SAVED_FEED] = lambda params: (
         ig_error(THROTTLED_401, IG_SAVED_FEED) if params.get("max_id") else pages(params)
     )
     with pytest.raises(InstagramRateLimited), collector:
         collector.collect_saved()
     assert count(db) == 2 and collector.stats.stopped_reason == "rate_limited"
+
+
+@FEED_APIS
+def test_feed_fail_status_is_one_request_and_keeps_progress(
+    db: Database, settings: Settings, feed_api: str
+) -> None:
+    collector, loader = _feed_collector(db, settings, feed_api=feed_api)
+    pages = saved_feed_pages(
+        saved_page([ig_iphone_media("a"), ig_iphone_media("b")], next_max_id="c1")
+    )
+    _feed_table(loader, feed_api)[IG_SAVED_FEED] = lambda params: (
+        ig_error(FEED_FAIL_200, IG_SAVED_FEED) if params.get("max_id") else pages(params)
+    )
+    with pytest.raises(InstagramFeedUnavailable) as info, collector:
+        collector.collect_saved()
+
+    other = "iphone" if feed_api == "web" else "web"
+    message = str(info.value)
+    assert info.value.feed_api == feed_api
+    assert "something went wrong" in message and "session is fine" in message
+    assert "nothing stored was lost" in message and f'feed_api = "{other}"' in message
+    assert "https://" not in message  # no URL / query string in the message
+    assert len(_feed_requests(loader)) == 2  # page 2 asked once, no retries
+    assert all(r[3] == 1 for r in loader.context.requests if r[1] == IG_SAVED_FEED)
+    assert loader.context.max_connection_attempts == 3  # restored
+    assert count(db) == 2 and collector.stats.stopped_reason == "feed_unavailable"
+    assert loader.logins == []
+
+
+def test_feed_fail_status_on_first_page_is_one_request(db: Database, settings: Settings) -> None:
+    collector, loader = _feed_collector(db, settings)
+    loader.context.web_responses[IG_SAVED_FEED] = ig_error(FEED_FAIL_200, IG_SAVED_FEED)
+    with pytest.raises(InstagramFeedUnavailable), collector:
+        collector.collect_saved()
+    assert len(_feed_requests(loader)) == 1
+    assert collector.stats.stopped_reason == "feed_unavailable" and count(db) == 0
+
+
+def _network_error() -> Exception:
+    from instaloader.exceptions import ConnectionException
+
+    cause = requests.exceptions.ReadTimeout("Read timed out.")
+    try:
+        raise ConnectionException(f"JSON Query to {IG_SAVED_FEED}: {cause}") from cause
+    except ConnectionException as exc:
+        return exc
+
+
+def test_feed_network_errors_are_retried_up_to_the_configured_attempts(
+    db: Database, settings: Settings
+) -> None:
+    collector, loader = _feed_collector(db, settings)
+    answers = [_network_error(), saved_page([ig_iphone_media("a")])]
+    loader.context.web_responses[IG_SAVED_FEED] = lambda params: answers.pop(0)
+    with collector:
+        stats = collector.collect_saved()
+    assert stats.new == 1 and len(_feed_requests(loader)) == 2
+
+    collector, loader = _feed_collector(db, settings)
+    loader.context.web_responses[IG_SAVED_FEED] = lambda params: _network_error()
+    with pytest.raises(Exception, match="Read timed out"), collector:
+        collector.collect_saved()
+    assert len(_feed_requests(loader)) == 3  # max_connection_attempts
+    assert loader.context.max_connection_attempts == 3
+
+
+def test_feed_api_option_parsing() -> None:
+    class Cfg:
+        def __init__(self, **values: object) -> None:
+            self.values = {f"instagram.{k}": v for k, v in values.items()}
+
+        def get(self, key: str, default: object = None) -> object:
+            return self.values.get(key, default)
+
+    assert InstagramOptions.from_config(None).feed_api == "web"
+    assert InstagramOptions.from_config(Cfg()).feed_api == "web"
+    assert InstagramOptions.from_config(Cfg(feed_api="iphone")).feed_api == "iphone"
+    assert InstagramOptions.from_config(Cfg(feed_api=" Web ")).feed_api == "web"
+    with pytest.raises(ValueError, match=r"instagram\.feed_api must be one of 'web', 'iphone'"):
+        InstagramOptions.from_config(Cfg(feed_api="graphql"))
+    with pytest.raises(ValueError, match="feed_api"):
+        InstagramOptions(feed_api="mobile")  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# Session outcome on the progress callback
+# ---------------------------------------------------------------------------
+
+
+def test_verified_session_is_reported(db: Database, settings: Settings) -> None:
+    events: list = []
+    collector, _ = _feed_collector(db, settings, saved_page([]), progress=events.append)
+    collector.login()
+    assert [(e.phase, e.message) for e in events] == [
+        ("session", "Instagram session verified (no password login)")
+    ]
+
+
+@pytest.mark.parametrize(
+    ("setup", "why"),
+    [
+        ("logged_out", "session not logged in"),
+        ("no_file", "no session file"),
+    ],
+)
+def test_password_login_is_reported(db: Database, settings: Settings, setup: str, why: str) -> None:
+    if setup == "logged_out":
+        _existing_session(settings)
+    events: list = []
+    loader = FakeLoader(session_user=None)
+    collector = make(db, settings, loader=loader, progress=events.append)
+    collector.login()
+    assert loader.logins == ["me"]
+    assert [(e.phase, e.message) for e in events] == [
+        ("login", f"Logging in to Instagram with the password ({why})")
+    ]
+    assert all("pw-secret" not in (e.message or "") for e in events)
 
 
 def test_map_iphone_image_post() -> None:
@@ -832,16 +1064,22 @@ def test_iphone_mapping_never_triggers_requests() -> None:
 class _Http:
     """Records ``requests.Session.get/post`` calls and answers from a script."""
 
-    def __init__(self, answers: list[tuple[int, dict]]) -> None:
+    def __init__(self, answers: list[tuple]) -> None:
         self.answers = answers
         self.calls: list[tuple[str, str, dict]] = []
+        #: Request headers per call (lower-case names).
+        self.headers: list[dict[str, str]] = []
 
-    def response(self, method: str, url: str, params: dict | None) -> requests.Response:
+    def response(
+        self, method: str, url: str, params: dict | None, headers: Any = None
+    ) -> requests.Response:
         self.calls.append((method, url, dict(params or {})))
+        self.headers.append({k.lower(): v for k, v in dict(headers or {}).items()})
         if not self.answers:
             raise AssertionError(f"unexpected request {method} {url}")
-        status, body = self.answers.pop(0)
+        status, body, *extra = self.answers.pop(0)
         resp = requests.Response()
+        resp.headers.update(extra[0] if extra else {})
         resp.status_code = status
         resp.reason = {200: "OK", 401: "Unauthorized", 403: "Forbidden"}.get(status, "")
         resp._content = json.dumps(body).encode()
@@ -857,12 +1095,12 @@ def http(monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setattr(
             requests.Session,
             "get",
-            lambda self, url, params=None, **kw: fake.response("GET", url, params),
+            lambda self, url, params=None, **kw: fake.response("GET", url, params, self.headers),
         )
         monkeypatch.setattr(
             requests.Session,
             "post",
-            lambda self, url, data=None, **kw: fake.response("POST", url, data),
+            lambda self, url, data=None, **kw: fake.response("POST", url, data, self.headers),
         )
         return fake
 
@@ -899,11 +1137,24 @@ def test_real_context_throttled_check_is_one_request(
     assert path.read_bytes() == before
 
 
-def test_real_context_valid_session_and_saved_feed(db: Database, settings: Settings, http) -> None:
+@pytest.mark.parametrize(
+    ("feed_api", "feed_url"),
+    [
+        ("web", f"https://www.instagram.com/{IG_SAVED_FEED}"),
+        ("iphone", f"https://i.instagram.com/{IG_SAVED_FEED}"),
+    ],
+)
+def test_real_context_valid_session_and_saved_feed(
+    db: Database, settings: Settings, http, feed_api: str, feed_url: str
+) -> None:
     _real_session_file(settings)
     fake = http(
         (200, {"user": {"pk": 4242, "username": "me"}, "status": "ok"}),
-        (200, saved_page([ig_iphone_media("r1", 2, video_url="https://cdn/r1.mp4")], "c1")),
+        (
+            200,
+            saved_page([ig_iphone_media("r1", 2, video_url="https://cdn/r1.mp4")], "c1"),
+            {"x-ig-set-www-claim": "hmac.claim-1"},
+        ),
         (
             200,
             saved_page(
@@ -911,18 +1162,28 @@ def test_real_context_valid_session_and_saved_feed(db: Database, settings: Setti
             ),
         ),
     )
-    collector = _real_collector(db, settings)
+    collector = _real_collector(db, settings, options=InstagramOptions(feed_api=feed_api))
     with collector:
         stats = collector.collect_saved()
 
     assert stats.new == 2
     urls = [u for _, u, _ in fake.calls]
-    assert (
-        urls
-        == [f"https://i.instagram.com/{IG_USER_INFO}"]
-        + [f"https://i.instagram.com/{IG_SAVED_FEED}"] * 2
-    )
+    assert urls == [f"https://i.instagram.com/{IG_USER_INFO}"] + [feed_url] * 2
     assert fake.calls[2][2]["max_id"] == "c1"
+    first, second = fake.headers[1], fake.headers[2]
+    if feed_api == "web":
+        assert fake.calls[1][2] == {"count": "50"}
+        assert first["x-ig-app-id"] == "936619743392459"
+        assert first["x-csrftoken"] == SESSION_COOKIES["csrftoken"]
+        assert first["x-requested-with"] == "XMLHttpRequest"
+        assert first["referer"] == "https://www.instagram.com/me/saved/all-posts/"
+        assert first["host"] == "www.instagram.com"
+        assert (first["x-ig-www-claim"], second["x-ig-www-claim"]) == ("0", "hmac.claim-1")
+        assert "x-instagram-ajax" not in first and "x-pigeon-session-id" not in first
+    else:
+        assert fake.calls[1][2] == {"include_igtv_preview": "false"}
+        assert first["x-ig-app-id"] == "124024574287414"  # instaloader's iPad headers
+        assert "x-requested-with" not in first
     assert all(LEGACY_LOGIN_HASH not in repr(call) for call in fake.calls)
     assert all("query_hash" not in call[2] for call in fake.calls)
     assert get(db, "r1")[2][0].remote_url == "https://cdn/r1.mp4"
@@ -942,3 +1203,18 @@ def test_real_context_login_required_falls_back_to_password(
     collector = _real_collector(db, settings)
     collector.login()
     assert logins == ["me"] and collector.logged_in
+
+
+@pytest.mark.parametrize("feed_api", ["web", "iphone"])
+def test_real_context_feed_fail_status_is_exactly_one_request(
+    db: Database, settings: Settings, http, feed_api: str
+) -> None:
+    _real_session_file(settings)
+    fail = {"message": "We're sorry, but something went wrong. Please try again.", "status": "fail"}
+    fake = http((200, {"user": {"pk": 4242, "username": "me"}, "status": "ok"}), (200, fail))
+    collector = _real_collector(db, settings, options=InstagramOptions(feed_api=feed_api))
+    with pytest.raises(InstagramFeedUnavailable, match="something went wrong"), collector:
+        collector.collect_saved()
+    assert len(fake.calls) == 2  # session check + one feed request, no retries
+    assert collector.stats.stopped_reason == "feed_unavailable"
+    assert collector.loader.context.max_connection_attempts == 3

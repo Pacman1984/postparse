@@ -260,24 +260,39 @@ LOGGED_OUT_403 = '403 Forbidden - "fail" status, message "login_required"'
 class FakeIgContext:
     """instaloader context that records requests and answers only scripted ones.
 
-    ``iphone_responses`` maps a private API path to a response dict, an
-    exception to raise, or a callable ``params -> dict | exception``. Any other
-    request raises :class:`NetworkUsed`.
+    ``iphone_responses`` (``get_iphone_json``, ``i.instagram.com``) and
+    ``web_responses`` (``get_json`` with ``host="www.instagram.com"``) map a
+    path to a response dict, an exception to raise, or a callable
+    ``params -> dict | exception``. Any other request raises :class:`NetworkUsed`.
+    ``_session`` is a real (never used for I/O) ``requests.Session`` holding the
+    loaded cookies, as in instaloader.
     """
 
     def __init__(self, username: str | None = None) -> None:
+        import requests
+
         self.username = username
         self.is_logged_in = username is not None
         self.iphone_support = False
         self.user_id: int | None = None
         self.max_connection_attempts = 3
+        self.request_timeout = 30.0
+        self._session = requests.Session()
         self.iphone_responses: dict[str, Any] = {}
+        self.web_responses: dict[str, Any] = {}
         #: ``(kind, path or query id, params, max_connection_attempts)`` per request.
         self.requests: list[tuple[str, str, dict[str, Any], int]] = []
+        #: Request headers of each ``get_json`` call (same order as the "web" requests).
+        self.web_headers: list[dict[str, str]] = []
 
-    def get_iphone_json(self, path: str, params: dict[str, Any]) -> dict[str, Any]:
-        self.requests.append(("iphone", path, dict(params), self.max_connection_attempts))
-        answer = self.iphone_responses.get(path)
+    def set_cookies(self, cookies: dict[str, str]) -> None:
+        import requests
+
+        self._session.cookies = requests.utils.cookiejar_from_dict(dict(cookies))
+
+    @staticmethod
+    def _answer(table: dict[str, Any], path: str, params: dict[str, Any]) -> dict[str, Any]:
+        answer = table.get(path)
         if answer is None:
             raise NetworkUsed(f"unexpected Instagram request: {path}")
         if callable(answer):
@@ -285,6 +300,26 @@ class FakeIgContext:
         if isinstance(answer, BaseException):
             raise answer
         return answer
+
+    def get_iphone_json(self, path: str, params: dict[str, Any]) -> dict[str, Any]:
+        self.requests.append(("iphone", path, dict(params), self.max_connection_attempts))
+        return self._answer(self.iphone_responses, path, params)
+
+    def get_json(
+        self,
+        path: str,
+        params: dict[str, Any],
+        host: str = "www.instagram.com",
+        session: Any = None,
+        response_headers: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        if host != "www.instagram.com":
+            raise NetworkUsed(f"unexpected Instagram request to {host}/{path}")
+        self.requests.append(("web", path, dict(params), self.max_connection_attempts))
+        sess = session if session is not None else self._session
+        self.web_headers.append(dict(sess.headers))
+        return self._answer(self.web_responses, path, params)
 
     def graphql_query(self, query_hash: str, variables: Any, referer: Any = None) -> Any:
         self.requests.append(("graphql", query_hash, dict(variables), self.max_connection_attempts))
@@ -297,7 +332,7 @@ class FakeIgContext:
     def _refuse(self, *args: Any, **kwargs: Any) -> Any:
         raise NetworkUsed("unexpected Instagram request")
 
-    get_json = head = _refuse
+    head = _refuse
 
     def error(self, *args: Any, **kwargs: Any) -> None:
         return None
@@ -351,6 +386,7 @@ class FakeLoader:
         self.context.username = username
         self.context.is_logged_in = True
         self.cookies = dict(self.session_cookies)
+        self.context.set_cookies(self.cookies)
 
     def save_session(self) -> dict[str, str]:
         return dict(self.cookies)
@@ -365,6 +401,7 @@ class FakeLoader:
         self.context.username = user
         self.context.is_logged_in = True
         self.cookies = dict(SESSION_COOKIES)
+        self.context.set_cookies(self.cookies)
 
     def two_factor_login(self, code: str) -> None:
         self.two_factor_codes.append(code)
@@ -372,6 +409,7 @@ class FakeLoader:
             raise self.two_factor_error
         self.context.is_logged_in = True
         self.cookies = dict(SESSION_COOKIES)
+        self.context.set_cookies(self.cookies)
 
     def save_session_to_file(self, filename: str) -> None:
         self.saved.append(filename)

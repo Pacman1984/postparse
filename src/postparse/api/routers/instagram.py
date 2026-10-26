@@ -70,7 +70,9 @@ router = APIRouter(
     otherwise the run stops after `stop_after_known` consecutive known posts.
     A missing or expired login fails the job with `error_code=auth_required`
     (log in once with `postparse extract instagram` in a terminal); rate limits
-    fail it with `rate_limited`. Counts of partial runs are kept in `result`.
+    fail it with `rate_limited`; a saved feed that Instagram refuses with a "fail"
+    status ("something went wrong") fails it with `feed_unavailable` (see
+    `instagram.feed_api`). Counts of partial runs are kept in `result`.
     """,
 )
 async def extract_posts(

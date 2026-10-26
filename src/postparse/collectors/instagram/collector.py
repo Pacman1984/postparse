@@ -1,7 +1,10 @@
 """Incremental collector for the Instagram saved feed (instaloader).
 
-The saved feed (private API ``api/v1/feed/saved/posts/``) is newest-first,
-paginated with ``max_id``. The collector walks it and stops after
+The saved feed (``api/v1/feed/saved/posts/``) is newest-first, paginated
+with ``max_id``. It is requested the way the Instagram web app does it
+(``www.instagram.com`` with web headers, ``instagram.feed_api = "web"``,
+default) or through the private iPhone API (``i.instagram.com``,
+``"iphone"``). The collector walks it and stops after
 ``stop_after_known`` consecutive posts that are already stored, so a routine
 run costs only a page or two of feed requests. New posts are mapped from the
 feed node itself (no per-post request), throttled with a jittered pause and
@@ -14,7 +17,9 @@ feed item already carries it).
 The saved session is verified with a single request to the private user-info
 endpoint (no legacy GraphQL ``query_hash``). Only a definitive "not logged in"
 answer falls back to the password login; a throttled or failed check raises
-:class:`InstagramSessionCheckFailed` and leaves the session file alone.
+:class:`InstagramSessionCheckFailed` and leaves the session file alone. A feed
+page that Instagram answers with a ``"fail"`` status is not retried: it raises
+:class:`InstagramFeedUnavailable` (only network errors are retried).
 
 Example:
     >>> with InstagramCollector(db, settings, creds) as collector:
@@ -28,8 +33,9 @@ import time
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 from postparse.collectors.base import (
     AuthRequired,
@@ -37,6 +43,7 @@ from postparse.collectors.base import (
     CollectorError,
     CollectStats,
     InstagramAuthRequired,
+    InstagramFeedUnavailable,
     InstagramRateLimited,
     InstagramSessionCheckFailed,
     ProgressCallback,
@@ -51,7 +58,9 @@ from postparse.core.db.repos import ItemsRepo
 from postparse.core.text import extract_hashtags, extract_mentions
 
 __all__ = [
+    "FEED_APIS",
     "LEGACY_SESSION_FILE",
+    "FeedApi",
     "InstagramCollector",
     "InstagramOptions",
     "iter_saved_feed",
@@ -72,8 +81,22 @@ PromptFn = Callable[[str], str]
 
 #: Private API (``i.instagram.com``) user info; also used by instaloader itself.
 USER_INFO_PATH = "api/v1/users/{user_id}/info/"
-#: Private API saved feed (all saved posts, newest saved first).
+#: Saved feed (all saved posts, newest saved first); same path on both hosts.
 SAVED_FEED_PATH = "api/v1/feed/saved/posts/"
+
+#: How the saved feed is requested: web REST API or private iPhone API.
+FeedApi = Literal["web", "iphone"]
+FEED_APIS: tuple[FeedApi, ...] = ("web", "iphone")
+
+WEB_HOST = "www.instagram.com"
+#: App id of the Instagram web app (``X-IG-App-ID``; instaloader sends the same).
+WEB_APP_ID = "936619743392459"
+#: ``X-ASBD-ID`` the web app sends (value as used by gallery-dl's REST client).
+WEB_ASBD_ID = "129477"
+#: Posts per web feed page (as gallery-dl requests the saved feed).
+WEB_PAGE_SIZE = "50"
+#: instaloader www default headers that the web app's REST calls do not send.
+_WEB_DROP_HEADERS = ("X-Instagram-AJAX", "Content-Length")
 
 #: ``media_type`` of private API media -> GraphQL ``__typename`` (as instaloader maps it).
 _IPHONE_MEDIA_TYPES: dict[int, str] = {1: "GraphImage", 2: "GraphVideo", 8: "GraphSidecar"}
@@ -103,8 +126,15 @@ class InstagramOptions:
         refresh_min_delay: Lower bound of the pause between date refreshes.
         refresh_max_delay: Upper bound of the pause between date refreshes.
         request_timeout: instaloader request timeout (seconds).
-        max_connection_attempts: instaloader connection attempts.
+        max_connection_attempts: instaloader connection attempts (the session
+            check and feed pages use one attempt; feed pages retry only
+            network errors, up to this many attempts).
         user_agent: Custom user agent (``None``: instaloader default).
+        feed_api: ``"web"`` (``www.instagram.com`` REST API, like the web
+            app) or ``"iphone"`` (private API on ``i.instagram.com``).
+
+    Raises:
+        ValueError: ``feed_api`` is not one of :data:`FEED_APIS`.
     """
 
     min_delay: float = 5.0
@@ -114,6 +144,14 @@ class InstagramOptions:
     request_timeout: float = 30.0
     max_connection_attempts: int = 3
     user_agent: str | None = None
+    feed_api: FeedApi = "web"
+
+    def __post_init__(self) -> None:
+        if self.feed_api not in FEED_APIS:
+            raise ValueError(
+                f"instagram.feed_api must be one of {', '.join(map(repr, FEED_APIS))} "
+                f"(got {self.feed_api!r})"
+            )
 
     @classmethod
     def from_config(cls, config: Any) -> InstagramOptions:
@@ -131,6 +169,9 @@ class InstagramOptions:
                 _cfg(config, "instagram.max_connection_attempts", d.max_connection_attempts)
             ),
             user_agent=_cfg(config, "instagram.user_agent", None),
+            feed_api=cast(
+                FeedApi, str(_cfg(config, "instagram.feed_api", d.feed_api)).strip().lower()
+            ),
         )
 
 
@@ -186,33 +227,67 @@ def _default_loader_factory(options: InstagramOptions) -> Any:
     return instaloader.Instaloader(**kwargs)
 
 
-def _default_saved_posts(loader: Any) -> Iterable[Any]:
-    """Iterate the logged-in user's saved posts (newest saved first)."""
-    return iter_saved_feed(loader.context)
+def iter_saved_feed(
+    context: Any, feed_api: FeedApi = "web", username: str | None = None
+) -> Iterator[Any]:
+    """Iterate the saved feed (newest saved first).
 
+    Pages of ``api/v1/feed/saved/posts/`` are requested lazily (``max_id`` =
+    previous ``next_max_id``), so a consumer that stops early costs no further
+    page request. instaloader's ``Profile.get_saved_posts()`` (4.15.5) still
+    uses a legacy GraphQL ``query_hash`` and needs ``Profile.own_profile()``,
+    which uses another one; Instagram answers that endpoint family with 401
+    "Please wait a few minutes".
 
-def iter_saved_feed(context: Any) -> Iterator[Any]:
-    """Iterate the saved feed through the private API (newest saved first).
-
-    Pages of ``api/v1/feed/saved/posts/`` are requested lazily via
-    ``context.get_iphone_json`` (``max_id`` = previous ``next_max_id``), so a
-    consumer that stops early costs no further page request. instaloader's
-    ``Profile.get_saved_posts()`` (4.15.5) still uses a legacy GraphQL
-    ``query_hash`` and needs ``Profile.own_profile()``, which uses another one;
-    Instagram answers that endpoint family with 401 "Please wait a few minutes".
+    Each page gets one attempt (see :func:`_feed_page`).
 
     Args:
-        context: Logged-in ``InstaloaderContext`` (``user_id`` set).
+        context: Logged-in ``InstaloaderContext`` (``user_id`` set for ``iphone``).
+        feed_api: ``"web"``: ``www.instagram.com`` with the web app's REST
+            headers (see :class:`_WebFeed`), with a web session the endpoint
+            Instagram's own web app uses; ``"iphone"``: ``i.instagram.com``
+            through ``context.get_iphone_json`` (iPad headers).
+        username: Logged-in username (``Referer`` of web requests).
 
     Yields:
-        instaloader ``Post`` objects built from the private API media structs.
+        instaloader ``Post`` objects built from the media structs (both APIs
+        answer ``items[].media`` with the same private-API media struct).
+
+    Raises:
+        InstagramFeedUnavailable: Instagram answered a page with a ``"fail"``
+            status (e.g. "something went wrong").
+        InstagramRateLimited: Instagram throttled a page.
+        InstagramAuthRequired: The session was logged out or needs a confirmation.
+        ValueError: Unknown ``feed_api``.
     """
+    if feed_api not in FEED_APIS:
+        raise ValueError(f"unknown feed_api {feed_api!r}")
+    if feed_api == "iphone":
+        yield from _iter_feed_posts(
+            context, feed_api, lambda params: context.get_iphone_json(SAVED_FEED_PATH, params)
+        )
+        return
+    web = _WebFeed(context, username)
+    try:
+        yield from _iter_feed_posts(context, feed_api, web.get)
+    finally:
+        web.close()
+
+
+def _iter_feed_posts(
+    context: Any, feed_api: FeedApi, fetch: Callable[[dict[str, Any]], Any]
+) -> Iterator[Any]:
+    """Walk the feed pages (``fetch(params) -> page``) and yield posts."""
     max_id: str | None = None
     while True:
-        params: dict[str, Any] = {"include_igtv_preview": "false"}
+        params: dict[str, Any] = (
+            {"count": WEB_PAGE_SIZE} if feed_api == "web" else {"include_igtv_preview": "false"}
+        )
         if max_id:
             params["max_id"] = max_id
-        data = context.get_iphone_json(SAVED_FEED_PATH, params)
+        data = _feed_page(context, feed_api, partial(fetch, params))
+        if not isinstance(data, dict):
+            return
         items = data.get("items") or []
         for item in items:
             media = item.get("media", item) if isinstance(item, dict) else None
@@ -225,6 +300,152 @@ def iter_saved_feed(context: Any) -> Iterator[Any]:
             logger.warning("Instagram saved feed returned the same cursor twice; stopping")
             return
         max_id = str(next_max_id)
+
+
+def _feed_page(context: Any, feed_api: FeedApi, call: Callable[[], Any]) -> Any:
+    """Request one feed page with instaloader's own retries disabled.
+
+    instaloader retries every failed JSON query ``max_connection_attempts``
+    times, including a 200 answer with ``"status": "fail"`` that will not
+    change on a retry. Here a page gets one attempt; only network errors
+    (timeouts, connection resets) are retried, up to the configured attempts.
+    Instagram's answers are translated: throttle -> :class:`InstagramRateLimited`,
+    logout/checkpoint -> :class:`InstagramAuthRequired`, any other ``"fail"``
+    status -> :class:`InstagramFeedUnavailable`; other errors are re-raised.
+    """
+    configured = context.max_connection_attempts
+    attempts = max(1, int(configured or 1))
+    context.max_connection_attempts = 1
+    try:
+        attempt = 1
+        while True:
+            try:
+                return call()
+            except Exception as exc:
+                if attempt < attempts and _is_network_error(exc):
+                    attempt += 1
+                    logger.warning(
+                        "Instagram saved feed: network error (%s); attempt %d/%d",
+                        type(exc).__name__,
+                        attempt,
+                        attempts,
+                    )
+                    continue
+                translated = _feed_error(exc, feed_api)
+                if translated is exc:
+                    raise
+                raise translated from exc
+    finally:
+        context.max_connection_attempts = configured
+
+
+def _is_network_error(exc: BaseException) -> bool:
+    """True if ``exc`` is (or wraps) a ``requests`` transport error."""
+    import requests
+
+    seen: BaseException | None = exc
+    for _ in range(5):
+        if seen is None:
+            return False
+        if isinstance(seen, requests.exceptions.RequestException):
+            return True
+        seen = seen.__cause__
+    return False
+
+
+#: Feed answers that are a refusal (checked after throttle/logout markers).
+_FEED_FAIL_MARKERS = ('"fail" status', "something went wrong")
+
+
+def _feed_error(exc: BaseException, feed_api: FeedApi) -> BaseException:
+    """Translate a failed feed page request (see :func:`_feed_page`)."""
+    translated = translate_error(exc)
+    if translated is not exc:
+        return translated
+    text = str(exc).lower()
+    if type(exc).__name__ == "ConnectionException" and any(m in text for m in _FEED_FAIL_MARKERS):
+        return InstagramFeedUnavailable(feed_api, _instagram_message(str(exc)))
+    return exc
+
+
+def _instagram_message(text: str) -> str:
+    """Instagram's message from an instaloader error text (without the URL)."""
+    marker = 'message "'
+    if marker in text:
+        return text.split(marker, 1)[1].split('"', 1)[0]
+    return text.split(" when accessing ", 1)[0]
+
+
+class _WebFeed:
+    """Saved-feed requests as the Instagram web app makes them.
+
+    Uses a temporary copy of instaloader's session (``copy_session``, as
+    ``get_iphone_json`` does), so the loaded cookies, instaloader's www
+    defaults (``User-Agent``, ``Origin``, ``Accept-Language``) and its rate
+    controller and error handling (``context.get_json``) stay in use; the main
+    session is not changed. On top, the web app's REST headers are sent
+    (``X-IG-App-ID``, ``X-ASBD-ID``, ``X-Requested-With``, ``Sec-Fetch-*``,
+    the saved page as ``Referer``). Each request takes ``X-CSRFToken`` from the
+    current ``csrftoken`` cookie and sends the last ``x-ig-set-www-claim`` the
+    server handed out as ``X-IG-WWW-Claim`` (``"0"`` before), like the web app
+    and gallery-dl's REST client do.
+    """
+
+    def __init__(self, context: Any, username: str | None) -> None:
+        self.context = context
+        self.www_claim = "0"
+        self.session: Any = None
+        self.referer = (
+            f"https://{WEB_HOST}/{username}/saved/all-posts/"
+            if username
+            else f"https://{WEB_HOST}/"
+        )
+
+    def _session(self) -> Any:
+        if self.session is None:
+            from instaloader.instaloadercontext import copy_session
+
+            session = copy_session(self.context._session, self.context.request_timeout)
+            for header in _WEB_DROP_HEADERS:
+                session.headers.pop(header, None)
+            session.headers.update(
+                {
+                    "Accept": "*/*",
+                    "Origin": f"https://{WEB_HOST}",
+                    "Referer": self.referer,
+                    "X-ASBD-ID": WEB_ASBD_ID,
+                    "X-IG-App-ID": WEB_APP_ID,
+                    "X-Requested-With": "XMLHttpRequest",
+                    "Sec-Fetch-Dest": "empty",
+                    "Sec-Fetch-Mode": "cors",
+                    "Sec-Fetch-Site": "same-origin",
+                }
+            )
+            self.session = session
+        return self.session
+
+    def get(self, params: dict[str, Any]) -> Any:
+        """GET one page of ``https://www.instagram.com/api/v1/feed/saved/posts/``."""
+        session = self._session()
+        session.headers["X-CSRFToken"] = str(session.cookies.get_dict().get("csrftoken") or "")
+        session.headers["X-IG-WWW-Claim"] = self.www_claim
+        response_headers: dict[str, Any] = {}
+        data = self.context.get_json(
+            SAVED_FEED_PATH,
+            params,
+            host=WEB_HOST,
+            session=session,
+            response_headers=response_headers,
+        )
+        for key, value in response_headers.items():
+            if key.lower() == "x-ig-set-www-claim" and value:
+                self.www_claim = str(value)
+        return data
+
+    def close(self) -> None:
+        if self.session is not None:
+            self.session.close()
+            self.session = None
 
 
 def post_from_iphone_media(context: Any, media: dict[str, Any]) -> Any:
@@ -537,10 +758,14 @@ class InstagramCollector:
             challenge raises :class:`InstagramAuthRequired`.
         session: ``--session`` override (file path).
         loader_factory: Creates the instaloader instance (tests pass a fake).
-        saved_posts: Returns the saved-post iterator for a loader.
+        saved_posts: Returns the saved-post iterator for a loader (default:
+            :func:`iter_saved_feed` with ``options.feed_api``).
         post_from_shortcode: Fetches one post (``refresh_dates``).
         prompt: Reads the 2FA code in interactive mode (default ``input``).
         sleep: Sleep function (tests pass a no-op).
+        progress: Receives the session outcome while logging in (phase
+            ``session``: saved session verified; phase ``login``: password
+            login about to start); no secrets in the messages.
     """
 
     def __init__(
@@ -557,6 +782,7 @@ class InstagramCollector:
         post_from_shortcode: PostFromShortcode | None = None,
         prompt: PromptFn | None = None,
         sleep: Callable[[float], Any] = time.sleep,
+        progress: ProgressCallback | None = None,
     ) -> None:
         self.db = db
         self.settings = settings
@@ -567,15 +793,24 @@ class InstagramCollector:
             settings, credentials.username, session
         )
         self._loader_factory = loader_factory or _default_loader_factory
-        self._saved_posts = saved_posts or _default_saved_posts
+        self._saved_posts = saved_posts or self._default_saved_posts
         self._post_from_shortcode = post_from_shortcode or _default_post_from_shortcode
         self._prompt = prompt or input
         self._sleep = sleep
+        self._progress = progress
         self.loader: Any = None
         self.logged_in = False
         self.stats = CollectStats(source="instagram")
 
+    def _default_saved_posts(self, loader: Any) -> Iterable[Any]:
+        """The saved feed through the configured ``feed_api``."""
+        return iter_saved_feed(loader.context, self.options.feed_api, self.credentials.username)
+
     # -- session ---------------------------------------------------------
+
+    def _session_event(self, phase: str, message: str) -> None:
+        """Report the session outcome (``session`` / ``login``) to the progress callback."""
+        emit(self._progress, self.stats, phase=phase, seen=0, message=message)
 
     def __enter__(self) -> InstagramCollector:
         self.login()
@@ -608,18 +843,23 @@ class InstagramCollector:
                 self.loader.load_session_from_file(username, str(self.load_path))
             except Exception as exc:
                 logger.warning("Instagram session file could not be read: %s", type(exc).__name__)
+                why = "session file unreadable"
             else:
                 valid = self._check_session()
+                why = "session not logged in"
             if valid:
                 self.logged_in = True
                 logger.info("Instagram session is valid")
+                self._session_event("session", "Instagram session verified (no password login)")
                 return
             logger.info("Instagram session is not logged in")
         else:
             logger.info("No Instagram session file at %s", self.load_path)
+            why = "no session file"
         if not self.credentials.password:
             raise InstagramAuthRequired("No valid session and INSTAGRAM_PASSWORD is not set.")
         logger.info("Falling back to the Instagram password login")
+        self._session_event("login", f"Logging in to Instagram with the password ({why})")
         self._password_login()
 
     def _check_session(self) -> bool:
@@ -767,6 +1007,8 @@ class InstagramCollector:
         Raises:
             InstagramRateLimited: Instagram rate-limited the feed (completed
                 and pending batches are kept).
+            InstagramFeedUnavailable: Instagram refused a feed page with a
+                ``"fail"`` status (completed and pending batches are kept).
             InstagramAuthRequired: The session became invalid during the run.
         """
         self._require_login()
@@ -808,7 +1050,9 @@ class InstagramCollector:
             except Exception:
                 logger.exception("Could not write the last Instagram batch")
             translated = translate_error(exc) if isinstance(exc, Exception) else exc
-            if isinstance(translated, InstagramRateLimited):
+            if isinstance(translated, InstagramFeedUnavailable):
+                stats.stopped_reason = "feed_unavailable"
+            elif isinstance(translated, InstagramRateLimited):
                 stats.stopped_reason = "rate_limited"
             elif isinstance(translated, AuthRequired):
                 stats.stopped_reason = "auth_required"

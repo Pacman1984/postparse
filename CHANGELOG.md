@@ -25,6 +25,25 @@ All notable changes to PostParse are documented here. The format follows
   (with durations) are read from the private API media structs.
 - `AbortDownloadException` (checkpoint, login redirect) during a run is mapped
   to `InstagramAuthRequired`.
+- **Instagram saved feed via the web REST API**: with a web session the
+  private-API feed on `i.instagram.com` (iPad headers) was answered with 200
+  `"fail"` "We're sorry, but something went wrong" (and retried three times).
+  The feed is now requested like the Instagram web app does it:
+  `https://www.instagram.com/api/v1/feed/saved/posts/` with `X-IG-App-ID`,
+  `X-CSRFToken` (from the `csrftoken` cookie), `X-Requested-With`,
+  `X-ASBD-ID`, `X-IG-WWW-Claim` and the saved page as `Referer`, through
+  instaloader's session (cookies, rate controller). New option
+  `instagram.feed_api = "web" | "iphone"` (default `"web"`; invalid values are
+  reported by `config validate` and fail the run with a clear message).
+- **Instagram feed refusals are not retried**: feed pages get one attempt
+  (network errors are still retried up to `max_connection_attempts`). A
+  `"fail"` answer raises the new `InstagramFeedUnavailable` (a `RateLimited`
+  subclass): CLI exit code 3 with a message that the session is fine, nothing
+  was lost and which `instagram.feed_api` to try; report `stopped_reason` and
+  job `error_code` `feed_unavailable`.
+- **Instagram session outcome is shown**: `extract instagram` prints
+  "Instagram session verified (no password login)" or a warning before a
+  password login (with the reason); API jobs get the same progress message.
 
 ## [0.2.0] - 2026-10-26
 

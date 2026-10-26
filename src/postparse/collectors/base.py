@@ -26,6 +26,7 @@ __all__ = [
     "CollectorError",
     "CredentialsMissing",
     "InstagramAuthRequired",
+    "InstagramFeedUnavailable",
     "InstagramRateLimited",
     "InstagramSessionCheckFailed",
     "ProgressCallback",
@@ -40,7 +41,9 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-StopReason = Literal["early_stop", "limit", "end_of_feed", "rate_limited", "auth_required"]
+StopReason = Literal[
+    "early_stop", "limit", "end_of_feed", "rate_limited", "auth_required", "feed_unavailable"
+]
 
 
 # ---------------------------------------------------------------------------
@@ -128,6 +131,31 @@ class InstagramSessionCheckFailed(InstagramRateLimited):
             "was lost; wait a while (ideally hours) before retrying."
         )
         RateLimited.__init__(self, f"{message} ({detail})" if detail else message, retry_after)
+
+
+class InstagramFeedUnavailable(RateLimited):
+    """Instagram refused the saved-feed request with a ``"fail"`` status.
+
+    The session was verified before (no password login is attempted), so the
+    answer (typically "We're sorry, but something went wrong") is about the way
+    the feed was requested, not about the login. The page is not retried. A
+    :class:`RateLimited` subclass: like a throttle it means "stop now, retry
+    later", and everything committed so far is kept.
+
+    Attributes:
+        feed_api: The ``instagram.feed_api`` that was used (``web``/``iphone``).
+    """
+
+    def __init__(self, feed_api: str, detail: str | None = None) -> None:
+        self.feed_api = feed_api
+        other = "iphone" if feed_api == "web" else "web"
+        message = (
+            f"Instagram refused the saved feed ({feed_api} API)"
+            + (f': "{detail}"' if detail else "")
+            + ". The session is fine (no password login was attempted) and nothing stored "
+            f'was lost. Retry later, or set instagram.feed_api = "{other}" in the config.'
+        )
+        super().__init__(message)
 
 
 class TelegramRateLimited(RateLimited):

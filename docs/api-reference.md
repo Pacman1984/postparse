@@ -131,6 +131,7 @@ service raises or its report stops for a hard reason:
 | `credentials_missing` | `TELEGRAM_*` / `INSTAGRAM_*` not set and not in the request |
 | `auth_required` | session invalid, login code / 2FA needed (log in once via the CLI) |
 | `rate_limited` | Telegram FloodWait above the threshold, Instagram 429 |
+| `feed_unavailable` | Instagram refused the saved feed with a `"fail"` status ("something went wrong"); the session is fine, see `instagram.feed_api` |
 | `suspected_block` | transcription stopped by the soft-block circuit breaker |
 | `backend_unavailable` | ASR backend not installed or unreachable |
 | `llm_error` | classification / summarization failed at the LLM |

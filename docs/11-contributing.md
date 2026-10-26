@@ -5,7 +5,7 @@
 ```bash
 git clone https://github.com/sebpachl/postparse.git
 cd postparse
-uv sync --extra dev
+uv sync  # dev tools come from the default `dev` dependency group
 ```
 
 ## Process

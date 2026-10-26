@@ -141,7 +141,7 @@ class TestCLIGroup:
         result = runner.invoke(cli, ["--version"])
 
         assert result.exit_code == 0
-        assert __version__ in result.output or "0.1.0" in result.output
+        assert __version__ in result.output
 
     def test_cli_without_command_shows_welcome(self) -> None:
         """Test that running CLI without command shows welcome banner."""

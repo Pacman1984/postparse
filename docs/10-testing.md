@@ -4,7 +4,7 @@
 
 ```bash
 # Install with dev dependencies
-uv sync --extra dev
+uv sync  # dev tools come from the default `dev` dependency group
 
 # Run all tests
 uv run pytest tests/

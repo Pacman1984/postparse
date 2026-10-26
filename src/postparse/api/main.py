@@ -286,7 +286,7 @@ def _install_handlers(app: FastAPI, config: Any) -> None:
                 item["ctx"] = ctx
             sanitized.append(item)
         return JSONResponse(
-            status_code=422,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             content={
                 "error_code": "VALIDATION_ERROR",
                 "detail": "Request validation failed",

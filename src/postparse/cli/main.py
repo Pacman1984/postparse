@@ -26,6 +26,8 @@ from rich.table import Table
 from rich.text import Text
 from rich.traceback import install as install_rich_traceback
 
+from postparse import __version__
+
 
 def load_env_files() -> Path | None:
     """Load the first ``.env`` file found in the standard locations.
@@ -56,12 +58,19 @@ def load_env_files() -> Path | None:
 _loaded_env = load_env_files()
 
 # rich-click help styling
-click.rich_click.USE_RICH_MARKUP = True
-click.rich_click.USE_MARKDOWN = False
+click.rich_click.TEXT_MARKUP = "rich"
 click.rich_click.SHOW_ARGUMENTS = True
 click.rich_click.GROUP_ARGUMENTS_OPTIONS = True
-click.rich_click.SHOW_METAVARS_COLUMN = False
-click.rich_click.APPEND_METAVARS_HELP = True
+# No separate metavar column; the metavar is appended to the help text instead.
+click.rich_click.OPTIONS_TABLE_COLUMN_TYPES = ["required", "opt_short", "opt_long", "help"]
+click.rich_click.OPTIONS_TABLE_HELP_SECTIONS = [
+    "help",
+    "deprecated",
+    "envvar",
+    "default",
+    "required",
+    "metavar",
+]
 click.rich_click.STYLE_ERRORS_SUGGESTION = "magenta italic"
 click.rich_click.ERRORS_SUGGESTION = "Try running the '--help' flag for more information."
 click.rich_click.ERRORS_EPILOGUE = ""
@@ -99,7 +108,7 @@ install_rich_traceback(show_locals=False)
 
 console = Console()
 
-__version__ = "0.1.0"
+
 
 LOGO = r"""
     ____             __     ____

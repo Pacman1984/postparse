@@ -33,7 +33,7 @@ from unittest.mock import patch
 from urllib.parse import urlparse
 
 
-# Configure pytest-asyncio
+# pytest-asyncio is configured in pyproject.toml (asyncio_mode, loop scopes).
 pytest_plugins = ('pytest_asyncio',)
 
 
@@ -198,18 +198,6 @@ def pytest_addoption(parser):
         default=False,
         help="Run tests marked 'live' that talk to real LLM servers or APIs.",
     )
-
-
-@pytest.fixture(scope="session")
-def event_loop_policy():
-    """
-    Set event loop policy for the test session.
-
-    Returns:
-        Event loop policy instance.
-    """
-    policy = asyncio.get_event_loop_policy()
-    return policy
 
 
 @pytest.fixture(scope="function")

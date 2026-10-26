@@ -19,7 +19,7 @@ from postparse.api.dependencies import (
 )
 from postparse.api.middleware import AuthenticationMiddleware
 
-SECRET = "unit-test-secret"
+SECRET = "unit-test-secret-padded-to-32-bytes-min"
 
 
 class StaticConfig:
@@ -53,7 +53,7 @@ class TestValidateToken:
         assert exc.value.status_code == 401
         assert exc.value.headers == {"WWW-Authenticate": "Bearer"}
 
-    @pytest.mark.parametrize("token", ["garbage", make_token(secret="other-secret")])
+    @pytest.mark.parametrize("token", ["garbage", make_token(secret="other-secret-padded-to-32-bytes-minimum")])
     def test_invalid_tokens_are_401(self, token: str) -> None:
         with pytest.raises(HTTPException) as exc:
             validate_jwt_token(token, StaticConfig())
@@ -66,8 +66,8 @@ class TestValidateToken:
         assert exc.value.status_code == 500
 
     def test_secret_from_environment(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("JWT_SECRET_KEY", "env-secret")
-        token = make_token(secret="env-secret")
+        monkeypatch.setenv("JWT_SECRET_KEY", "env-secret-padded-to-32-bytes-minimum")
+        token = make_token(secret="env-secret-padded-to-32-bytes-minimum")
         assert validate_jwt_token(token, None)["sub"] == "tester"
 
     @pytest.mark.parametrize(

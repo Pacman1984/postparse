@@ -10,6 +10,8 @@ This package provides a REST API for PostParse functionality including:
 For more information, see the API documentation at /docs
 """
 
-__version__ = "0.1.0"
+from postparse import __version__
+
+__all__ = ["__version__"]
 
 

@@ -179,7 +179,7 @@ class CacheManager:
         serialized = json.dumps(value, ensure_ascii=False, default=str)
         try:
             if self.redis_client is not None:
-                self.redis_client.setex(key, ttl, serialized)
+                self.redis_client.set(key, serialized, ex=ttl)
             else:
                 self._memory_set(key, serialized, ttl)
         except Exception as exc:  # noqa: BLE001

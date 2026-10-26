@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from fastapi.routing import APIWebSocketRoute
+from fastapi.routing import APIWebSocketRoute, iter_route_contexts
 
 from postparse.api.main import create_app
 
@@ -37,7 +37,12 @@ def _routes(config, settings) -> set[str]:
     routes = {
         f"{method.upper()} {path}" for path, ops in spec["paths"].items() for method in ops
     }
-    routes |= {f"WS {r.path}" for r in app.routes if isinstance(r, APIWebSocketRoute)}
+    # FastAPI >= 0.14x keeps included routers nested; iter_route_contexts flattens them.
+    routes |= {
+        f"WS {ctx.path}"
+        for ctx in iter_route_contexts(app.routes)
+        if isinstance(ctx.original_route, APIWebSocketRoute)
+    }
     return routes
 
 

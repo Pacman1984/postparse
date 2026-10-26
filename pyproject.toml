@@ -4,47 +4,51 @@ build-backend = "hatchling.build"
 
 [project]
 name = "postparse"
-version = "0.1.0"
+version = "0.2.0"
 authors = [
     { name = "Sebastian Pachl"}
 ]
-description = "A package for parsing and analyzing data"
+description = "Collect saved Instagram and Telegram posts into a local SQLite archive, then search, classify, enrich, transcribe and summarize them via CLI or REST API"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 classifiers = [
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
 dependencies = [
     "tqdm",
-    "python-dotenv",
+    "python-dotenv>=1.1",
     "instaloader>=4.15.5",
+    # Telethon 2 is a full API rewrite; stay on the 1.x line until migrated.
     "telethon>=1.45,<2",
-    "pydantic>=2.7.4,<3.0.0",
-    "fastapi>=0.115.0,<1.0.0",
-    "uvicorn[standard]>=0.32.0,<1.0.0",
-    "PyJWT>=2.8,<3",
-    "python-multipart>=0.0.9,<1.0.0",
-    "websockets>=12.0,<13.0.0",
-    "redis>=5.0.0,<6.0.0",
-    "python-json-logger>=2.0.0,<3.0.0",
-    "click>=8.1.0,<9.0.0",
-    "rich>=13.0.0,<14.0.0",
-    "rich-click>=1.8.0,<2.0.0",
+    "pydantic>=2.7.4",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "PyJWT>=2.8",
+    "python-multipart>=0.0.9",
+    "websockets>=12.0",
+    "redis>=5.0.0",
+    "python-json-logger>=3.1",
+    "click>=8.1.0",
+    "rich>=13.0.0",
+    "rich-click>=1.9",
     "httpx>=0.27.0",
-    "lxml>=5.4.0,<7",
-    "pydantic-settings>=2.4,<3",
+    "lxml>=5.4.0",
+    "pydantic-settings>=2.4",
     "tzdata>=2024.1",
-    "pydantic-ai-slim[anthropic,openai]>=2.61.0,<3",
-    "openai>=3.37.0,<4",
+    "pydantic-ai-slim[anthropic,openai]>=2.61.0",
+    "openai>=3.37.0",
     # Audio probing/extraction for video transcription (bundles FFmpeg; no system ffmpeg).
     "av>=14",
     # Link enrichment: article extraction, documents, YouTube transcripts.
-    "trafilatura>=2.3,<3",
-    "readability-lxml>=0.9,<1",
+    "trafilatura>=2.3",
+    "readability-lxml>=0.9",
+    # markitdown is pre-1.0: minor releases may break the converter API.
     "markitdown[pdf,docx,pptx,xlsx]>=0.1.9,<0.2",
-    "youtube-transcript-api>=1.2,<2",
+    "youtube-transcript-api>=1.2",
 ]
 
 [project.scripts]
@@ -62,36 +66,6 @@ notebooks = [
     "scikit-learn",
     "scipy",
     "ipywidgets",
-]
-dev = [
-    "pytest>=7.4.0",
-    "pytest-asyncio>=0.21.0",
-    "pytest-cov>=4.1.0",
-    "pytest-mock>=3.12.0",
-    "pytest-socket>=0.7.0",
-    "ruff>=0.6.0",
-    "black>=23.7.0",
-    "isort>=5.12.0",
-    "mypy>=1.5.0",
-    "pylint>=2.17.5",
-    "httpx>=0.27.0",
-    "fakeredis>=2.20.0,<3.0.0",
-    "respx>=0.23,<1",
-]
-docs = [
-    "mkdocs",
-    "mkdocs-material",
-]
-all = [
-    "pytest>=7.4.0",
-    "pytest-asyncio>=0.21.0",
-    "pytest-cov>=4.1.0",
-    "black>=23.7.0",
-    "isort>=5.12.0",
-    "mypy>=1.5.0",
-    "pylint>=2.17.5",
-    "mkdocs",
-    "mkdocs-material",
 ]
 migrate = [
     "ftfy>=6.2",
@@ -112,45 +86,50 @@ asr = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/sebpachl/postparse"
+Homepage = "https://github.com/Pacman1984/postparse"
+Repository = "https://github.com/Pacman1984/postparse"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/postparse"]
 
 [dependency-groups]
 dev = [
-    "pytest>=7.4.0",
-    "pytest-asyncio>=0.21.0",
-    "pytest-cov>=4.1.0",
-    "pytest-mock>=3.12.0",
+    "pytest>=9.0",
+    "pytest-asyncio>=1.3",
+    "pytest-cov>=7.0",
+    "pytest-mock>=3.14",
     "pytest-socket>=0.7.0",
-    "ruff>=0.6.0",
-    "black>=23.7.0",
-    "isort>=5.12.0",
-    "mypy>=1.5.0",
-    "pylint>=2.17.5",
-    "respx>=0.23,<1",
+    "ruff>=0.17",
+    "mypy>=1.18",
+    "fakeredis>=2.32",
+    "respx>=0.23",
+]
+docs = [
+    "mkdocs",
+    "mkdocs-material",
 ]
 
 [tool.uv]
 package = true
 
 [tool.pytest.ini_options]
-# Pytest-asyncio configuration
+# pytest-asyncio: every async test and fixture gets its own function-scoped loop.
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+asyncio_default_test_loop_scope = "function"
 
 # Block real network access (pytest-socket); only loopback connections are allowed.
 # --disable-socket is not used because asyncio on Windows needs AF_INET socketpairs.
 # Tests marked `live` are skipped unless --run-live is passed (see tests/conftest.py).
 addopts = "--allow-hosts=127.0.0.1,localhost,::1"
 
-# Filter out known harmless warnings from dependencies
 filterwarnings = [
+    # Deprecated APIs must not be used by postparse itself.
+    "error::DeprecationWarning:postparse",
+    "error::PendingDeprecationWarning:postparse",
     # Suppress Telethon cleanup warnings during test teardown
     "ignore::ResourceWarning",
     "ignore:coroutine.*was never awaited:RuntimeWarning",
-    # Suppress deprecation warnings we're actively fixing
-    "ignore:datetime.datetime.utcnow.*is deprecated:DeprecationWarning",
 ]
 # Register custom markers
 markers = [

@@ -28,7 +28,7 @@ uv venv
 uv sync
 
 # With dev dependencies
-uv sync --extra dev
+uv sync  # dev tools come from the default `dev` dependency group
 ```
 
 ## Dependencies

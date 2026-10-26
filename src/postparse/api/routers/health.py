@@ -19,6 +19,7 @@ from typing import Any
 
 from fastapi import APIRouter, Query, Request, Response, status
 
+from postparse import __version__
 from postparse.api.deps import ApiServices
 from postparse.api.schemas import HealthResponse
 from postparse.core.db.migrate import latest_version
@@ -26,7 +27,7 @@ from postparse.core.db.repos import SearchRepo
 
 logger = logging.getLogger(__name__)
 
-API_VERSION = "0.1.0"
+API_VERSION = __version__
 
 router = APIRouter(
     tags=["health"],

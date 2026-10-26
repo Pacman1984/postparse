@@ -211,3 +211,16 @@ class TestRequestLoggingMiddlewareBodyHandling:
         assert "abc123" not in logged_body
         assert "hash123" not in logged_body
         assert "note=hello" in logged_body
+
+
+def test_json_log_format_uses_python_json_logger(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``api.log_format = "json"`` installs the python-json-logger 3+ formatter."""
+    from pythonjsonlogger.json import JsonFormatter
+
+    from postparse.api import middleware as middleware_module
+
+    monkeypatch.setattr(middleware_module.logger, "handlers", list(middleware_module.logger.handlers))
+    config = _StaticConfig({"api.log_level": "info", "api.log_format": "json"})
+    mw = RequestLoggingMiddleware(FastAPI(), config)  # type: ignore[arg-type]
+    assert mw.log_format == "json"
+    assert isinstance(middleware_module.logger.handlers[0].formatter, JsonFormatter)

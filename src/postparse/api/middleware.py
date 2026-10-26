@@ -169,9 +169,10 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         # Configure JSON formatter if requested
         if self.log_format == "json":
             try:
-                from pythonjsonlogger import jsonlogger
+                from pythonjsonlogger.json import JsonFormatter
+
                 json_handler = logging.StreamHandler()
-                formatter = jsonlogger.JsonFormatter(
+                formatter = JsonFormatter(
                     '%(asctime)s %(name)s %(levelname)s %(message)s'
                 )
                 json_handler.setFormatter(formatter)

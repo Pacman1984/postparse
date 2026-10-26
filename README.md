@@ -394,7 +394,7 @@ After session is created, API calls will use the cached session.
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.12+
 - SQLite (included with Python)
 - UV package manager (recommended for development)
 - FastAPI and Uvicorn (for API server)
@@ -432,7 +432,7 @@ src/postparse/
 
 ```bash
 # Install with dev dependencies
-uv sync --extra dev
+uv sync  # dev tools come from the default `dev` dependency group
 
 # Run tests
 uv run pytest tests/

@@ -220,13 +220,16 @@ class TestRateLimitingEnabled:
             response = client.get("/test")
             assert response.status_code == 429, "Expected rate limit after exhausting tokens"
             
-            # Wait for tokens to refill
-            # At 10 requests/minute, tokens refill at 1 token per 6 seconds
-            # Wait 7 seconds to ensure at least 1 token has refilled
-            time.sleep(7)
-            
-            # Should now succeed with refilled token
-            response = client.get("/test")
+            # Let tokens refill without really waiting: at 10 requests/minute,
+            # 1 token refills per 6 seconds, so advance the middleware clock by 7s.
+            from types import SimpleNamespace
+            from backend.postparse.api import middleware as middleware_module
+
+            real_time = time.time
+            fake_clock = SimpleNamespace(time=lambda: real_time() + 7.0)
+            with patch.object(middleware_module, "time", fake_clock):
+                # Should now succeed with refilled token
+                response = client.get("/test")
             assert response.status_code == 200, "Expected request to succeed after token refill"
     
     @pytest.mark.integration

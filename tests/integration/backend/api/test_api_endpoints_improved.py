@@ -9,7 +9,9 @@ This module provides high-quality tests that:
 """
 
 import pytest
+from unittest.mock import Mock, patch
 from backend.postparse.core.utils.config import ConfigManager
+from backend.postparse.llm.config import LLMConfig
 
 
 class TestHealthEndpoints:
@@ -85,21 +87,22 @@ class TestClassifyEndpoints:
         assert "description" in classifier
 
     def test_providers_list_completeness(self, test_client):
-        """Test that all expected providers are listed."""
+        """Test that configured providers are listed."""
+        config = ConfigManager()
+        llm_config = LLMConfig.from_config_manager(config)
+        expected_providers = [provider.name for provider in llm_config.providers]
+
         response = test_client.get("/api/v1/classify/classifiers")
         data = response.json()
-        
+
         providers = data["providers"]
         provider_names = [p["name"] for p in providers]
-        
-        # Verify all expected providers from config
-        expected_providers = ["ollama", "openai", "anthropic", "lm_studio"]
+
         for provider in expected_providers:
             assert provider in provider_names
 
     def test_default_provider_matches_config(self, test_client):
         """Test that default provider matches configuration."""
-        # Get configured default provider
         config = ConfigManager()
         default_provider = config.get("llm.default_provider", "lm_studio")
         
@@ -113,6 +116,19 @@ class TestClassifyEndpoints:
         # Verify default matches config
         assert len(default_providers) == 1
         assert default_providers[0]["name"] == default_provider
+
+    def test_list_classifiers_survives_invalid_llm_config(self, test_client):
+        """An invalid [llm] config must not turn the listing into a 500."""
+        with patch(
+            "backend.postparse.api.routers.classify.LLMConfig.from_config_manager",
+            side_effect=ValueError("default_provider 'x' not found in providers list"),
+        ):
+            response = test_client.get("/api/v1/classify/classifiers")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["classifiers"]) == 3
+        assert data["providers"] == []
 
     def test_classify_endpoint_validates_required_fields(self, test_client):
         """Test that classify endpoint validates required text field."""
@@ -138,25 +154,23 @@ class TestClassifyEndpoints:
         # Use configured default provider
         config = ConfigManager()
         default_provider = config.get("llm.default_provider", "lm_studio")
-        
-        response = test_client.post("/api/v1/classify/recipe", json={
-            "text": "Boil pasta for 10 minutes",
-            "classifier_type": "llm",
-            "provider_name": default_provider
-        })
-        
-        # If LLM is running, returns 200; if not, returns 503/500
-        assert response.status_code in [200, 503, 500]
-        
-        if response.status_code == 200:
-            # Verify response structure if successful
-            data = response.json()
-            assert "label" in data
-            assert "confidence" in data
-        else:
-            # Verify error response if failed
-            data = response.json()
-            assert "error_code" in data or "message" in data
+
+        # Simulate an unreachable LLM server instead of making a real request.
+        unavailable = Mock()
+        unavailable.predict.side_effect = ConnectionError("LLM server unreachable")
+        with patch(
+            "backend.postparse.api.routers.classify._get_cached_recipe_llm_classifier",
+            return_value=unavailable,
+        ):
+            response = test_client.post("/api/v1/classify/recipe", json={
+                "text": "Boil pasta for 10 minutes",
+                "classifier_type": "llm",
+                "provider_name": default_provider
+            })
+
+        assert response.status_code == 503
+        data = response.json()
+        assert "error_code" in data or "message" in data
 
 
 class TestTelegramEndpoints:

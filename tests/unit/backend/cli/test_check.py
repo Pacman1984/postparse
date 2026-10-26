@@ -320,6 +320,38 @@ class TestCheckAll:
 
         return mock_llm_config, mock_provider_cfg
 
+    def _create_mock_telegram_parser(self) -> MagicMock:
+        """Create a mocked Telegram parser for check-all tests."""
+        mock_parser = MagicMock()
+        mock_parser.__aenter__ = AsyncMock(return_value=mock_parser)
+        mock_parser.__aexit__ = AsyncMock(return_value=None)
+
+        async def mock_get_saved_messages(*args, **kwargs):
+            for i in range(3):
+                yield {
+                    "message_id": i,
+                    "date": "2024-01-15T10:00:00Z",
+                    "text": f"Message {i}",
+                }
+
+        mock_parser.get_saved_messages = mock_get_saved_messages
+        return mock_parser
+
+    def _create_mock_instagram_parser(self) -> MagicMock:
+        """Create a mocked Instagram parser for check-all tests."""
+        mock_parser = MagicMock()
+
+        def mock_get_saved_posts(*args, **kwargs):
+            for i in range(3):
+                yield {
+                    "shortcode": f"post{i}",
+                    "date": "2024-01-15T10:00:00Z",
+                    "caption": f"Post {i}",
+                }
+
+        mock_parser.get_saved_posts = mock_get_saved_posts
+        return mock_parser
+
     def test_check_all_with_no_credentials(self) -> None:
         """Test check all when no credentials are provided."""
         runner = CliRunner()
@@ -368,33 +400,50 @@ class TestCheckAll:
                 with patch("backend.postparse.core.utils.config.ConfigManager"):
                     with patch("backend.postparse.llm.config.LLMConfig") as mock_llm_cls:
                         with patch("backend.postparse.llm.provider.LiteLLMProvider") as mock_prov:
-                            with patch("backend.postparse.cli.check.os.getenv") as mock_getenv:
-                                # Provide credentials for both platforms
-                                mock_getenv.side_effect = lambda key: {
-                                    "TELEGRAM_API_ID": "12345",
-                                    "TELEGRAM_API_HASH": "abc123",
-                                    "INSTAGRAM_USERNAME": "testuser",
-                                    "INSTAGRAM_PASSWORD": "testpass",
-                                }.get(key)
+                            with patch(
+                                "backend.postparse.services.parsers.telegram.telegram_parser.TelegramParser"
+                            ) as mock_tg_parser_class:
+                                with patch(
+                                    "backend.postparse.services.parsers.instagram.instagram_parser.InstaloaderParser"
+                                ) as mock_ig_parser_class:
+                                    with patch("backend.postparse.cli.check.os.getenv") as mock_getenv:
+                                        # Provide credentials for both platforms
+                                        mock_getenv.side_effect = lambda key: {
+                                            "TELEGRAM_API_ID": "12345",
+                                            "TELEGRAM_API_HASH": "abc123",
+                                            "INSTAGRAM_USERNAME": "testuser",
+                                            "INSTAGRAM_PASSWORD": "testpass",
+                                        }.get(key)
 
-                                mock_config = MagicMock()
-                                mock_config.get.return_value = "data/test.db"
-                                mock_load.return_value = mock_config
+                                        mock_config = MagicMock()
+                                        mock_config.get.return_value = "data/test.db"
+                                        mock_load.return_value = mock_config
 
-                                mock_db = MagicMock()
-                                mock_db.get_instagram_posts.return_value = []
-                                mock_db.get_telegram_messages.return_value = []
-                                mock_get_db.return_value = mock_db
+                                        mock_db = MagicMock()
+                                        mock_db.get_instagram_posts.return_value = []
+                                        mock_db.get_telegram_messages.return_value = []
+                                        mock_db.post_exists.return_value = False
+                                        mock_db.message_exists.return_value = False
+                                        mock_get_db.return_value = mock_db
 
-                                mock_llm_cls.from_config_manager.return_value = mock_llm_config
-                                mock_provider = MagicMock()
-                                mock_provider.is_available.return_value = True
-                                mock_prov.return_value = mock_provider
+                                        mock_tg_parser_class.return_value = (
+                                            self._create_mock_telegram_parser()
+                                        )
+                                        mock_ig_parser_class.return_value = (
+                                            self._create_mock_instagram_parser()
+                                        )
 
-                                result = runner.invoke(cli, ["check", "all"])
+                                        mock_llm_cls.from_config_manager.return_value = mock_llm_config
+                                        mock_provider = MagicMock()
+                                        mock_provider.is_available.return_value = True
+                                        mock_prov.return_value = mock_provider
 
-                                # May succeed or fail depending on mocks, but should attempt
-                                assert isinstance(result.exit_code, int)
+                                        result = runner.invoke(cli, ["check", "all"])
+
+                                        assert result.exit_code == 0
+                                        output_lower = result.output.lower()
+                                        assert "telegram" in output_lower
+                                        assert "instagram" in output_lower
 
     def test_check_all_without_subcommand_defaults_to_all(self) -> None:
         """Test that 'check' without subcommand defaults to 'check all'."""

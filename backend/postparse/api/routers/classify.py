@@ -5,13 +5,13 @@ This module provides HTTP endpoints for recipe classification and
 multi-class classification using LLM-based classifiers.
 """
 
+import logging
 import time
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from backend.postparse.llm.config import LLMConfig
 from backend.postparse.services.analysis.classifiers.llm import RecipeLLMClassifier
-from backend.postparse.services.analysis.classifiers.multi_class import MultiClassLLMClassifier
-from backend.postparse.services.analysis.classifiers.multi_label import MultiLabelLLMClassifier
 from backend.postparse.api.dependencies import (
     get_recipe_llm_classifier,
     _get_cached_recipe_llm_classifier,
@@ -40,6 +40,8 @@ from backend.postparse.api.schemas.classify import (
     BatchMultiLabelClassifyResponse,
 )
 from backend.postparse.core.utils.config import ConfigManager
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/v1/classify",
@@ -627,7 +629,21 @@ async def list_classifiers(
     user: Optional[dict] = Depends(get_optional_auth),
 ) -> Dict[str, List[Dict[str, Any]]]:
     """List available classifiers and their configurations."""
-    default_provider = config.get("llm.default_provider", "ollama")
+    providers: List[Dict[str, Any]] = []
+    try:
+        llm_config = LLMConfig.from_config_manager(config)
+        providers = [
+            {
+                "name": provider.name,
+                "status": "available",
+                "default": provider.name == llm_config.default_provider,
+            }
+            for provider in llm_config.providers
+        ]
+    except (ValueError, TypeError) as exc:
+        # pydantic.ValidationError is a ValueError subclass. A broken LLM config
+        # must not turn the listing into a 500; report what is available.
+        logger.warning("Could not load LLM provider configuration: %s", exc)
 
     return {
         "classifiers": [
@@ -647,11 +663,6 @@ async def list_classifiers(
                 "description": "Multi-label classification (0..N labels per text)",
             },
         ],
-        "providers": [
-            {"name": "ollama", "status": "available", "default": default_provider == "ollama"},
-            {"name": "openai", "status": "available", "default": default_provider == "openai"},
-            {"name": "anthropic", "status": "available", "default": default_provider == "anthropic"},
-            {"name": "lm_studio", "status": "available", "default": default_provider == "lm_studio"},
-        ],
+        "providers": providers,
     }
 

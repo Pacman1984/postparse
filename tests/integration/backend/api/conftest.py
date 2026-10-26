@@ -10,7 +10,7 @@ import pytest
 import time
 from datetime import datetime
 from typing import Dict, Any, List
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from fastapi.testclient import TestClient
 
 from backend.postparse.api.main import app
@@ -19,6 +19,28 @@ from backend.postparse.core.data.database import SocialMediaDatabase
 from backend.postparse.services.analysis.classifiers.llm import RecipeLLMClassifier
 from backend.postparse.api.services.cache_manager import CacheManager
 from backend.postparse.core.utils.config import ConfigManager
+
+
+@pytest.fixture(autouse=True)
+def no_real_social_logins():
+    """
+    Prevent extraction background jobs from logging in to Telegram/Instagram.
+
+    Endpoint tests only check that jobs are accepted; without this fixture the
+    background job would construct a real parser and try to log in with the
+    dummy credentials from the request. Tests that need a parser patch
+    ``extraction_service.<Parser>`` themselves, which takes precedence.
+    """
+    def _refuse(*args, **kwargs):
+        raise RuntimeError("Real Telegram/Instagram logins are disabled in tests")
+
+    target = "backend.postparse.api.services.extraction_service"
+    with (
+        patch(f"{target}.TelegramParser", side_effect=_refuse),
+        patch(f"{target}.InstaloaderParser", side_effect=_refuse),
+        patch(f"{target}.InstagramAPIParser", side_effect=_refuse),
+    ):
+        yield
 
 
 @pytest.fixture(scope="module")

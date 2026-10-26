@@ -1,0 +1,140 @@
+# Minimal configuration used by the test suite.
+#
+# tests/conftest.py copies this file to <session tmp dir>/config/config.toml and
+# changes the working directory there, so every relative path below resolves
+# inside a throw-away directory and never touches the repository's data/ folder.
+# Never put real credentials here.
+
+[database]
+default_db_path = "data/social_media.db"
+
+[paths]
+cache_dir = "data/cache"
+downloads_dir = "data/downloads"
+models_dir = "data/models"
+sessions_dir = "data/sessions"
+telegram_downloads_dir = "data/downloads/telegram"
+instagram_downloads_dir = "data/downloads/instagram"
+
+[models]
+zero_shot_model = "test-zero-shot-model"
+default_llm_model = "test-model"
+request_timeout = 5
+timeout = 5
+
+[telegram]
+connection_retries = 1
+retry_delay = 0
+auto_reconnect = false
+connection_delay_min = 0.0
+connection_delay_max = 0.0
+request_delay_base = 0.0
+request_delay_increment = 0.0
+request_retries = 1
+media_timeout_image = 5
+media_timeout_document = 5
+
+[instagram]
+default_min_delay = 0.01
+default_max_delay = 0.01
+login_delay_min = 0.0
+login_delay_max = 0.0
+
+[api]
+host = "127.0.0.1"
+port = 8000
+reload = false
+workers = 1
+environment = "test"
+log_level = "WARNING"
+log_format = "text"
+log_request_body = false
+log_response_body = false
+max_retries = 1
+max_requests_per_session = 10
+request_delay_min = 0.0
+request_delay_max = 0.0
+
+[api.auth]
+enabled = false
+secret_key = "test-secret-key-not-for-production"
+algorithm = "HS256"
+
+[api.cors]
+allowed_origins = ["http://localhost:3000"]
+allow_credentials = true
+allowed_methods = ["*"]
+allowed_headers = ["*"]
+
+[api.rate_limiting]
+enabled = false
+requests_per_minute = 60
+burst_size = 10
+
+[api.cache]
+enabled = false
+redis_url = "redis://127.0.0.1:6379/15"
+default_ttl = 60
+search_ttl = 60
+max_memory_mb = 16
+
+[api.jobs]
+max_job_age_hours = 24
+cleanup_interval_minutes = 60
+
+[classification]
+recipe_positive_label = "recipe"
+recipe_negative_label = "not_recipe"
+min_confidence_threshold = 0.7
+max_confidence_threshold = 0.95
+
+[[classification.classes]]
+name = "recipe"
+description = "Cooking instructions, ingredients, recipe details"
+
+[[classification.classes]]
+name = "python_package"
+description = "Python packages, libraries, pip installations"
+
+[[classification.classes]]
+name = "movie_review"
+description = "Reviews or discussions of movies and cinema"
+
+[prompts]
+recipe_analysis_prompt = """Analyze if the following content is a recipe and extract key details.
+
+Content: {content}
+
+{format_instructions}
+
+If it's not a recipe, set is_recipe to false and leave other fields as null."""
+
+[llm]
+default_provider = "lm_studio"
+enable_fallback = true
+cache_responses = false
+
+# Local endpoints point to a closed port on 127.0.0.1; tests must mock LLM calls.
+[[llm.providers]]
+name = "lm_studio"
+model = "test-model"
+api_base = "http://127.0.0.1:9/v1"
+api_key = "dummy"
+timeout = 1
+max_retries = 1
+temperature = 0.0
+
+[[llm.providers]]
+name = "ollama"
+model = "test-model"
+api_base = "http://127.0.0.1:9"
+timeout = 1
+max_retries = 1
+temperature = 0.0
+
+[[llm.providers]]
+name = "openai"
+model = "gpt-4o-mini"
+timeout = 1
+max_retries = 1
+temperature = 0.0

@@ -7,7 +7,7 @@ including mock LLM providers and sample test data.
 import pytest
 from unittest.mock import Mock
 from langchain_core.messages import AIMessage
-from langchain_community.chat_models import ChatLiteLLM
+from langchain_litellm import ChatLiteLLM
 from backend.postparse.llm import LLMProvider
 from backend.postparse.llm.config import LLMConfig, ProviderConfig
 

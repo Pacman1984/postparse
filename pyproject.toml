@@ -17,31 +17,21 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "xgboost",
-    "matplotlib",
-    "numpy",
-    "pandas",
-    "optuna",
-    "optuna-integration",
-    "scikit-learn",
-    "scipy",
     "toml",
     "tqdm",
-    "ipywidgets",
     "python-dotenv",
-    "instaloader>=4.10.0",
+    "instaloader>=4.15.2",
     "telethon>=1.32.0",
     "nest-asyncio>=1.5.0",
     "langchain-core>=1.0.0,<2.0.0",
-    "litellm>=1.0.0,<2.0.0",
-    "langchain-community>=0.3.0,<1.0.0",
+    # Pinned exactly: a malicious litellm 1.107.0 was published on 2026-10-21.
+    "litellm==1.80.0",
     "langchain-litellm>=0.3.0,<1.0.0",
     "pydantic>=2.7.4,<3.0.0",
     "fastapi>=0.115.0,<1.0.0",
     "uvicorn[standard]>=0.32.0,<1.0.0",
     "python-jose[cryptography]>=3.3.0,<4.0.0",
     "python-multipart>=0.0.9,<1.0.0",
-    "email-validator>=2.0.0,<3.0.0",
     "websockets>=12.0,<13.0.0",
     "redis>=5.0.0,<6.0.0",
     "python-json-logger>=2.0.0,<3.0.0",
@@ -53,14 +43,28 @@ dependencies = [
 ]
 
 [project.scripts]
-postparse = "backend.postparse.cli.main:cli"
+postparse = "backend.postparse.cli.main:main"
 
 [project.optional-dependencies]
+# Data-science stack used only by exploratory notebooks (not imported by backend/ or tests/).
+notebooks = [
+    "xgboost",
+    "matplotlib",
+    "numpy",
+    "pandas",
+    "optuna",
+    "optuna-integration",
+    "scikit-learn",
+    "scipy",
+    "ipywidgets",
+]
 dev = [
     "pytest>=7.4.0",
     "pytest-asyncio>=0.21.0",
     "pytest-cov>=4.1.0",
     "pytest-mock>=3.12.0",
+    "pytest-socket>=0.7.0",
+    "ruff>=0.6.0",
     "black>=23.7.0",
     "isort>=5.12.0",
     "mypy>=1.5.0",
@@ -96,6 +100,8 @@ dev = [
     "pytest-asyncio>=0.21.0",
     "pytest-cov>=4.1.0",
     "pytest-mock>=3.12.0",
+    "pytest-socket>=0.7.0",
+    "ruff>=0.6.0",
     "black>=23.7.0",
     "isort>=5.12.0",
     "mypy>=1.5.0",
@@ -108,6 +114,11 @@ package = true
 [tool.pytest.ini_options]
 # Pytest-asyncio configuration
 asyncio_mode = "auto"
+
+# Block real network access (pytest-socket); only loopback connections are allowed.
+# --disable-socket is not used because asyncio on Windows needs AF_INET socketpairs.
+# Tests marked `live` are skipped unless --run-live is passed (see tests/conftest.py).
+addopts = "--allow-hosts=127.0.0.1,localhost,::1"
 
 # Filter out known harmless warnings from dependencies
 filterwarnings = [
@@ -127,4 +138,17 @@ markers = [
     "integration: marks tests as integration tests requiring external services",
     "slow: marks tests as slow running tests (deselect with '-m \"not slow\"')",
     "cache: marks tests requiring Redis or cache functionality",
+    "live: talks to real LLM servers or external APIs (skipped unless --run-live)",
 ]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = ["playground", "notebooks", "docs", "instructions", "dist"]
+
+[tool.ruff.lint]
+# Rule set we are working towards. Not enforced yet (no CI gate, no autofix run);
+# `uv run ruff check --statistics` shows the current backlog.
+select = ["E", "F", "W", "I", "B", "UP", "SIM"]
+# Nothing is auto-fixed until the codebase is reformatted deliberately.
+fixable = []

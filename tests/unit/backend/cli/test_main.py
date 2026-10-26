@@ -5,6 +5,7 @@ This module tests the main CLI command group, version information,
 and command registration.
 """
 
+import io
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
@@ -14,7 +15,9 @@ from click.testing import CliRunner
 from backend.postparse.cli.main import (
     __version__,
     cli,
+    configure_stdio_utf8,
     info,
+    main,
     load_env_files,
     show_welcome,
 )
@@ -325,3 +328,55 @@ path = "test.db"
         # The important thing is it doesn't crash catastrophically
         assert isinstance(result.exit_code, int)
 
+
+class TestStdioEncoding:
+    """Test that CLI output survives non-UTF-8 stdout (e.g. piped on Windows)."""
+
+    # Gear emoji + box-drawing line, as rendered by rich-click help output.
+    CLI_GLYPHS = "⚙️  View and validate configuration ─"
+
+    @staticmethod
+    def _cp1252_stream() -> io.TextIOWrapper:
+        """Simulate a piped Windows stdout that uses the ANSI code page."""
+        return io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+
+    def test_cp1252_stream_cannot_encode_cli_glyphs(self) -> None:
+        """Sanity check: without reconfiguring, rich-click glyphs crash."""
+        stream = self._cp1252_stream()
+        with pytest.raises(UnicodeEncodeError):
+            stream.write(self.CLI_GLYPHS)
+
+    def test_configure_stdio_utf8_reconfigures_non_utf8_stream(self) -> None:
+        """Non-UTF-8 streams are switched to UTF-8 with errors='replace'."""
+        stream = self._cp1252_stream()
+
+        configure_stdio_utf8([stream])
+
+        assert stream.encoding.lower() == "utf-8"
+        assert stream.errors == "replace"
+        stream.write(self.CLI_GLYPHS)
+        stream.flush()
+        assert "⚙".encode("utf-8") in stream.buffer.getvalue()
+
+    def test_configure_stdio_utf8_leaves_utf8_and_plain_streams_alone(self) -> None:
+        """UTF-8 streams keep their settings; streams without reconfigure are skipped."""
+        utf8_stream = io.TextIOWrapper(io.BytesIO(), encoding="utf-8", errors="strict")
+        plain_stream = io.StringIO()
+
+        configure_stdio_utf8([utf8_stream, plain_stream])
+
+        assert utf8_stream.errors == "strict"
+
+    def test_main_configures_stdio_before_running_cli(self) -> None:
+        """The console-script entry point reconfigures stdio, then runs the CLI."""
+        calls = []
+        with patch(
+            "backend.postparse.cli.main.configure_stdio_utf8",
+            side_effect=lambda *a, **k: calls.append("configure"),
+        ), patch(
+            "backend.postparse.cli.main.cli",
+            side_effect=lambda *a, **k: calls.append("cli"),
+        ):
+            main()
+
+        assert calls == ["configure", "cli"]

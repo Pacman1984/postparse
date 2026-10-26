@@ -114,9 +114,11 @@ temperature = 0.7
 class TestProviderIntegration:
     """Integration tests with real LLM services."""
 
-    @pytest.mark.skipif(not check_openai_available(), reason="OpenAI API key not set")
+    @pytest.mark.live
     def test_chat_with_openai(self) -> None:
         """Test chat completion with OpenAI (skipped if no API key)."""
+        if not check_openai_available():
+            pytest.skip("OpenAI API key not set")
         config = ProviderConfig(
             name="openai",
             model="gpt-4o-mini",
@@ -129,9 +131,11 @@ class TestProviderIntegration:
         assert isinstance(response, str)
         assert len(response) > 0
 
-    @pytest.mark.skipif(not check_anthropic_available(), reason="Anthropic API key not set")
+    @pytest.mark.live
     def test_chat_with_anthropic(self) -> None:
         """Test chat completion with Anthropic (skipped if no API key)."""
+        if not check_anthropic_available():
+            pytest.skip("Anthropic API key not set")
         config = ProviderConfig(
             name="anthropic",
             model="claude-3-5-sonnet-20241022",
@@ -144,13 +148,15 @@ class TestProviderIntegration:
         assert isinstance(response, str)
         assert len(response) > 0
 
-    @pytest.mark.skipif(not check_ollama_available(), reason="Ollama not running")
+    @pytest.mark.live
     def test_chat_with_ollama(self) -> None:
         """Test chat completion with local Ollama.
         
         Note: This test requires Ollama to be running with a model.
         If this fails, make sure you have a model pulled (e.g., 'ollama pull llama2')
         """
+        if not check_ollama_available():
+            pytest.skip("Ollama not running")
         config = ProviderConfig(
             name="ollama",
             model="llama2",  # Change this to match your installed model
@@ -167,12 +173,14 @@ class TestProviderIntegration:
         except Exception as e:
             pytest.skip(f"Ollama test failed - model may not be available: {e}")
 
-    @pytest.mark.skipif(not check_lm_studio_available(), reason="LM Studio not running")
+    @pytest.mark.live
     def test_chat_with_lm_studio(self) -> None:
         """Test chat completion with LM Studio.
         
         This test uses the actual model loaded in LM Studio.
         """
+        if not check_lm_studio_available():
+            pytest.skip("LM Studio not running")
         config = ProviderConfig(
             name="lm_studio",
             model="qwen/qwen3-vl-8b",  # Match the model loaded in LM Studio
@@ -222,9 +230,11 @@ class TestProviderIntegration:
             response = provider.chat([{"role": "user", "content": "test"}])
             assert response == "Fallback response"
 
-    @pytest.mark.skipif(not check_openai_available(), reason="OpenAI API key not set")
+    @pytest.mark.live
     def test_embedding_generation(self) -> None:
         """Test embedding generation with available provider."""
+        if not check_openai_available():
+            pytest.skip("OpenAI API key not set")
         config = ProviderConfig(
             name="openai",
             model="text-embedding-3-small",

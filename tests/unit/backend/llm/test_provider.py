@@ -397,7 +397,11 @@ class TestLiteLLMProviderErrorHandling:
                 response=mock_response,
             )
 
-            with pytest.raises(LLMRateLimitError) as exc_info:
+            # Skip the real retry backoff sleeps.
+            with (
+                patch("backend.postparse.llm.provider.time.sleep"),
+                pytest.raises(LLMRateLimitError) as exc_info,
+            ):
                 provider.chat([{"role": "user", "content": "test"}])
 
             assert "Rate limit exceeded" in str(exc_info.value)
@@ -448,7 +452,11 @@ class TestLiteLLMProviderErrorHandling:
                 request=httpx.Request(method="POST", url="http://test"),
             )
 
-            with pytest.raises(LLMConnectionError) as exc_info:
+            # Skip the real retry backoff sleeps.
+            with (
+                patch("backend.postparse.llm.provider.time.sleep"),
+                pytest.raises(LLMConnectionError) as exc_info,
+            ):
                 provider.chat([{"role": "user", "content": "test"}])
 
             assert "Connection failed" in str(exc_info.value)

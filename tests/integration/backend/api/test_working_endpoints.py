@@ -7,8 +7,10 @@ formats, and basic functionality.
 """
 
 import pytest
+from unittest.mock import Mock, patch
 from fastapi.testclient import TestClient
 from backend.postparse.api.main import app
+from backend.postparse.core.utils.config import ConfigManager
 
 
 class TestHealthEndpoints:
@@ -89,29 +91,37 @@ class TestClassifyEndpoints:
         assert classifier["type"] == "llm"
 
     def test_providers_list(self):
-        """Test that providers list includes expected providers."""
+        """Test that providers list includes configured providers."""
+        config = ConfigManager()
+        from backend.postparse.llm.config import LLMConfig
+
+        expected_providers = [
+            provider.name
+            for provider in LLMConfig.from_config_manager(config).providers
+        ]
+
         response = self.client.get("/api/v1/classify/classifiers")
         data = response.json()
-        
+
         providers = data["providers"]
         provider_names = [p["name"] for p in providers]
-        
-        # Check expected providers are present
-        assert "ollama" in provider_names
-        assert "openai" in provider_names
-        assert "anthropic" in provider_names
-        assert "lm_studio" in provider_names
 
-    def test_default_provider_is_lm_studio(self):
-        """Test that default provider is lm_studio."""
+        for provider_name in expected_providers:
+            assert provider_name in provider_names
+
+    def test_default_provider_matches_config(self):
+        """Test that default provider matches configuration."""
+        config = ConfigManager()
+        default_provider = config.get("llm.default_provider", "lm_studio")
+
         response = self.client.get("/api/v1/classify/classifiers")
         data = response.json()
-        
+
         providers = data["providers"]
         default_providers = [p for p in providers if p.get("default") is True]
-        
+
         assert len(default_providers) == 1
-        assert default_providers[0]["name"] == "lm_studio"
+        assert default_providers[0]["name"] == default_provider
 
     def test_classify_endpoint_requires_text(self):
         """Test that classify endpoint validates required text field."""
@@ -134,14 +144,23 @@ class TestClassifyEndpoints:
 
     def test_classify_endpoint_error_when_llm_unavailable(self):
         """Test that classify endpoint returns proper error when LLM is unavailable."""
-        response = self.client.post("/api/v1/classify/recipe", json={
-            "text": "Boil pasta for 10 minutes",
-            "classifier_type": "llm",
-            "provider_name": "lm_studio"
-        })
-        
-        # If LLM is running, returns 200; if not, returns 503/500
-        assert response.status_code in [200, 503, 500]
+        config = ConfigManager()
+        default_provider = config.get("llm.default_provider", "lm_studio")
+
+        # Simulate an unreachable LLM server instead of making a real request.
+        unavailable = Mock()
+        unavailable.predict.side_effect = ConnectionError("LLM server unreachable")
+        with patch(
+            "backend.postparse.api.routers.classify._get_cached_recipe_llm_classifier",
+            return_value=unavailable,
+        ):
+            response = self.client.post("/api/v1/classify/recipe", json={
+                "text": "Boil pasta for 10 minutes",
+                "classifier_type": "llm",
+                "provider_name": default_provider
+            })
+
+        assert response.status_code == 503
 
 
 class TestTelegramEndpoints:

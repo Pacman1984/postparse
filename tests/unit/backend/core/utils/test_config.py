@@ -293,7 +293,12 @@ class TestConvenienceFunctions:
 
 
 class TestIntegrationWithRealConfig:
-    """Integration tests using the actual configuration file."""
+    """Integration tests using the configuration file found via the default search.
+
+    During the test run this is the isolated copy of
+    ``tests/fixtures/config/config.toml`` (see ``tests/conftest.py``), never the
+    developer's real ``config/config.toml``.
+    """
     
     def setup_method(self):
         """Set up test fixtures."""

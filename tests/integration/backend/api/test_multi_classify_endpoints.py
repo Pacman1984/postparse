@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 from typing import Dict, Any
 
 from backend.postparse.api.main import app
-from backend.postparse.services.analysis.classifiers.multi_class import MultiClassLLMClassifier
+from backend.postparse.api.dependencies import _normalize_classes_key
 from backend.postparse.services.analysis.classifiers.base import ClassificationResult
 
 
@@ -94,7 +94,7 @@ def mock_multi_classifier(
     mock_multi_result_movie
 ):
     """Mock MultiClassLLMClassifier that returns deterministic results."""
-    classifier = Mock(spec=MultiClassLLMClassifier)
+    classifier = Mock()
 
     def predict_side_effect(text: str):
         text_lower = text.lower()
@@ -137,10 +137,12 @@ class TestMultiClassifyEndpoint:
         """
         client = TestClient(app)
 
-        with patch('backend.postparse.api.routers.classify.MultiClassLLMClassifier') as mock_cls:
+        with patch(
+            'backend.postparse.api.routers.classify._get_cached_multi_class_llm_classifier'
+        ) as mock_get:
             mock_instance = Mock()
             mock_instance.predict.return_value = mock_multi_result_python
-            mock_cls.return_value = mock_instance
+            mock_get.return_value = mock_instance
 
             response = client.post(
                 "/api/v1/classify/multi",
@@ -175,10 +177,12 @@ class TestMultiClassifyEndpoint:
         """
         client = TestClient(app)
 
-        with patch('backend.postparse.api.routers.classify.MultiClassLLMClassifier') as mock_cls:
+        with patch(
+            'backend.postparse.api.routers.classify._get_cached_multi_class_llm_classifier'
+        ) as mock_get:
             mock_instance = Mock()
             mock_instance.predict.return_value = mock_multi_result_python
-            mock_cls.return_value = mock_instance
+            mock_get.return_value = mock_instance
 
             response = client.post(
                 "/api/v1/classify/multi",
@@ -210,10 +214,12 @@ class TestMultiClassifyEndpoint:
         """
         client = TestClient(app)
 
-        with patch('backend.postparse.api.routers.classify.MultiClassLLMClassifier') as mock_cls:
+        with patch(
+            'backend.postparse.api.routers.classify._get_cached_multi_class_llm_classifier'
+        ) as mock_get:
             mock_instance = Mock()
             mock_instance.predict.return_value = mock_multi_result_python
-            mock_cls.return_value = mock_instance
+            mock_get.return_value = mock_instance
 
             response = client.post(
                 "/api/v1/classify/multi",
@@ -226,10 +232,9 @@ class TestMultiClassifyEndpoint:
 
             assert response.status_code == 200
 
-            # Verify provider was passed to constructor
-            mock_cls.assert_called_once()
-            call_kwargs = mock_cls.call_args[1]
-            assert call_kwargs.get('provider_name') == 'openai'
+            # Verify provider was passed to cached classifier getter
+            mock_get.assert_called_once()
+            assert mock_get.call_args[0][0] == "openai"
 
     @pytest.mark.integration
     def test_classify_multi_invalid_text_empty(self):
@@ -303,8 +308,10 @@ class TestMultiClassifyEndpoint:
         """
         client = TestClient(app)
 
-        with patch('backend.postparse.api.routers.classify.MultiClassLLMClassifier') as mock_cls:
-            mock_cls.side_effect = ValueError("Provider 'invalid_provider' not found")
+        with patch(
+            'backend.postparse.api.routers.classify._get_cached_multi_class_llm_classifier'
+        ) as mock_get:
+            mock_get.side_effect = ValueError("Provider 'invalid_provider' not found")
 
             response = client.post(
                 "/api/v1/classify/multi",
@@ -333,10 +340,12 @@ class TestMultiClassifyEndpoint:
         """
         client = TestClient(app)
 
-        with patch('backend.postparse.api.routers.classify.MultiClassLLMClassifier') as mock_cls:
+        with patch(
+            'backend.postparse.api.routers.classify._get_cached_multi_class_llm_classifier'
+        ) as mock_get:
             mock_instance = Mock()
             mock_instance.predict.side_effect = Exception("LLM service unavailable")
-            mock_cls.return_value = mock_instance
+            mock_get.return_value = mock_instance
 
             response = client.post(
                 "/api/v1/classify/multi",
@@ -365,10 +374,12 @@ class TestMultiClassifyEndpoint:
         """
         client = TestClient(app)
 
-        with patch('backend.postparse.api.routers.classify.MultiClassLLMClassifier') as mock_cls:
+        with patch(
+            'backend.postparse.api.routers.classify._get_cached_multi_class_llm_classifier'
+        ) as mock_get:
             mock_instance = Mock()
             mock_instance.predict.return_value = mock_multi_result_python
-            mock_cls.return_value = mock_instance
+            mock_get.return_value = mock_instance
 
             response = client.post(
                 "/api/v1/classify/multi",
@@ -427,8 +438,10 @@ class TestBatchMultiClassifyEndpoint:
         """
         client = TestClient(app)
 
-        with patch('backend.postparse.api.routers.classify.MultiClassLLMClassifier') as mock_cls:
-            mock_cls.return_value = mock_multi_classifier
+        with patch(
+            'backend.postparse.api.routers.classify._get_cached_multi_class_llm_classifier'
+        ) as mock_get:
+            mock_get.return_value = mock_multi_classifier
 
             response = client.post(
                 "/api/v1/classify/multi/batch",
@@ -463,8 +476,10 @@ class TestBatchMultiClassifyEndpoint:
         """
         client = TestClient(app)
 
-        with patch('backend.postparse.api.routers.classify.MultiClassLLMClassifier') as mock_cls:
-            mock_cls.return_value = mock_multi_classifier
+        with patch(
+            'backend.postparse.api.routers.classify._get_cached_multi_class_llm_classifier'
+        ) as mock_get:
+            mock_get.return_value = mock_multi_classifier
 
             response = client.post(
                 "/api/v1/classify/multi/batch",
@@ -476,9 +491,9 @@ class TestBatchMultiClassifyEndpoint:
 
             assert response.status_code == 200
 
-            # Verify classes were passed
-            call_kwargs = mock_cls.call_args[1]
-            assert call_kwargs.get('classes') == sample_classes
+            # Verify runtime classes were passed via normalized cache key
+            classes_key = mock_get.call_args[0][1]
+            assert classes_key == _normalize_classes_key(sample_classes)
 
     @pytest.mark.integration
     def test_classify_multi_batch_empty_list(self, sample_classes: Dict[str, str]):
@@ -542,7 +557,9 @@ class TestBatchMultiClassifyEndpoint:
         """
         client = TestClient(app)
 
-        with patch('backend.postparse.api.routers.classify.MultiClassLLMClassifier') as mock_cls:
+        with patch(
+            'backend.postparse.api.routers.classify._get_cached_multi_class_llm_classifier'
+        ) as mock_get:
             mock_instance = Mock()
             # First succeeds, second fails, third succeeds
             mock_instance.predict.side_effect = [
@@ -551,7 +568,7 @@ class TestBatchMultiClassifyEndpoint:
                 mock_multi_result_recipe,
             ]
             mock_instance.get_class_names.return_value = list(sample_classes.keys())
-            mock_cls.return_value = mock_instance
+            mock_get.return_value = mock_instance
 
             response = client.post(
                 "/api/v1/classify/multi/batch",
@@ -585,8 +602,10 @@ class TestBatchMultiClassifyEndpoint:
         """
         client = TestClient(app)
 
-        with patch('backend.postparse.api.routers.classify.MultiClassLLMClassifier') as mock_cls:
-            mock_cls.return_value = mock_multi_classifier
+        with patch(
+            'backend.postparse.api.routers.classify._get_cached_multi_class_llm_classifier'
+        ) as mock_get:
+            mock_get.return_value = mock_multi_classifier
 
             response = client.post(
                 "/api/v1/classify/multi/batch",

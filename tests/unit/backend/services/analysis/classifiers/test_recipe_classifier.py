@@ -8,6 +8,19 @@ from backend.postparse.services.analysis.classifiers import RecipeLLMClassifier,
 from backend.postparse.llm.config import LLMConfig, get_provider_config
 
 
+@pytest.fixture(autouse=True)
+def passthrough_resolve_provider_model(request):
+    """Skip served-model discovery (HTTP) unless the test talks to a live LLM."""
+    if request.node.get_closest_marker("live"):
+        yield
+        return
+    with patch(
+        "backend.postparse.services.analysis.classifiers.llm.resolve_provider_model",
+        side_effect=lambda cfg: cfg,
+    ):
+        yield
+
+
 def test_recipe_llm_classifier_initialization():
     """Test RecipeLLMClassifier initialization with config."""
     os.environ.setdefault("OPENAI_API_KEY", "dummy-key-for-testing")
@@ -96,7 +109,7 @@ def test_predict_with_mocked_llm(mock_recipe_json_response):
     os.environ.setdefault("OPENAI_API_KEY", "dummy-key-for-testing")
     
     # Mock at the class level before classifier initialization
-    with patch('langchain_community.chat_models.litellm.ChatLiteLLM.invoke') as mock_invoke:
+    with patch('langchain_litellm.ChatLiteLLM.invoke') as mock_invoke:
         mock_invoke.return_value = AIMessage(content=mock_recipe_json_response)
         
         try:
@@ -122,7 +135,7 @@ def test_predict_non_recipe_with_mock(mock_non_recipe_json_response):
     os.environ.setdefault("OPENAI_API_KEY", "dummy-key-for-testing")
     
     # Mock at the class level before classifier initialization
-    with patch('langchain_community.chat_models.litellm.ChatLiteLLM.invoke') as mock_invoke:
+    with patch('langchain_litellm.ChatLiteLLM.invoke') as mock_invoke:
         mock_invoke.return_value = AIMessage(content=mock_non_recipe_json_response)
         
         try:
@@ -280,6 +293,7 @@ def test_confidence_calculation():
 
 
 @pytest.mark.integration
+@pytest.mark.live
 def test_recipe_llm_classifier_with_recipe_text():
     """Integration test with real LLM - recipe text.
     
@@ -343,6 +357,7 @@ def test_recipe_llm_classifier_with_recipe_text():
 
 
 @pytest.mark.integration
+@pytest.mark.live
 def test_recipe_llm_classifier_with_non_recipe_text():
     """Integration test with real LLM - non-recipe text.
     
@@ -381,6 +396,7 @@ def test_recipe_llm_classifier_with_non_recipe_text():
 
 
 @pytest.mark.integration
+@pytest.mark.live
 def test_recipe_llm_classifier_edge_cases():
     """Test edge cases: empty text, ambiguous text."""
     if os.getenv("SKIP_INTEGRATION_TESTS"):
@@ -410,6 +426,7 @@ def test_recipe_llm_classifier_edge_cases():
 
 
 @pytest.mark.integration
+@pytest.mark.live
 def test_recipe_llm_classifier_batch_prediction():
     """Test batch prediction functionality."""
     if os.getenv("SKIP_INTEGRATION_TESTS"):

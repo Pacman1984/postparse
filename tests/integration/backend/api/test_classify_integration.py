@@ -199,14 +199,16 @@ class TestClassifyIntegration:
         """
         client = TestClient(app)
         
-        with patch('backend.postparse.api.routers.classify.RecipeLLMClassifier') as mock_cls:
+        with patch(
+            'backend.postparse.api.routers.classify._get_cached_recipe_llm_classifier'
+        ) as mock_get:
             mock_instance = Mock()
             mock_instance.predict.return_value = ClassificationResult(
                 label="recipe",
                 confidence=0.92,
                 details={"has_ingredients": True}
             )
-            mock_cls.return_value = mock_instance
+            mock_get.return_value = mock_instance
             
             response = client.post(
                 "/api/v1/classify/recipe",
@@ -219,8 +221,8 @@ class TestClassifyIntegration:
             assert response.status_code == 200
             data = response.json()
             
-            # Verify provider was used by checking constructor call
-            mock_cls.assert_called_once_with(provider_name="openai")
+            # Verify provider was used by checking cached getter call
+            mock_get.assert_called_once_with("openai")
             assert data["label"] == "recipe"
             assert data["confidence"] == 0.92
     
@@ -257,7 +259,9 @@ class TestClassifyIntegration:
         """
         client = TestClient(app)
         
-        with patch('backend.postparse.api.routers.classify.RecipeLLMClassifier') as mock_cls:
+        with patch(
+            'backend.postparse.api.routers.classify._get_cached_recipe_llm_classifier'
+        ) as mock_get:
             mock_instance = Mock()
             mock_instance.predict.side_effect = [
                 ClassificationResult(
@@ -271,7 +275,7 @@ class TestClassifyIntegration:
                     details=None
                 ),
             ]
-            mock_cls.return_value = mock_instance
+            mock_get.return_value = mock_instance
             
             response = client.post(
                 "/api/v1/classify/batch",
@@ -285,7 +289,7 @@ class TestClassifyIntegration:
             data = response.json()
             
             # Verify provider was used
-            mock_cls.assert_called_once_with(provider_name="anthropic")
+            mock_get.assert_called_once_with("anthropic")
             assert len(data["results"]) == 2
             assert data["results"][0]["label"] == "recipe"
             assert data["results"][1]["label"] == "not_recipe"

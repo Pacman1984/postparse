@@ -23,6 +23,16 @@ from backend.postparse.llm.config import LLMConfig, ProviderConfig
 # ============================================================================
 
 
+@pytest.fixture(autouse=True)
+def passthrough_resolve_provider_model():
+    """Keep mocked provider configs unchanged during classifier tests."""
+    with patch(
+        "backend.postparse.services.analysis.classifiers._shared.resolve_provider_model",
+        side_effect=lambda cfg: cfg,
+    ):
+        yield
+
+
 @pytest.fixture
 def sample_classes():
     """Sample class definitions for testing.

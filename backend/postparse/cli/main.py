@@ -108,8 +108,9 @@ click.rich_click.COMMAND_GROUPS = {
     ]
 }
 
-# Install rich traceback handler
-install_rich_traceback(show_locals=True)
+# Install rich traceback handler.
+# show_locals must stay False: locals can contain passwords, api_hash and tokens.
+install_rich_traceback(show_locals=False)
 
 # Global console instance
 console = Console()
@@ -285,6 +286,37 @@ cli.add_command(enrich.enrich)
 cli.add_command(db.stats, name='stats')
 
 
-if __name__ == '__main__':
+def configure_stdio_utf8(streams=None) -> None:
+    """Switch non-UTF-8 text streams to UTF-8 with ``errors="replace"``.
+
+    On Windows, piped or redirected output (``postparse --help | more``) uses
+    the ANSI code page (e.g. cp1252), which cannot encode the emoji and box
+    characters rendered by rich / rich-click and crashes with
+    ``UnicodeEncodeError``. Reconfiguring the streams avoids that.
+
+    Args:
+        streams: Streams to reconfigure. Defaults to ``(sys.stdout, sys.stderr)``.
+    """
+    if streams is None:
+        streams = (sys.stdout, sys.stderr)
+    for stream in streams:
+        encoding = (getattr(stream, "encoding", None) or "").lower().replace("-", "")
+        reconfigure = getattr(stream, "reconfigure", None)
+        if encoding == "utf8" or reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            # Stream already in use in a way that forbids reconfiguring; keep it.
+            pass
+
+
+def main() -> None:
+    """Console-script entry point: make stdio UTF-8 safe, then run the CLI."""
+    configure_stdio_utf8()
     cli()
+
+
+if __name__ == '__main__':
+    main()
 

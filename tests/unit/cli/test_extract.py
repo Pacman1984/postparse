@@ -201,7 +201,7 @@ def test_instagram_feed_fail_status_from_the_web_feed_exit_3(env) -> None:
 
     assert result.exit_code == 3, result.output
     assert [r[:2] for r in loader.context.requests] == [
-        ("iphone", IG_USER_INFO),
+        ("web", IG_USER_INFO),  # the session check uses the web API as well
         ("web", IG_SAVED_FEED),
     ]
     assert "something went wrong" in " ".join(result.output.split())

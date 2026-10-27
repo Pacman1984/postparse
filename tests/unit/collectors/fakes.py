@@ -286,8 +286,10 @@ class FakeIgContext:
         self.web_headers: list[dict[str, str]] = []
 
     def set_cookies(self, cookies: dict[str, str]) -> None:
+        """Replace the session with a new one holding ``cookies`` (as instaloader does)."""
         import requests
 
+        self._session = requests.Session()
         self._session.cookies = requests.utils.cookiejar_from_dict(dict(cookies))
 
     @staticmethod
@@ -341,15 +343,38 @@ class FakeIgContext:
         return None
 
 
+#: Placeholder cookies ``InstaloaderContext.login`` puts into a fresh jar (no domain).
+LOGIN_PLACEHOLDERS = {
+    "sessionid": "",
+    "mid": "",
+    "ig_pr": "1",
+    "ig_vw": "1920",
+    "ig_cb": "1",
+    "csrftoken": "",
+    "s_network": "",
+    "ds_user_id": "",
+}
+
+
 class FakeLoader:
     """Stand-in for ``instaloader.Instaloader`` (login/session methods only).
 
+    The session check (user-info endpoint, answered on both hosts) depends on
+    where the session came from: the session file (``session_user`` /
+    ``check_error``) or a password login / imported session (``new_user`` /
+    ``new_check_error``).
+
     Args:
-        session_user: Username the session check (user-info endpoint) returns;
+        session_user: Username the check of the session file returns;
             ``None`` answers like a logged-out session (403 ``login_required``).
-        check_error: Raised by the session check instead (e.g. a throttle).
+        check_error: Raised by the check of the session file instead (e.g. a throttle).
         session_cookies: Cookies the loaded session file contains.
         login_error / two_factor_error: Raised by the password / 2FA login.
+        login_cookies: Cookies Instagram sets on a password / 2FA login (domain
+            ``.instagram.com``; default: a full login). instaloader's empty
+            placeholders (no domain) are always in the jar as well.
+        new_user / new_check_error: Answer of the check of a session created by
+            a password login or :meth:`load_session` (``None`` user: logged out).
     """
 
     def __init__(
@@ -360,39 +385,73 @@ class FakeLoader:
         session_cookies: dict[str, str] | None = None,
         login_error: BaseException | None = None,
         two_factor_error: BaseException | None = None,
+        login_cookies: dict[str, str] | None = None,
+        new_user: str | None = "me",
+        new_check_error: BaseException | None = None,
     ) -> None:
         self.context = FakeIgContext()
         self.session_user = session_user
+        self.check_error = check_error
         self.login_error = login_error
         self.two_factor_error = two_factor_error
         self.session_cookies = dict(SESSION_COOKIES if session_cookies is None else session_cookies)
-        self.cookies: dict[str, str] = {}
+        self.login_cookies = dict(SESSION_COOKIES if login_cookies is None else login_cookies)
+        self.new_user = new_user
+        self.new_check_error = new_check_error
+        #: ``file`` (session file or nothing loaded) or ``new`` (login / imported session).
+        self.origin = "file"
         self.loaded: list[tuple[str, str]] = []
+        self.imported: list[tuple[str, dict[str, Any]]] = []
         self.logins: list[str] = []
         self.two_factor_codes: list[str] = []
         self.saved: list[str] = []
-        if check_error is not None:
-            self.context.iphone_responses[IG_USER_INFO] = check_error
-        elif session_user is None:
-            self.context.iphone_responses[IG_USER_INFO] = lambda _params: ig_error(LOGGED_OUT_403)
+        self.context.iphone_responses[IG_USER_INFO] = self._user_info
+        self.context.web_responses[IG_USER_INFO] = self._user_info
+
+    def _user_info(self, _params: dict[str, Any]) -> Any:
+        if self.origin == "file":
+            user, error = self.session_user, self.check_error
         else:
-            self.context.iphone_responses[IG_USER_INFO] = {
-                "user": {"pk": int(IG_USER_ID), "username": session_user},
-                "status": "ok",
-            }
+            user, error = self.new_user, self.new_check_error
+        if error is not None:
+            return error
+        if user is None:
+            return ig_error(LOGGED_OUT_403)
+        return {"user": {"pk": int(IG_USER_ID), "username": user}, "status": "ok"}
+
+    def check_requests(self) -> list[tuple[str, str, dict[str, Any], int]]:
+        """Session-check requests (user-info endpoint, either host)."""
+        return [r for r in self.context.requests if r[1] == IG_USER_INFO]
 
     def load_session_from_file(self, username: str, filename: str) -> None:
         self.loaded.append((username, filename))
         self.context.username = username
         self.context.is_logged_in = True
-        self.cookies = dict(self.session_cookies)
-        self.context.set_cookies(self.cookies)
+        self.context.set_cookies(self.session_cookies)
+
+    def load_session(self, username: str, session_data: dict[str, Any]) -> None:
+        if not session_data.get("csrftoken"):
+            raise KeyError("csrftoken")  # instaloader reads it for X-CSRFToken
+        self.imported.append((username, dict(session_data)))
+        self.origin = "new"
+        self.context.username = username
+        self.context.is_logged_in = True
+        self.context.set_cookies(session_data)
 
     def save_session(self) -> dict[str, str]:
-        return dict(self.cookies)
+        import requests
+
+        return dict(requests.utils.dict_from_cookiejar(self.context._session.cookies))
 
     def test_login(self) -> str | None:
         raise AssertionError("test_login() uses a legacy query_hash and must not be called")
+
+    def _logged_in_jar(self) -> None:
+        """A fresh jar with instaloader's placeholders plus the cookies Instagram set."""
+        self.context.set_cookies(LOGIN_PLACEHOLDERS)
+        for name, value in self.login_cookies.items():
+            self.context._session.cookies.set(name, value, domain=".instagram.com", path="/")
+        self.origin = "new"
 
     def login(self, user: str, passwd: str) -> None:
         self.logins.append(user)
@@ -400,16 +459,14 @@ class FakeLoader:
             raise self.login_error
         self.context.username = user
         self.context.is_logged_in = True
-        self.cookies = dict(SESSION_COOKIES)
-        self.context.set_cookies(self.cookies)
+        self._logged_in_jar()
 
     def two_factor_login(self, code: str) -> None:
         self.two_factor_codes.append(code)
         if self.two_factor_error is not None:
             raise self.two_factor_error
         self.context.is_logged_in = True
-        self.cookies = dict(SESSION_COOKIES)
-        self.context.set_cookies(self.cookies)
+        self._logged_in_jar()
 
     def save_session_to_file(self, filename: str) -> None:
         self.saved.append(filename)

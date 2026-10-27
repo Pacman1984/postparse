@@ -195,7 +195,9 @@ request_timeout = 30.0             # instaloader request timeout (seconds)
 max_connection_attempts = 3        # instaloader connection attempts (feed pages: network errors only)
 feed_api = "web"                   # saved feed: "web" (www.instagram.com, like the web app; fits a
                                    # browser/web session) or "iphone" (private API, i.instagram.com)
-# user_agent = "..."               # custom user agent; unset = instaloader default
+# user_agent = "..."               # custom user agent; unset = instaloader default. After
+                                   # `check instagram --import-session` set it to the User-Agent
+                                   # of that browser (same browser identity as the session)
 
 # ---------------------------------------------------------------------------
 # REST API (`postparse serve`)

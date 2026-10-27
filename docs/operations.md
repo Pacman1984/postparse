@@ -179,12 +179,41 @@ postparse db reindex
 
 ### Instagram: logging in, checkpoint, 2FA, soft block
 
-* **Logging in**: run `postparse check instagram --login` in a terminal. It
-  verifies the saved session (`data/sessions/instagram_<username>`) and, only
-  if there is none or Instagram says it is logged out, logs in with
-  `INSTAGRAM_PASSWORD`. It prints a warning before that password login and may
-  ask for a 2FA code or a confirmation in the Instagram app. It is the
-  **only** command that ever uses the password.
+* **Logging in (recommended): import the browser session** with
+  `postparse check instagram --import-session` in a terminal. No password is
+  used:
+  1. Log in to Instagram in your browser (the account of
+     `INSTAGRAM_USERNAME`).
+  2. Open the developer tools (F12). Chrome / Edge: **Application** →
+     **Cookies** → `https://www.instagram.com`; Firefox: **Storage** →
+     **Cookies** → `https://www.instagram.com`.
+  3. Copy the value of the `sessionid` cookie (it looks like
+     `<digits>%3A...`; a copy with `:` instead of `%3A` is accepted too) and
+     paste it into the hidden prompt. The `csrftoken` prompt is optional
+     (Enter generates one).
+  4. postparse makes exactly **one** request (the session check) and saves
+     the session file (`data/sessions/instagram_<username>`, or `--session`)
+     only when Instagram confirms the session of `INSTAGRAM_USERNAME`; a
+     logged-out session, a session of another account or a throttled check
+     saves nothing and leaves an existing session file alone.
+  5. Set `[instagram] user_agent` in `config/config.toml` to the User-Agent of
+     that browser (e.g. from `navigator.userAgent` in the browser console), so
+     the session is used with the same browser identity.
+  6. Do not log out of Instagram in that browser: logging out ends this
+     session too (closing the browser is fine).
+
+  The prompt needs an interactive terminal; the cookie is never read from
+  arguments, pipes or the environment and is never shown or logged.
+* **Password login (alternative)**: `postparse check instagram --login`
+  verifies the saved session and, only if there is none or Instagram says it
+  is logged out, logs in with `INSTAGRAM_PASSWORD`. It prints a warning before
+  that password login and may ask for a 2FA code or a confirmation in the
+  Instagram app. It is the **only** command that ever uses the password. The
+  new session is verified (one request) before it is saved: instaloader may
+  report a successful login although Instagram set no `sessionid` cookie
+  (instaloader issue #2487); then `--login` stops with "Instagram accepted the
+  password but returned no session cookie ...; nothing was saved" instead of
+  saving an unusable session. Use `--import-session` in that case.
 * **Extract never uses the password**: `extract instagram` (also with
   `--transcribe`), `transcribe run` re-fetches and all API jobs only use the
   saved session. Without a usable one (no session file, unreadable file,
@@ -192,8 +221,9 @@ postparse db reindex
   auth_required` and a message like "No password login was attempted
   (session logged out: login_required); automatic password logins are
   disabled because they trigger Instagram checkpoints. Instagram login
-  required: run `postparse check instagram --login` in a terminal ..., then
-  retry." Repeated scripted password logins are what makes Instagram ask for
+  required: import the session of your logged-in browser with `postparse
+  check instagram --import-session` in a terminal (no password), or run
+  `postparse check instagram --login` ..., then retry." Repeated scripted password logins are what makes Instagram ask for
   checkpoints, so there is no switch to turn them back on.
 * **Instagram's reason**: logged-out sessions, confirmations, feed refusals
   and rate limits quote Instagram's own short reason, e.g. `(Instagram:
@@ -203,11 +233,15 @@ postparse db reindex
   never shown (at most 200 characters).
 * **2FA**: `check instagram --login` prompts for the code in the terminal.
 * **Checkpoint / "confirm it was you"**: confirm the login in the Instagram app,
-  then run `postparse check instagram --login` and retry the extract. Do not
+  then run `postparse check instagram --import-session` (or `--login`) and
+  retry the extract. Do not
   delete the session file just because a run failed.
 * **"Instagram did not confirm the saved session"**: exit code 3. The session
-  check (one request to `i.instagram.com/api/v1/users/<id>/info/`, a single
-  attempt) was throttled (401 "Please wait a few minutes", 429) or Instagram
+  check (one request to `api/v1/users/<id>/info/`, a single attempt; with
+  `instagram.feed_api = "web"`, the default, on `www.instagram.com` with the
+  same web headers as the feed, with `"iphone"` on `i.instagram.com`, so a run
+  uses one client identity and a browser session is never sent with iPad
+  headers to `i.instagram.com`) was throttled (401 "Please wait a few minutes", 429) or Instagram
   was unreachable. This says nothing about the session itself, so **no password
   login is attempted** and the session file is left untouched; nothing was
   collected or lost. Wait a few hours and retry. Even `check instagram

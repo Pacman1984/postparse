@@ -47,14 +47,14 @@ Usage: postparse check [OPTIONS] [COMMAND] [ARGS]...
 
 Health checks (database, transcription, sessions, LLM providers).
 
-Without a subcommand this runs `check all`. Only `--login` and `check llm`
-talk to external services.
+Without a subcommand this runs `check all`. Only `--login`,
+`check instagram --import-session` and `check llm` talk to external services.
 
 | Subcommand | Description |
 |---|---|
 | [`all`](#postparse-check-all) | Run all checks (no Telegram/Instagram network calls without --login). |
 | [`db`](#postparse-check-db) | Database integrity, schema version and search index (= `db check`). |
-| [`instagram`](#postparse-check-instagram) | Instagram session file and credentials (`--login` verifies online). |
+| [`instagram`](#postparse-check-instagram) | Instagram session file and credentials (`--login` / `--import-session` go online). |
 | [`llm`](#postparse-check-llm) | LLM providers: model list, discovered model, chat ping and latency. |
 | [`telegram`](#postparse-check-telegram) | Telegram session file and credentials (`--login` verifies online). |
 | [`transcription`](#postparse-check-transcription) | Transcription backend: faster-whisper / CUDA, or API endpoint reachability. |
@@ -101,12 +101,16 @@ Database integrity, schema version and search index (= `db check`).
 Usage: postparse check instagram [OPTIONS]
 ```
 
-Instagram session file and credentials (`--login` verifies online).
+Instagram session file and credentials (`--login` / `--import-session` go online).
+
+`--import-session` is the recommended way to log in: it takes the session
+of your logged-in browser (no password login).
 
 **Examples:**
 
 ```bash
 postparse check instagram
+postparse check instagram --import-session
 postparse check instagram --login
 ```
 
@@ -115,6 +119,14 @@ postparse check instagram --login
 | `--username` | TEXT |  | Instagram username (default: INSTAGRAM_USERNAME) |
 | `--session` | TEXT |  | Session file (default: &lt;sessions_dir&gt;/instagram_&lt;username&gt;) |
 | `--login` | flag |  | Verify the saved session; without a usable one log in with INSTAGRAM_PASSWORD (may prompt for a 2FA code). The only command that uses the password. |
+| `--import-session` | flag |  | Import the sessionid cookie of your logged-in browser (hidden prompt, no password), verify it with one request and save it. Needs a terminal. |
+
+`--import-session` and `--login` cannot be combined (usage error, exit code
+2). The import asks for the `sessionid` cookie (hidden input) and optionally
+the `csrftoken` cookie (Enter generates one), makes exactly one request (the
+session check) and saves the session file only when Instagram confirms the
+session of `INSTAGRAM_USERNAME`; otherwise nothing is saved (exit code 1).
+See [Operations](operations.md#instagram-logging-in-checkpoint-2fa-soft-block).
 
 ### `postparse check llm`
 
@@ -636,8 +648,11 @@ Collect saved Instagram posts (newest first, stops at known posts).
 
 Uses the saved session of INSTAGRAM_USERNAME (environment or config/.env)
 and never logs in with the password: without a usable session it stops
-with exit code 2. Log in with `postparse check instagram --login` in a
-terminal (the only command that uses INSTAGRAM_PASSWORD), then retry.
+with exit code 2. Import the session of your logged-in browser with
+`postparse check instagram --import-session` in a terminal (no password),
+or log in with `postparse check instagram --login` (the only command that
+uses INSTAGRAM_PASSWORD; it may not yield a usable session, instaloader
+#2487), then retry.
 
 **Examples:**
 
@@ -654,7 +669,7 @@ postparse extract instagram --transcribe
 ```text
 New posts are throttled (several seconds each). If Instagram asks for a
 confirmation, confirm the login in the Instagram app, run
-`postparse check instagram --login` and retry.
+`postparse check instagram --import-session` (or `--login`) and retry.
 ```
 
 | Option | Type | Default | Description |

@@ -245,7 +245,8 @@ class ExtractionService:
                 interactive=interactive,
                 session=session,
                 # Collection never logs in with the password (Instagram checkpoints);
-                # only `postparse check instagram --login` does, interactively.
+                # only `postparse check instagram --login` does, interactively
+                # (`--import-session` takes the browser session instead).
                 **{"progress": progress, **self.instagram_overrides, "allow_password_login": False},
             )
             with collector:

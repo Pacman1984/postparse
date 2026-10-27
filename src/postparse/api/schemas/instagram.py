@@ -22,7 +22,8 @@ class InstagramExtractRequest(BaseModel):
     Attributes:
         username: Instagram account username.
         password: Accepted for compatibility but never used for a login: jobs
-            only use the saved session (log in with
+            only use the saved session (import the browser session with
+            ``postparse check instagram --import-session``, or log in with
             ``postparse check instagram --login``).
         access_token: API access token (for Platform API method).
         limit: Maximum number of posts to extract.

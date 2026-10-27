@@ -14,11 +14,16 @@ Nothing is downloaded and no expiring image CDN URL is stored; for videos a
 pending-transcription media row is created (with the video URL only when the
 feed item already carries it).
 
-The saved session is verified with a single request to the private user-info
-endpoint (no legacy GraphQL ``query_hash``). There is no automatic password
-login: without a usable session :class:`InstagramAuthRequired` names the reason
-and points to the interactive ``postparse check instagram --login`` (the only
-caller that sets ``allow_password_login``). A throttled or failed check raises
+The saved session is verified with a single request to the user-info
+endpoint (no legacy GraphQL ``query_hash``), over the same API as the feed.
+There is no automatic password login: without a usable session
+:class:`InstagramAuthRequired` names the reason and points to the interactive
+``postparse check instagram --import-session`` (the session of the user's
+logged-in browser, :meth:`InstagramCollector.import_session`) or
+``postparse check instagram --login`` (the only caller that sets
+``allow_password_login``). A session is only saved after the check confirmed
+it, also after a password login (instaloader may report a login without a
+session cookie, instaloader issue #2487). A throttled or failed check raises
 :class:`InstagramSessionCheckFailed` and leaves the session file alone. A feed
 page that Instagram answers with a ``"fail"`` status is not retried: it raises
 :class:`InstagramFeedUnavailable` (only network errors are retried).
@@ -32,6 +37,8 @@ from __future__ import annotations
 
 import logging
 import re
+import secrets
+import string
 import time
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
@@ -67,8 +74,10 @@ __all__ = [
     "FeedApi",
     "InstagramCollector",
     "InstagramOptions",
+    "InvalidSessionCookie",
     "iter_saved_feed",
     "map_post",
+    "parse_sessionid",
     "post_from_iphone_media",
     "resolve_session_path",
 ]
@@ -83,7 +92,7 @@ SavedPostsFn = Callable[[Any], Iterable[Any]]
 PostFromShortcode = Callable[[Any, str], Any]
 PromptFn = Callable[[str], str]
 
-#: Private API (``i.instagram.com``) user info; also used by instaloader itself.
+#: User info (session check); same path on ``i.instagram.com`` and ``www.instagram.com``.
 USER_INFO_PATH = "api/v1/users/{user_id}/info/"
 #: Saved feed (all saved posts, newest saved first); same path on both hosts.
 SAVED_FEED_PATH = "api/v1/feed/saved/posts/"
@@ -93,6 +102,8 @@ FeedApi = Literal["web", "iphone"]
 FEED_APIS: tuple[FeedApi, ...] = ("web", "iphone")
 
 WEB_HOST = "www.instagram.com"
+#: ``Referer`` of web requests outside the saved page (the session check).
+WEB_REFERER = f"https://{WEB_HOST}/"
 #: App id of the Instagram web app (``X-IG-App-ID``; instaloader sends the same).
 WEB_APP_ID = "936619743392459"
 #: ``X-ASBD-ID`` the web app sends (value as used by gallery-dl's REST client).
@@ -232,7 +243,10 @@ def _default_loader_factory(options: InstagramOptions) -> Any:
 
 
 def iter_saved_feed(
-    context: Any, feed_api: FeedApi = "web", username: str | None = None
+    context: Any,
+    feed_api: FeedApi = "web",
+    username: str | None = None,
+    web: _WebClient | None = None,
 ) -> Iterator[Any]:
     """Iterate the saved feed (newest saved first).
 
@@ -248,10 +262,12 @@ def iter_saved_feed(
     Args:
         context: Logged-in ``InstaloaderContext`` (``user_id`` set for ``iphone``).
         feed_api: ``"web"``: ``www.instagram.com`` with the web app's REST
-            headers (see :class:`_WebFeed`), with a web session the endpoint
+            headers (see :class:`_WebClient`), with a web session the endpoint
             Instagram's own web app uses; ``"iphone"``: ``i.instagram.com``
             through ``context.get_iphone_json`` (iPad headers).
         username: Logged-in username (``Referer`` of web requests).
+        web: Web client to use (the collector's, shared with the session
+            check); ``None`` creates one for this walk.
 
     Yields:
         instaloader ``Post`` objects built from the media structs (both APIs
@@ -271,11 +287,15 @@ def iter_saved_feed(
             context, feed_api, lambda params: context.get_iphone_json(SAVED_FEED_PATH, params)
         )
         return
-    web = _WebFeed(context, username)
+    client = web if web is not None else _WebClient(context)
+    referer = f"https://{WEB_HOST}/{username}/saved/all-posts/" if username else WEB_REFERER
     try:
-        yield from _iter_feed_posts(context, feed_api, web.get)
+        yield from _iter_feed_posts(
+            context, feed_api, lambda params: client.get(SAVED_FEED_PATH, params, referer=referer)
+        )
     finally:
-        web.close()
+        if web is None:
+            client.close()
 
 
 def _iter_feed_posts(
@@ -383,11 +403,15 @@ _MESSAGE_RES = (
     re.compile(r'"message"\s*:\s*"([^"]*)"'),
 )
 _REDIRECT_RE = re.compile(r"redirect(?:ed)? to (https?://[^\s\"'<>]+)", re.IGNORECASE)
-#: ``name=value`` pairs that must never be shown (cookies, tokens, passwords).
+#: ``name=value`` / ``"name": "value"`` pairs that must never be shown (cookies,
+#: tokens, passwords).
 _SECRET_RE = re.compile(
     r"(?i)\b(sessionid|csrftoken|ds_user_id|mid|ig_did|rur|shbid|shbts|"
-    r"[\w-]*token[\w-]*|[\w-]*passw\w*|enc_password|cookie|authorization)\s*[=:]\s*[^\s;,&\"']+"
+    r"[\w-]*token[\w-]*|[\w-]*passw\w*|enc_password|cookie|authorization)[\"']?\s*[=:]\s*"
+    r"[\"']?[^\s;,&\"']+"
 )
+#: A bare ``sessionid`` value (``<user id>%3A...``, also URL-decoded with ``:``).
+_SESSIONID_VALUE_RE = re.compile(r"(?i)\b\d+(?:%3A|:)[A-Za-z0-9%:_-]{8,}")
 #: HTTP status 429 as a word (applied to the text without URLs and request paths).
 _HTTP_429_RE = re.compile(r"(?<![\w./=&?-])429(?![\w./=&?-])")
 
@@ -447,49 +471,58 @@ def _instagram_message(text: str) -> str:
             reason = _QUERY_PREFIX_RE.sub("", head).strip()
     reason = _URL_RE.sub(lambda m: _strip_url(m.group(0)), reason)
     reason = _SECRET_RE.sub(lambda m: f"{m.group(1)}=<redacted>", reason)
+    reason = _SESSIONID_VALUE_RE.sub("<redacted>", reason)
     reason = " ".join(reason.split())
     if len(reason) > MAX_REASON_LENGTH:
         reason = reason[: MAX_REASON_LENGTH - 1].rstrip() + "…"
     return reason
 
 
-class _WebFeed:
-    """Saved-feed requests as the Instagram web app makes them.
+class _WebClient:
+    """Requests to ``www.instagram.com`` as the Instagram web app makes them.
+
+    Used for the saved feed and for the session check (``feed_api = "web"``),
+    so a run talks to Instagram with one client identity, and a browser
+    session is never sent with iPad headers to ``i.instagram.com``.
 
     Uses a temporary copy of instaloader's session (``copy_session``, as
     ``get_iphone_json`` does), so the loaded cookies, instaloader's www
     defaults (``User-Agent``, ``Origin``, ``Accept-Language``) and its rate
     controller and error handling (``context.get_json``) stay in use; the main
-    session is not changed. On top, the web app's REST headers are sent
-    (``X-IG-App-ID``, ``X-ASBD-ID``, ``X-Requested-With``, ``Sec-Fetch-*``,
-    the saved page as ``Referer``). Each request takes ``X-CSRFToken`` from the
-    current ``csrftoken`` cookie and sends the last ``x-ig-set-www-claim`` the
-    server handed out as ``X-IG-WWW-Claim`` (``"0"`` before), like the web app
-    and gallery-dl's REST client do.
+    session is not changed. The copy follows the context: when instaloader
+    replaces its session (password login, imported session), a new copy is
+    made. On top, the web app's REST headers are sent (``X-IG-App-ID``,
+    ``X-ASBD-ID``, ``X-Requested-With``, ``Sec-Fetch-*``, a ``Referer``). Each
+    request takes ``X-CSRFToken`` from the current ``csrftoken`` cookie and
+    sends the last ``x-ig-set-www-claim`` the server handed out as
+    ``X-IG-WWW-Claim`` (``"0"`` before), like the web app and gallery-dl's REST
+    client do.
+
+    Args:
+        context: instaloader context (its ``_session`` holds the cookies).
+        referer: Default ``Referer`` (the web app's start page).
     """
 
-    def __init__(self, context: Any, username: str | None) -> None:
+    def __init__(self, context: Any, referer: str = WEB_REFERER) -> None:
         self.context = context
+        self.referer = referer
         self.www_claim = "0"
         self.session: Any = None
-        self.referer = (
-            f"https://{WEB_HOST}/{username}/saved/all-posts/"
-            if username
-            else f"https://{WEB_HOST}/"
-        )
+        self._source: Any = None
 
     def _session(self) -> Any:
-        if self.session is None:
+        source = self.context._session
+        if self.session is None or self._source is not source:
             from instaloader.instaloadercontext import copy_session
 
-            session = copy_session(self.context._session, self.context.request_timeout)
+            self.close()
+            session = copy_session(source, self.context.request_timeout)
             for header in _WEB_DROP_HEADERS:
                 session.headers.pop(header, None)
             session.headers.update(
                 {
                     "Accept": "*/*",
                     "Origin": f"https://{WEB_HOST}",
-                    "Referer": self.referer,
                     "X-ASBD-ID": WEB_ASBD_ID,
                     "X-IG-App-ID": WEB_APP_ID,
                     "X-Requested-With": "XMLHttpRequest",
@@ -499,16 +532,19 @@ class _WebFeed:
                 }
             )
             self.session = session
+            self._source = source
+            self.www_claim = "0"  # the claim belongs to the session
         return self.session
 
-    def get(self, params: dict[str, Any]) -> Any:
-        """GET one page of ``https://www.instagram.com/api/v1/feed/saved/posts/``."""
+    def get(self, path: str, params: dict[str, Any], *, referer: str | None = None) -> Any:
+        """GET ``https://www.instagram.com/<path>`` (JSON) with the web headers."""
         session = self._session()
+        session.headers["Referer"] = referer or self.referer
         session.headers["X-CSRFToken"] = str(session.cookies.get_dict().get("csrftoken") or "")
         session.headers["X-IG-WWW-Claim"] = self.www_claim
         response_headers: dict[str, Any] = {}
         data = self.context.get_json(
-            SAVED_FEED_PATH,
+            path,
             params,
             host=WEB_HOST,
             session=session,
@@ -523,6 +559,7 @@ class _WebFeed:
         if self.session is not None:
             self.session.close()
             self.session = None
+            self._source = None
 
 
 def post_from_iphone_media(context: Any, media: dict[str, Any]) -> Any:
@@ -837,6 +874,85 @@ def _session_cookies(loader: Any) -> dict[str, Any]:
     return cookies if isinstance(cookies, dict) else {}
 
 
+def _has_login_cookies(cookies: dict[str, Any]) -> bool:
+    """True if ``cookies`` carry a ``sessionid`` and a numeric ``ds_user_id``."""
+    return bool(cookies.get("sessionid")) and str(cookies.get("ds_user_id") or "").isdigit()
+
+
+def _drop_placeholder_cookies(jar: Any) -> int:
+    """Remove instaloader's empty placeholder cookies from ``jar``.
+
+    ``InstaloaderContext.login`` puts ``sessionid``, ``mid``, ``csrftoken``,
+    ``s_network`` and ``ds_user_id`` with empty values (and no domain) into a
+    fresh jar before logging in. Cookies Instagram sets carry a domain, so a
+    cookie with an empty value and no domain is such a placeholder; it would
+    hide a missing (or shadow a real) login cookie. Everything else (also
+    ``ig_pr="1"`` and the like) is kept.
+
+    Returns:
+        Number of removed cookies.
+    """
+    placeholders = [c for c in list(jar) if not c.value and not c.domain]
+    for cookie in placeholders:
+        jar.clear(cookie.domain, cookie.path, cookie.name)
+    return len(placeholders)
+
+
+class InvalidSessionCookie(ValueError):
+    """A pasted cookie value does not have the expected shape (the value is never shown)."""
+
+
+#: ``sessionid`` cookie as the browser stores it: ``<ds_user_id>%3A<rest>``.
+_SESSIONID_RE = re.compile(r"^(\d+)%3A[^\s;,\"']+$", re.IGNORECASE)
+_CSRFTOKEN_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+#: Length of a generated ``csrftoken`` (as Instagram's).
+CSRFTOKEN_LENGTH = 32
+
+
+def _strip_cookie_value(value: str) -> str:
+    """``value`` without surrounding whitespace and quotes."""
+    return value.strip().strip("\"'").strip()
+
+
+def parse_sessionid(value: str) -> tuple[str, str]:
+    """Normalize a ``sessionid`` cookie copied from the browser.
+
+    Whitespace and surrounding quotes are removed and ``:`` is encoded as
+    ``%3A`` (the browser's developer tools show the URL-encoded value; a
+    decoded copy is accepted as well).
+
+    Args:
+        value: Pasted cookie value.
+
+    Returns:
+        ``(sessionid, ds_user_id)``; the user id is the leading number.
+
+    Raises:
+        InvalidSessionCookie: Not shaped like ``<digits>%3A...`` (the message
+            never contains the value).
+    """
+    sessionid = _strip_cookie_value(value).replace(":", "%3A")
+    match = _SESSIONID_RE.match(sessionid)
+    if match is None:
+        raise InvalidSessionCookie(
+            "The value does not look like an Instagram sessionid cookie (expected <digits>%3A…)."
+        )
+    return sessionid, match.group(1)
+
+
+def _csrftoken(value: str | None) -> str:
+    """The pasted ``csrftoken`` (normalized), or a newly generated one when empty."""
+    token = _strip_cookie_value(value or "")
+    if not token:
+        alphabet = string.ascii_letters + string.digits
+        return "".join(secrets.choice(alphabet) for _ in range(CSRFTOKEN_LENGTH))
+    if not _CSRFTOKEN_RE.match(token):
+        raise InvalidSessionCookie(
+            "The value does not look like an Instagram csrftoken cookie (letters and digits)."
+        )
+    return token
+
+
 # ---------------------------------------------------------------------------
 # Collector
 # ---------------------------------------------------------------------------
@@ -851,7 +967,10 @@ class InstagramCollector:
     A password login is never automatic: scripted password logins are what
     makes Instagram ask for checkpoints. Without a usable session the collector
     raises :class:`InstagramAuthRequired` unless ``allow_password_login`` is set,
-    which only the interactive ``postparse check instagram --login`` does.
+    which only the interactive ``postparse check instagram --login`` does. The
+    recommended way to create a session is :meth:`import_session` (the browser's
+    ``sessionid`` cookie, ``postparse check instagram --import-session``). New
+    sessions are saved only after the session check confirmed them.
 
     Args:
         db: Target database.
@@ -911,10 +1030,29 @@ class InstagramCollector:
         self.loader: Any = None
         self.logged_in = False
         self.stats = CollectStats(source="instagram")
+        self._web: _WebClient | None = None
 
     def _default_saved_posts(self, loader: Any) -> Iterable[Any]:
         """The saved feed through the configured ``feed_api``."""
-        return iter_saved_feed(loader.context, self.options.feed_api, self.credentials.username)
+        return iter_saved_feed(
+            loader.context,
+            self.options.feed_api,
+            self.credentials.username,
+            web=self._web_client() if loader is self.loader else None,
+        )
+
+    def _web_client(self) -> _WebClient:
+        """The web client of this collector (session check and feed share it)."""
+        context = self.loader.context
+        if self._web is None or self._web.context is not context:
+            self._close_web()
+            self._web = _WebClient(context)
+        return self._web
+
+    def _close_web(self) -> None:
+        if self._web is not None:
+            self._web.close()
+            self._web = None
 
     # -- session ---------------------------------------------------------
 
@@ -927,7 +1065,10 @@ class InstagramCollector:
         return self
 
     def __exit__(self, *exc_info: object) -> None:
-        self.save_session()
+        try:
+            self.save_session()
+        finally:
+            self._close_web()
 
     def login(self) -> None:
         """Load and verify the saved session.
@@ -989,12 +1130,16 @@ class InstagramCollector:
         """Verify the loaded session with at most one request.
 
         The ``sessionid`` / ``ds_user_id`` cookies are checked locally first
-        (missing: not logged in, no request). Then the private user-info
-        endpoint (``api/v1/users/<ds_user_id>/info/``) is asked once, with
-        ``max_connection_attempts`` temporarily set to 1. instaloader's
-        ``test_login()`` is not used: it queries a legacy GraphQL
-        ``query_hash`` and turns every error (including throttles) into
-        "not logged in".
+        (missing: not logged in, no request). Then the user-info endpoint
+        (``api/v1/users/<ds_user_id>/info/``) is asked once, with
+        ``max_connection_attempts`` temporarily set to 1, over the API the
+        feed uses: with ``feed_api = "web"`` as the web app asks it
+        (``www.instagram.com``, the web headers of :class:`_WebClient`), with
+        ``"iphone"`` through ``get_iphone_json`` (``i.instagram.com``). So a run
+        has one client identity, and a browser session is never sent with
+        iPad headers to ``i.instagram.com``. instaloader's ``test_login()`` is
+        not used: it queries a legacy GraphQL ``query_hash`` and turns every
+        error (including throttles) into "not logged in".
 
         Returns:
             ``None`` if the session is usable, otherwise why it is positively
@@ -1006,16 +1151,20 @@ class InstagramCollector:
             InstagramSessionCheckFailed: Throttled, unreachable or unknown error.
         """
         cookies = _session_cookies(self.loader)
-        user_id = str(cookies.get("ds_user_id") or "")
-        if not cookies.get("sessionid") or not user_id.isdigit():
+        if not _has_login_cookies(cookies):
             logger.info("Instagram session file has no login cookies")
             return "session logged out: the session file has no login cookies"
+        user_id = str(cookies["ds_user_id"])
         context = self.loader.context
         context.user_id = int(user_id)  # sent as ig-intended-user-id by get_iphone_json
+        path = USER_INFO_PATH.format(user_id=user_id)
         attempts = context.max_connection_attempts
         context.max_connection_attempts = 1
         try:
-            data = context.get_iphone_json(USER_INFO_PATH.format(user_id=user_id), {})
+            if self.options.feed_api == "web":
+                data = self._web_client().get(path, {})
+            else:
+                data = context.get_iphone_json(path, {})
         except Exception as exc:
             verdict = _session_check_verdict(exc)
             reason = _instagram_message(str(exc)) or type(exc).__name__
@@ -1044,7 +1193,13 @@ class InstagramCollector:
         return None
 
     def _password_login(self) -> None:
-        """Log in with the password (and a 2FA code when interactive)."""
+        """Log in with the password (and a 2FA code when interactive).
+
+        The new session is saved only after it was verified (see
+        :meth:`_verify_new_session`): instaloader reports a login as soon as
+        Instagram answers ``authenticated: true``, even when no ``sessionid``
+        cookie came back (instaloader issue #2487).
+        """
         assert self.credentials.password is not None
         logger.info("Logging in to Instagram as %s", self.credentials.username)
         try:
@@ -1061,8 +1216,93 @@ class InstagramCollector:
                 self.loader.two_factor_login(code)
             except Exception as exc2:
                 raise translate_error(exc2) from exc2
+        self._verify_new_session("password login")
         self.logged_in = True
         self.save_session()
+
+    def _verify_new_session(self, origin: str) -> None:
+        """Verify a session that a password login just created (nothing is saved).
+
+        instaloader's empty placeholder cookies are removed first (see
+        :func:`_drop_placeholder_cookies`); without real login cookies no
+        request is made. Then :meth:`_check_session` asks Instagram once.
+
+        Args:
+            origin: What created the session (``password login``), for messages.
+
+        Raises:
+            InstagramAuthRequired: No session cookie, or the check says the
+                session is not usable (or asks for a confirmation).
+            InstagramSessionCheckFailed: The check was throttled or failed.
+        """
+        session = getattr(self.loader.context, "_session", None)
+        if session is not None:
+            dropped = _drop_placeholder_cookies(session.cookies)
+            logger.debug("Removed %d placeholder cookies after the %s", dropped, origin)
+        if not _has_login_cookies(_session_cookies(self.loader)):
+            logger.warning("Instagram %s returned no session cookie (instaloader #2487)", origin)
+            raise InstagramAuthRequired(
+                "Instagram accepted the password but returned no session cookie "
+                "(instaloader issue #2487); nothing was saved."
+            )
+        reason = self._check_after(origin)
+        if reason is not None:
+            logger.warning("Instagram session check after the %s failed (%s)", origin, reason)
+            raise InstagramAuthRequired(
+                f"Instagram accepted the password, but the session check after the {origin} "
+                f"failed ({reason}); nothing was saved."
+            )
+
+    def _check_after(self, origin: str) -> str | None:
+        """:meth:`_check_session` for a new session (a failed check names ``origin``)."""
+        try:
+            return self._check_session()
+        except InstagramSessionCheckFailed as exc:
+            raise InstagramSessionCheckFailed(exc.detail, exc.retry_after, after=origin) from exc
+
+    def import_session(self, sessionid: str, csrftoken: str | None = None) -> None:
+        """Import the session of the user's logged-in browser and verify it.
+
+        Never uses the password and never falls back to a password login. The
+        ``sessionid`` cookie is normalized (:func:`parse_sessionid`; its
+        leading number is the ``ds_user_id``), loaded into a fresh instaloader
+        session (``Instaloader.load_session``) and verified with
+        :meth:`_check_session` (exactly one request). Only a confirmed session
+        of :attr:`credentials` ``.username`` is saved (the session file is
+        overwritten only then).
+
+        Args:
+            sessionid: ``sessionid`` cookie value copied from the browser.
+            csrftoken: ``csrftoken`` cookie value; empty or ``None`` generates
+                a random one.
+
+        Raises:
+            InvalidSessionCookie: A value is not shaped like the cookie (no
+                request was made).
+            InstagramAuthRequired: The session is not usable (logged out,
+                another account) or Instagram asks for a confirmation;
+                nothing was saved.
+            InstagramSessionCheckFailed: The check was throttled or failed;
+                nothing was saved.
+        """
+        value, user_id = parse_sessionid(sessionid)
+        token = _csrftoken(csrftoken)
+        self.logged_in = False
+        self.loader = self._loader_factory(self.options)
+        username = self.credentials.username
+        logger.info("Importing the browser session of Instagram user %s", username)
+        self.loader.load_session(
+            username, {"sessionid": value, "ds_user_id": user_id, "csrftoken": token}
+        )
+        reason = self._check_after("session import")
+        if reason is not None:
+            logger.warning("Imported Instagram session is not usable (%s)", reason)
+            raise InstagramAuthRequired(
+                f"The imported session is not usable ({reason}); nothing was saved."
+            )
+        self.logged_in = True
+        self.save_session()
+        self._session_event("session", "Browser session imported and verified (no password login)")
 
     def save_session(self) -> None:
         """Save the session file (only when logged in)."""

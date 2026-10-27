@@ -54,7 +54,7 @@ with `[...]`.
 |---|---|---|
 | POST | `/api/v1/telegram/extract` | Start a `telegram_extract` job. Body: `api_id`, `api_hash`, `phone` (override the env variables), `limit` (100), `force_update`. Never interactive: log in once with `postparse extract telegram`; the session in `sessions_dir` is reused. |
 | GET | `/api/v1/telegram/messages`, `/api/v1/telegram/messages/{message_id}` | Saved Telegram messages |
-| POST | `/api/v1/instagram/extract` | Start an `instagram_extract` job. Body: `username`, `password` (accepted, but jobs never log in with it: they use the saved session; log in with `postparse check instagram --login`), `limit` (50), `force_update`, `stop_after_known` (20), `refresh_dates`. `use_api=true` is not supported (400). |
+| POST | `/api/v1/instagram/extract` | Start an `instagram_extract` job. Body: `username`, `password` (accepted, but jobs never log in with it: they use the saved session; import the browser session with `postparse check instagram --import-session` or log in with `postparse check instagram --login`), `limit` (50), `force_update`, `stop_after_known` (20), `refresh_dates`. `use_api=true` is not supported (400). |
 | GET | `/api/v1/instagram/posts`, `/api/v1/instagram/posts/{shortcode}` | Saved Instagram posts (`offset` deprecated, use `cursor`) |
 
 ### Processing jobs

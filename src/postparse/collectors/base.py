@@ -88,13 +88,17 @@ class InstagramAuthRequired(AuthRequired):
     """Instagram session is invalid and no automatic login was possible.
 
     Collection never logs in with the password; the message points to the
-    interactive ``postparse check instagram --login``.
+    interactive ``postparse check instagram --import-session`` (the session of
+    the logged-in browser, no password) and ``postparse check instagram --login``.
     """
 
     def __init__(self, detail: str | None = None) -> None:
         message = (
-            "Instagram login required: run `postparse check instagram --login` in a terminal "
-            "(it may ask for a 2FA code or a confirmation in the Instagram app), then retry."
+            "Instagram login required: import the session of your logged-in browser with "
+            "`postparse check instagram --import-session` in a terminal (no password), or "
+            "run `postparse check instagram --login` (it may ask for a 2FA code or a "
+            "confirmation in the Instagram app, and may not yield a usable session: "
+            "instaloader issue #2487), then retry."
         )
         super().__init__(f"{detail} {message}" if detail else message)
 
@@ -126,14 +130,34 @@ class InstagramSessionCheckFailed(InstagramRateLimited):
     session check with a throttle ("please wait a few minutes", 401/429) or did
     not answer at all, which says nothing about the session itself. Repeated
     scripted password logins are what triggers checkpoints, so none is tried.
+
+    Attributes:
+        detail: Instagram's sanitized reason.
+        after: What created the checked session (``password login``,
+            ``session import``); ``None`` for the saved session.
     """
 
-    def __init__(self, detail: str | None = None, retry_after: float | None = None) -> None:
-        message = (
-            "Instagram did not confirm the saved session (throttled or unreachable). "
-            "No password login was attempted, the session file was kept and nothing "
-            "was lost; wait a while (ideally hours) before retrying."
-        )
+    def __init__(
+        self,
+        detail: str | None = None,
+        retry_after: float | None = None,
+        *,
+        after: str | None = None,
+    ) -> None:
+        self.detail = detail
+        self.after = after
+        if after is None:
+            message = (
+                "Instagram did not confirm the saved session (throttled or unreachable). "
+                "No password login was attempted, the session file was kept and nothing "
+                "was lost; wait a while (ideally hours) before retrying."
+            )
+        else:
+            message = (
+                f"Instagram did not confirm the session after the {after} (throttled or "
+                "unreachable). Nothing was saved, the session file was kept and nothing "
+                "was lost; wait a while (ideally hours) before retrying."
+            )
         RateLimited.__init__(self, f"{message} ({detail})" if detail else message, retry_after)
 
 

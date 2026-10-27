@@ -62,8 +62,11 @@ uv run postparse classify run --taxonomy topics  # LLM labels for pending items
 uv run postparse search items pasta --label topics:recipe
 ```
 
-The first `extract` asks for the Telegram login code (and 2FA password) and, if
-needed, an Instagram 2FA code; later runs reuse the saved sessions.
+The first `extract` asks for the Telegram login code (and 2FA password); later
+runs reuse the saved session. Instagram never logs in from `extract`: import the
+session of your logged-in browser once with `postparse check instagram
+--import-session` (hidden prompt for the `sessionid` cookie, no password; see
+[Operations](docs/operations.md)).
 
 Every step only processes what is pending and can be re-run at any time.
 `classify run` uses the **default scope**: items collected after the taxonomy was

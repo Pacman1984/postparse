@@ -3,8 +3,9 @@
 Thin adapters over :class:`postparse.services.extraction.ExtractionService`.
 Credentials come from the environment (``config/.env`` is loaded by the CLI):
 ``TELEGRAM_API_ID``, ``TELEGRAM_API_HASH``, ``TELEGRAM_PHONE`` and
-``INSTAGRAM_USERNAME`` (Instagram uses the saved session; the password is only
-used by ``postparse check instagram --login``).
+``INSTAGRAM_USERNAME`` (Instagram uses the saved session, created by
+``postparse check instagram --import-session`` from the browser or by
+``postparse check instagram --login``, the only user of the password).
 
 Exit codes: 0 success, 1 unexpected error, 2 login required, 3 rate limited
 or Instagram refused the saved feed (retry later; nothing stored is lost).
@@ -467,8 +468,11 @@ def instagram(
 
     Uses the saved session of INSTAGRAM_USERNAME (environment or config/.env)
     and never logs in with the password: without a usable session it stops
-    with exit code 2. Log in with `postparse check instagram --login` in a
-    terminal (the only command that uses INSTAGRAM_PASSWORD), then retry.
+    with exit code 2. Import the session of your logged-in browser with
+    `postparse check instagram --import-session` in a terminal (no password),
+    or log in with `postparse check instagram --login` (the only command that
+    uses INSTAGRAM_PASSWORD; it may not yield a usable session, instaloader
+    #2487), then retry.
 
     Examples:
         postparse extract instagram
@@ -480,7 +484,7 @@ def instagram(
     Note:
         New posts are throttled (several seconds each). If Instagram asks for a
         confirmation, confirm the login in the Instagram app, run
-        `postparse check instagram --login` and retry.
+        `postparse check instagram --import-session` (or `--login`) and retry.
     """
     code = _instagram(
         ctx,
@@ -556,8 +560,8 @@ def all_platforms(
         )
     else:
         print_warning(
-            "Skipping Instagram (set INSTAGRAM_USERNAME and log in once with "
-            "`postparse check instagram --login`)."
+            "Skipping Instagram (set INSTAGRAM_USERNAME and import your browser session "
+            "once with `postparse check instagram --import-session`)."
         )
     console.print()
     if not codes:

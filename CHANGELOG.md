@@ -6,7 +6,27 @@ All notable changes to PostParse are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **`postparse check instagram --import-session`**: imports the session of
+  the user's logged-in browser without a password. The `sessionid` cookie is
+  read from a hidden terminal prompt (`csrftoken` optional, generated when
+  empty; a `:`-decoded copy is normalized to `%3A`), verified with exactly one
+  request and saved only when Instagram confirms the session of
+  `INSTAGRAM_USERNAME` (`InstagramCollector.import_session`). Needs an
+  interactive terminal; cannot be combined with `--login`. The value is never
+  shown or logged. Messages that tell how to log in now recommend it first and
+  `--login` as the alternative. See docs/operations.md.
+
 ### Changed
+
+- **Session check over the web API**: with `instagram.feed_api = "web"` (the
+  default) the session check asks `https://www.instagram.com/api/v1/users/<id>/info/`
+  with the same web headers as the saved feed (one shared web client, also the
+  `X-IG-WWW-Claim`), instead of `i.instagram.com` with instaloader's iPad
+  headers: one client identity per run, and a browser session is never sent
+  with iPad headers to `i.instagram.com`. `feed_api = "iphone"` keeps the
+  private-API check.
 
 - **No automatic Instagram password login**: `extract instagram` (also with
   `--transcribe`), `transcribe run` re-fetches and all API jobs never log in
@@ -22,6 +42,19 @@ All notable changes to PostParse are documented here. The format follows
 
 ### Fixed
 
+- **`check instagram --login` saved an unusable session**: instaloader reports
+  a password login as successful as soon as Instagram answers
+  `authenticated: true`, even when no `sessionid` cookie came back, and keeps
+  its empty placeholder cookies in the jar (instaloader issue #2487). The
+  placeholders are now removed, a login without `sessionid` / `ds_user_id`
+  stops with `InstagramAuthRequired` ("Instagram accepted the password but
+  returned no session cookie ...; nothing was saved") and a new session is
+  verified with one session check before it is saved (also after a 2FA code).
+  Nothing is saved on any failure; the existing session file stays untouched.
+  A throttled check of a new session says "did not confirm the session after
+  the password login" (still `InstagramSessionCheckFailed`, exit code 3).
+- **Cookie values in messages**: `"sessionid": "..."` (JSON) and bare
+  `sessionid` values are redacted as well.
 - **Instagram's reason in messages**: logged-out sessions, confirmations,
   feed refusals and rate limits quote Instagram's sanitized short reason
   (`message "..."`, e.g. `checkpoint_required`, or a login redirect as

@@ -46,7 +46,7 @@ below `./data`, no LLM providers, no taxonomies).
 | `[summarization]` | `SummarizationService` | `provider`, `max_input_chars`, `output_retries` |
 | `[enrichment]` | `EnrichmentService` | see [Enrichment](enrichment.md) |
 | `[telegram]` | Telegram collector | batch size, FloodWait threshold, media download limits and pauses, Telethon retry settings |
-| `[instagram]` | Instagram collector | pauses between posts (`default_min_delay` / `default_max_delay`) and date refreshes, instaloader timeout / attempts, `user_agent` |
+| `[instagram]` | Instagram collector | pauses between posts (`default_min_delay` / `default_max_delay`) and date refreshes, instaloader timeout / attempts, `user_agent`, `feed_api` (`"web"`: saved feed like the web app on `www.instagram.com`, default; `"iphone"`: private API on `i.instagram.com`) |
 | `[api]` and `[api.auth]`, `[api.cors]`, `[api.rate_limiting]`, `[api.cache]`, `[api.jobs]` | `serve`, FastAPI app | see [API reference](api-reference.md) |
 
 ### LLM provider example (llama.cpp)
@@ -79,7 +79,7 @@ provider only.
 | Variable | Purpose |
 |---|---|
 | `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_PHONE` | Telegram API credentials (phone optional, used for the first login) |
-| `INSTAGRAM_USERNAME`, `INSTAGRAM_PASSWORD` | Instagram login (password optional while the session file is valid) |
+| `INSTAGRAM_USERNAME`, `INSTAGRAM_PASSWORD` | Instagram account; the password is only used by `postparse check instagram --login`; extract and API jobs use the saved session (recommended: `postparse check instagram --import-session` imports the browser session, no password) |
 | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` | LLM providers; the transcription API backend reads the variable named by `transcription.api.api_key_env` (default `OPENAI_API_KEY`) |
 | `JWT_SECRET_KEY` | API authentication secret (fallback when `api.auth.secret_key` is not set) |
 | `POSTPARSE_DATA_DIR`, `POSTPARSE_DB_PATH`, `POSTPARSE_SESSIONS_DIR`, `POSTPARSE_DOWNLOADS_DIR`, `POSTPARSE_TMP_DIR` | override the corresponding `[paths]` / `[database]` values |

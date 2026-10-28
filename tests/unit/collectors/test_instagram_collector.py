@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import pickle
 from pathlib import Path
+from typing import Any
 
 import instaloader
 import pytest
@@ -21,12 +22,14 @@ from instaloader.exceptions import (
 
 from postparse.collectors.base import (
     InstagramAuthRequired,
+    InstagramFeedUnavailable,
     InstagramRateLimited,
     InstagramSessionCheckFailed,
 )
 from postparse.collectors.credentials import InstagramCredentials
 from postparse.collectors.instagram.collector import (
     InstagramCollector,
+    InstagramOptions,
     iter_saved_feed,
     map_post,
     post_from_iphone_media,
@@ -42,6 +45,7 @@ from .fakes import (
     IG_USER_ID,
     IG_USER_INFO,
     LEGACY_LOGIN_HASH,
+    LOGGED_OUT_403,
     SESSION_COOKIES,
     THROTTLED_401,
     FakeIgContext,
@@ -70,14 +74,21 @@ def make(
     loader: FakeLoader | None = None,
     creds: InstagramCredentials = CREDS,
     interactive: bool = True,
+    allow_password_login: bool = True,
     sleep: SleepRecorder | None = None,
     **kwargs,
 ) -> InstagramCollector:
+    """A collector on fakes; by default as `check instagram --login` builds it.
+
+    Extract runs (``allow_password_login=False``, the collector default) are
+    tested explicitly below.
+    """
     return InstagramCollector(
         db,
         settings,
         creds,
         interactive=interactive,
+        allow_password_login=allow_password_login,
         loader_factory=loader_factory(loader or FakeLoader()),
         saved_posts=feed or Feed([]),
         sleep=sleep or SleepRecorder(),
@@ -497,6 +508,12 @@ def test_refresh_dates_respects_limit_and_rate_limit(db: Database, settings: Set
 # ---------------------------------------------------------------------------
 
 
+#: Request of the session check per feed API: web = the saved feed's first page.
+CHECK = {"web": ("web", IG_SAVED_FEED), "iphone": ("iphone", IG_USER_INFO)}
+#: ``Referer`` of saved-feed requests (the saved page of the web app).
+SAVED_REFERER = "https://www.instagram.com/me/saved/all-posts/"
+
+
 def _existing_session(settings: Settings) -> Path:
     path = _session(settings)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -531,13 +548,13 @@ def test_throttled_session_check_never_logs_in_with_password(
     assert loader.logins == [] and loader.saved == []
     assert path.read_text() == "original-session"  # session file not rewritten
     assert not collector.logged_in
-    assert [r[:2] for r in loader.context.requests] == [("iphone", IG_USER_INFO)]
+    assert [r[:2] for r in loader.context.requests] == [CHECK["web"]]
 
 
 @pytest.mark.parametrize(
-    ("loader", "requests"),
+    ("loader", "requests", "feed_api"),
     [
-        (FakeLoader(session_user=None), 1),  # 403 login_required
+        (FakeLoader(session_user=None), 1, "web"),  # 403 login_required
         (
             FakeLoader(
                 check_error=AbortDownloadException(
@@ -546,12 +563,14 @@ def test_throttled_session_check_never_logs_in_with_password(
                 )
             ),
             1,
+            "web",
         ),
-        (FakeLoader(check_error=LoginRequiredException("Redirected to login page.")), 1),
-        (FakeLoader(session_user="someone_else"), 1),  # session of another account
-        (FakeLoader(session_cookies={"csrftoken": "x"}), 0),  # no sessionid: no request
-        (FakeLoader(session_cookies={"sessionid": "", "ds_user_id": IG_USER_ID}), 0),
-    ],
+        (FakeLoader(check_error=LoginRequiredException("Redirected to login page.")), 1, "web"),
+        # Session of another account (only the iPhone check names the viewer).
+        (FakeLoader(session_user="someone_else"), 1, "iphone"),
+        (FakeLoader(session_cookies={"csrftoken": "x"}), 0, "web"),  # no sessionid: no request
+        (FakeLoader(session_cookies={"sessionid": "", "ds_user_id": IG_USER_ID}), 0, "web"),
+    ],  # requests: checks of the session file (the new session is checked once more)
     ids=[
         "login-required",
         "login-redirect",
@@ -562,14 +581,26 @@ def test_throttled_session_check_never_logs_in_with_password(
     ],
 )
 def test_logged_out_session_falls_back_to_password(
-    db: Database, settings: Settings, loader: FakeLoader, requests: int
+    db: Database, settings: Settings, loader: FakeLoader, requests: int, feed_api: str
 ) -> None:
     path = _existing_session(settings)
-    with make(db, settings, loader=loader) as collector:
+    options = InstagramOptions(feed_api=feed_api)  # type: ignore[arg-type]
+    with make(db, settings, loader=loader, options=options) as collector:
         assert collector.logged_in
     assert loader.logins == ["me"]
     assert loader.saved[0] == str(path)
-    assert len(loader.context.requests) == requests
+    assert len(loader.context.requests) == requests + 1
+    assert loader.context.requests[-1][:2] == CHECK[feed_api]  # check after the login
+
+
+def test_web_check_uses_the_session_of_another_account(db: Database, settings: Settings) -> None:
+    """The saved feed does not name the viewer: the account is the sessionid's."""
+    _existing_session(settings)
+    loader = FakeLoader(session_user="someone_else")
+    with make(db, settings, loader=loader) as collector:
+        assert collector.logged_in
+    assert loader.logins == []
+    assert [r[:2] for r in loader.context.requests] == [CHECK["web"]]
 
 
 def test_logged_out_session_without_password_is_auth_required(
@@ -603,7 +634,7 @@ def test_valid_session_check_uses_one_attempt_and_no_legacy_hash(
 ) -> None:
     _existing_session(settings)
     loader = FakeLoader(session_user="Me")  # usernames compare case-insensitively
-    loader.context.iphone_responses[IG_SAVED_FEED] = saved_feed_pages(
+    loader.context.web_responses[IG_SAVED_FEED] = saved_feed_pages(
         saved_page([ig_iphone_media("a")])
     )
     collector = InstagramCollector(
@@ -614,10 +645,9 @@ def test_valid_session_check_uses_one_attempt_and_no_legacy_hash(
 
     assert loader.logins == []
     assert loader.legacy_hash_requests() == []
-    assert [r[0] for r in loader.context.requests] == ["iphone", "iphone"]
-    (check, feed) = loader.context.requests
-    assert check[1] == IG_USER_INFO and check[3] == 1  # single connection attempt
-    assert feed[1] == IG_SAVED_FEED and feed[3] == 3  # feed keeps the configured attempts
+    # One request: the check (single connection attempt) is the walk's first page.
+    assert loader.context.requests == [("web", IG_SAVED_FEED, {"count": "50"}, 1)]
+    assert count(db) == 1
     assert loader.context.max_connection_attempts == 3  # restored
     assert loader.context.user_id == int(IG_USER_ID)
 
@@ -633,13 +663,33 @@ def test_failed_session_check_restores_connection_attempts(
     assert loader.context.max_connection_attempts == 3
 
 
-def test_unexpected_check_response_keeps_the_session(db: Database, settings: Settings) -> None:
+@pytest.mark.parametrize("feed_api", ["web", "iphone"])
+def test_check_answer_without_details_keeps_the_session(
+    db: Database, settings: Settings, feed_api: str
+) -> None:
     _existing_session(settings)
     loader = FakeLoader(session_user="me")
-    loader.context.iphone_responses[IG_USER_INFO] = {"status": "ok"}
-    with make(db, settings, loader=loader) as collector:
+    if feed_api == "web":
+        loader.context.web_responses[IG_SAVED_FEED] = {"status": "ok"}  # no items
+    else:
+        loader.context.iphone_responses[IG_USER_INFO] = {"status": "ok"}  # no username
+    options = InstagramOptions(feed_api=feed_api)  # type: ignore[arg-type]
+    with make(db, settings, loader=loader, options=options) as collector:
         assert collector.logged_in
     assert loader.logins == []
+
+
+def test_web_check_answer_that_is_no_feed_page_saves_nothing(
+    db: Database, settings: Settings
+) -> None:
+    path = _existing_session(settings)
+    loader = FakeLoader(session_user="me")
+    loader.context.web_responses[IG_SAVED_FEED] = {"num_results": 0}
+    collector = make(db, settings, loader=loader)
+    with pytest.raises(InstagramSessionCheckFailed, match="unexpected answer"), collector:
+        pytest.fail("must not enter")
+    assert loader.logins == [] and loader.saved == [] and not collector.logged_in
+    assert path.read_text() == "original-session"
 
 
 def test_unreadable_session_file_falls_back_to_password(db: Database, settings: Settings) -> None:
@@ -652,22 +702,45 @@ def test_unreadable_session_file_falls_back_to_password(db: Database, settings: 
     loader.load_session_from_file = broken  # type: ignore[method-assign]
     with make(db, settings, loader=loader) as collector:
         assert collector.logged_in
-    assert loader.logins == ["me"] and loader.context.requests == []
+    assert loader.logins == ["me"]
+    # No check of the unreadable file; one check of the new session.
+    assert [r[:2] for r in loader.context.requests] == [CHECK["web"]]
 
 
 # ---------------------------------------------------------------------------
-# Saved feed via the private API
+# Saved feed (web REST API by default, private iPhone API as fallback)
 # ---------------------------------------------------------------------------
+
+FEED_APIS = pytest.mark.parametrize("feed_api", ["web", "iphone"])
+#: First-page parameters per feed API.
+BASE_PARAMS = {"web": {"count": "50"}, "iphone": {"include_igtv_preview": "false"}}
+#: ``FakeIgContext.requests`` kind per feed API.
+KIND = {"web": "web", "iphone": "iphone"}
+
+FEED_FAIL_200 = (
+    '200 OK - "fail" status, message "We\'re sorry, but something went wrong. Please try again."'
+)
+
+
+def _feed_table(loader: FakeLoader | FakeIgContext, feed_api: str) -> dict:
+    context = loader.context if isinstance(loader, FakeLoader) else loader
+    return context.web_responses if feed_api == "web" else context.iphone_responses
 
 
 def _feed_collector(
-    db: Database, settings: Settings, *pages: dict
+    db: Database, settings: Settings, *pages: dict, feed_api: str = "web", **kwargs
 ) -> tuple[InstagramCollector, FakeLoader]:
     _existing_session(settings)
     loader = FakeLoader(session_user="me")
-    loader.context.iphone_responses[IG_SAVED_FEED] = saved_feed_pages(*pages)
+    _feed_table(loader, feed_api)[IG_SAVED_FEED] = saved_feed_pages(*pages)
     collector = InstagramCollector(
-        db, settings, CREDS, loader_factory=loader_factory(loader), sleep=SleepRecorder()
+        db,
+        settings,
+        CREDS,
+        InstagramOptions(feed_api=feed_api),
+        loader_factory=loader_factory(loader),
+        sleep=SleepRecorder(),
+        **kwargs,
     )
     return collector, loader
 
@@ -676,27 +749,89 @@ def _feed_requests(loader: FakeLoader) -> list[dict]:
     return [r[2] for r in loader.context.requests if r[1] == IG_SAVED_FEED]
 
 
-def test_saved_feed_paginates_with_max_id(db: Database, settings: Settings) -> None:
+@FEED_APIS
+def test_saved_feed_paginates_with_max_id(db: Database, settings: Settings, feed_api: str) -> None:
     collector, loader = _feed_collector(
         db,
         settings,
         saved_page([ig_iphone_media("a"), ig_iphone_media("b")], next_max_id="cursor-1"),
         saved_page([ig_iphone_media("c")], next_max_id="cursor-2"),
         saved_page([ig_iphone_media("d")]),
+        feed_api=feed_api,
     )
     with collector:
         stats = collector.collect_saved()
 
     assert (stats.new, stats.stopped_reason) == (4, "end_of_feed")
+    base = BASE_PARAMS[feed_api]
     assert _feed_requests(loader) == [
-        {"include_igtv_preview": "false"},
-        {"include_igtv_preview": "false", "max_id": "cursor-1"},
-        {"include_igtv_preview": "false", "max_id": "cursor-2"},
+        base,
+        {**base, "max_id": "cursor-1"},
+        {**base, "max_id": "cursor-2"},
     ]
+    # Only the configured API is used for the feed (and for the session check).
+    feed_kinds = {r[0] for r in loader.context.requests if r[1] == IG_SAVED_FEED}
+    assert feed_kinds == {KIND[feed_api]}
     assert [get(db, c)[1].saved_feed_rank for c in "abcd"] == [0, 1, 2, 3]
 
 
-def test_saved_feed_early_stop_skips_further_pages(db: Database, settings: Settings) -> None:
+def test_default_feed_api_is_web_and_never_calls_the_iphone_feed(
+    db: Database, settings: Settings
+) -> None:
+    _existing_session(settings)
+    loader = FakeLoader(session_user="me")
+    loader.context.web_responses[IG_SAVED_FEED] = saved_feed_pages(
+        saved_page([ig_iphone_media("w1")])
+    )
+    # An iphone feed request would raise NetworkUsed (no scripted answer).
+    collector = InstagramCollector(
+        db, settings, CREDS, loader_factory=loader_factory(loader), sleep=SleepRecorder()
+    )
+    with collector:
+        collector.collect_saved()
+    assert ("iphone", IG_SAVED_FEED) not in [r[:2] for r in loader.context.requests]
+    assert count(db) == 1
+
+
+def test_web_feed_sends_the_web_app_headers(db: Database, settings: Settings) -> None:
+    collector, loader = _feed_collector(
+        db, settings, saved_page([ig_iphone_media("a")], next_max_id="c1"), saved_page([])
+    )
+    pages = saved_feed_pages(saved_page([ig_iphone_media("a")], next_max_id="c1"))
+    claims: list[str] = []
+
+    def answer(params: dict) -> dict:
+        claims.append(loader.context.web_headers[-1]["X-IG-WWW-Claim"])
+        return pages(params) if "max_id" not in params else saved_page([])
+
+    loader.context.web_responses[IG_SAVED_FEED] = answer
+    with collector:
+        collector.collect_saved()
+
+    # Page 1 (the session check, reused by the walk) and page 2: no other request.
+    assert [r[:2] for r in loader.context.requests] == [CHECK["web"]] * 2
+    headers = loader.context.web_headers[0]  # first feed page = the session check
+    lower = {k.lower(): v for k, v in headers.items()}
+    assert lower["x-ig-app-id"] == "936619743392459"
+    assert lower["x-csrftoken"] == SESSION_COOKIES["csrftoken"]  # from the session cookie
+    assert lower["x-requested-with"] == "XMLHttpRequest"
+    assert lower["x-asbd-id"] == "129477"
+    assert lower["referer"] == SAVED_REFERER
+    assert lower["origin"] == "https://www.instagram.com"
+    assert lower["sec-fetch-site"] == "same-origin"
+    assert "x-instagram-ajax" not in lower and "content-length" not in lower
+    page2 = {k.lower(): v for k, v in loader.context.web_headers[1].items()}
+    assert page2["referer"] == SAVED_REFERER and page2["x-ig-app-id"] == lower["x-ig-app-id"]
+    assert claims == ["0", "0"]
+    # The main session is left unchanged (headers live on a temporary copy).
+    main = {k.lower() for k in loader.context._session.headers}
+    assert "x-asbd-id" not in main and "x-ig-www-claim" not in main
+
+
+@FEED_APIS
+def test_saved_feed_early_stop_skips_further_pages(
+    db: Database, settings: Settings, feed_api: str
+) -> None:
     store(db, "k1", "k2")
     collector, loader = _feed_collector(
         db,
@@ -704,6 +839,7 @@ def test_saved_feed_early_stop_skips_further_pages(db: Database, settings: Setti
         saved_page([ig_iphone_media("n1"), ig_iphone_media("k1")], next_max_id="c1"),
         saved_page([ig_iphone_media("k2"), ig_iphone_media("n2")], next_max_id="c2"),
         saved_page([ig_iphone_media("n3")]),
+        feed_api=feed_api,
     )
     with collector:
         stats = collector.collect_saved(stop_after_known=2)
@@ -712,43 +848,203 @@ def test_saved_feed_early_stop_skips_further_pages(db: Database, settings: Setti
     assert len(_feed_requests(loader)) == 2  # the third page is never requested
 
 
+@FEED_APIS
+def test_saved_feed_early_stop_on_page_one(db: Database, settings: Settings, feed_api: str) -> None:
+    store(db, "k1")
+    collector, loader = _feed_collector(
+        db,
+        settings,
+        saved_page([ig_iphone_media("k1"), ig_iphone_media("n1")], next_max_id="c1"),
+        saved_page([ig_iphone_media("n2")]),
+        feed_api=feed_api,
+    )
+    with collector:
+        stats = collector.collect_saved(stop_after_known=1)
+    assert (stats.new, stats.stopped_reason) == (0, "early_stop")
+    assert _feed_requests(loader) == [BASE_PARAMS[feed_api]]  # page 2 never requested
+
+
+@FEED_APIS
 def test_saved_feed_stops_on_empty_page_and_repeated_cursor(
-    db: Database, settings: Settings
+    db: Database, settings: Settings, feed_api: str
 ) -> None:
     collector, loader = _feed_collector(
-        db, settings, saved_page([ig_iphone_media("a")], next_max_id="same")
+        db, settings, saved_page([ig_iphone_media("a")], next_max_id="same"), feed_api=feed_api
     )
     # The second request (max_id=same) answers the same cursor again.
-    loader.context.iphone_responses[IG_SAVED_FEED] = lambda params: saved_page(
+    _feed_table(loader, feed_api)[IG_SAVED_FEED] = lambda params: saved_page(
         [ig_iphone_media("a" if "max_id" not in params else "b")], next_max_id="same"
     )
     with collector:
         stats = collector.collect_saved()
     assert stats.new == 2 and len(_feed_requests(loader)) == 2
 
-    empty = iter_saved_feed(_context_with_feed(saved_page([], next_max_id="x")))
-    assert list(empty) == []
+    context = _context_with_feed(saved_page([], next_max_id="x"), feed_api=feed_api)
+    assert list(iter_saved_feed(context, feed_api)) == []
+    assert len(context.requests) == 1
 
 
-def _context_with_feed(*pages: dict) -> FakeIgContext:
+def test_saved_feed_accepts_bare_media_items() -> None:
+    """Items may be ``{"media": {...}}`` or the media struct itself; others are skipped."""
+    page = saved_page([ig_iphone_media("wrapped")])
+    page["items"] += [ig_iphone_media("bare"), {"media": {"no": "code"}}, "junk"]
+    context = _context_with_feed(page)
+    assert [p.shortcode for p in iter_saved_feed(context, "web", "me")] == ["wrapped", "bare"]
+
+
+def test_unknown_feed_api_is_rejected() -> None:
+    with pytest.raises(ValueError, match="unknown feed_api"):
+        list(iter_saved_feed(FakeIgContext("me"), "graphql"))  # type: ignore[arg-type]
+
+
+def _context_with_feed(*pages: dict, feed_api: str = "web") -> FakeIgContext:
     context = FakeIgContext("me")
-    context.iphone_responses[IG_SAVED_FEED] = saved_feed_pages(*pages)
+    _feed_table(context, feed_api)[IG_SAVED_FEED] = saved_feed_pages(*pages)
     return context
 
 
-def test_saved_feed_rate_limit_keeps_progress(db: Database, settings: Settings) -> None:
-    collector, loader = _feed_collector(
-        db, settings, saved_page([ig_iphone_media("a"), ig_iphone_media("b")], next_max_id="c1")
-    )
+@FEED_APIS
+def test_saved_feed_rate_limit_keeps_progress(
+    db: Database, settings: Settings, feed_api: str
+) -> None:
+    collector, loader = _feed_collector(db, settings, feed_api=feed_api)
     pages = saved_feed_pages(
         saved_page([ig_iphone_media("a"), ig_iphone_media("b")], next_max_id="c1")
     )
-    loader.context.iphone_responses[IG_SAVED_FEED] = lambda params: (
+    _feed_table(loader, feed_api)[IG_SAVED_FEED] = lambda params: (
         ig_error(THROTTLED_401, IG_SAVED_FEED) if params.get("max_id") else pages(params)
     )
     with pytest.raises(InstagramRateLimited), collector:
         collector.collect_saved()
     assert count(db) == 2 and collector.stats.stopped_reason == "rate_limited"
+
+
+@FEED_APIS
+def test_feed_fail_status_is_one_request_and_keeps_progress(
+    db: Database, settings: Settings, feed_api: str
+) -> None:
+    collector, loader = _feed_collector(db, settings, feed_api=feed_api)
+    pages = saved_feed_pages(
+        saved_page([ig_iphone_media("a"), ig_iphone_media("b")], next_max_id="c1")
+    )
+    _feed_table(loader, feed_api)[IG_SAVED_FEED] = lambda params: (
+        ig_error(FEED_FAIL_200, IG_SAVED_FEED) if params.get("max_id") else pages(params)
+    )
+    with pytest.raises(InstagramFeedUnavailable) as info, collector:
+        collector.collect_saved()
+
+    other = "iphone" if feed_api == "web" else "web"
+    message = str(info.value)
+    assert info.value.feed_api == feed_api
+    assert "something went wrong" in message and "session is fine" in message
+    assert "nothing stored was lost" in message and f'feed_api = "{other}"' in message
+    assert "https://" not in message  # no URL / query string in the message
+    assert len(_feed_requests(loader)) == 2  # page 2 asked once, no retries
+    assert all(r[3] == 1 for r in loader.context.requests if r[1] == IG_SAVED_FEED)
+    assert loader.context.max_connection_attempts == 3  # restored
+    assert count(db) == 2 and collector.stats.stopped_reason == "feed_unavailable"
+    assert loader.logins == []
+
+
+def test_feed_fail_status_on_the_first_page_fails_the_web_check(
+    db: Database, settings: Settings
+) -> None:
+    """A 200 "fail" answer to the check's feed page is a refused feed, not a logout."""
+    collector, loader = _feed_collector(db, settings)
+    loader.context.web_responses[IG_SAVED_FEED] = ig_error(FEED_FAIL_200, IG_SAVED_FEED)
+    with pytest.raises(InstagramFeedUnavailable, match="something went wrong") as info, collector:
+        pytest.fail("must not enter")
+    assert info.value.feed_api == "web" and "session is fine" in str(info.value)
+    assert "https://" not in str(info.value)
+    assert loader.context.requests == [("web", IG_SAVED_FEED, {"count": "50"}, 1)]
+    assert loader.logins == [] and loader.saved == [] and not collector.logged_in
+    assert _session(settings).read_text() == "original-session" and count(db) == 0
+
+
+def _network_error() -> Exception:
+    from instaloader.exceptions import ConnectionException
+
+    cause = requests.exceptions.ReadTimeout("Read timed out.")
+    try:
+        raise ConnectionException(f"JSON Query to {IG_SAVED_FEED}: {cause}") from cause
+    except ConnectionException as exc:
+        return exc
+
+
+def test_feed_network_errors_are_retried_up_to_the_configured_attempts(
+    db: Database, settings: Settings
+) -> None:
+    first = saved_page([ig_iphone_media("a")], next_max_id="c1")
+    collector, loader = _feed_collector(db, settings)
+    answers = [_network_error(), saved_page([ig_iphone_media("b")])]
+    loader.context.web_responses[IG_SAVED_FEED] = lambda params: (
+        answers.pop(0) if params.get("max_id") else first
+    )
+    with collector:
+        stats = collector.collect_saved()
+    assert stats.new == 2 and len(_feed_requests(loader)) == 3  # check, page 2 twice
+
+    collector, loader = _feed_collector(db, settings)
+    loader.context.web_responses[IG_SAVED_FEED] = lambda params: (
+        _network_error() if params.get("max_id") else first
+    )
+    with pytest.raises(Exception, match="Read timed out"), collector:
+        collector.collect_saved()
+    assert len(_feed_requests(loader)) == 1 + 3  # page 2: max_connection_attempts
+    assert loader.context.max_connection_attempts == 3
+
+
+def test_feed_api_option_parsing() -> None:
+    class Cfg:
+        def __init__(self, **values: object) -> None:
+            self.values = {f"instagram.{k}": v for k, v in values.items()}
+
+        def get(self, key: str, default: object = None) -> object:
+            return self.values.get(key, default)
+
+    assert InstagramOptions.from_config(None).feed_api == "web"
+    assert InstagramOptions.from_config(Cfg()).feed_api == "web"
+    assert InstagramOptions.from_config(Cfg(feed_api="iphone")).feed_api == "iphone"
+    assert InstagramOptions.from_config(Cfg(feed_api=" Web ")).feed_api == "web"
+    with pytest.raises(ValueError, match=r"instagram\.feed_api must be one of 'web', 'iphone'"):
+        InstagramOptions.from_config(Cfg(feed_api="graphql"))
+    with pytest.raises(ValueError, match="feed_api"):
+        InstagramOptions(feed_api="mobile")  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# Session outcome on the progress callback
+# ---------------------------------------------------------------------------
+
+
+def test_verified_session_is_reported(db: Database, settings: Settings) -> None:
+    events: list = []
+    collector, _ = _feed_collector(db, settings, saved_page([]), progress=events.append)
+    collector.login()
+    assert [(e.phase, e.message) for e in events] == [
+        ("session", "Instagram session verified (no password login)")
+    ]
+
+
+@pytest.mark.parametrize(
+    ("setup", "why"),
+    [
+        ("logged_out", "session logged out: login_required"),
+        ("no_file", "no session file"),
+    ],
+)
+def test_password_login_is_reported(db: Database, settings: Settings, setup: str, why: str) -> None:
+    if setup == "logged_out":
+        _existing_session(settings)
+    events: list = []
+    loader = FakeLoader(session_user=None)
+    collector = make(db, settings, loader=loader, progress=events.append)
+    collector.login()
+    assert loader.logins == ["me"]
+    assert [(e.phase, e.message) for e in events] == [
+        ("login", f"No usable Instagram session ({why}); logging in with the password now")
+    ]
+    assert all("pw-secret" not in (e.message or "") for e in events)
 
 
 def test_map_iphone_image_post() -> None:
@@ -832,16 +1128,22 @@ def test_iphone_mapping_never_triggers_requests() -> None:
 class _Http:
     """Records ``requests.Session.get/post`` calls and answers from a script."""
 
-    def __init__(self, answers: list[tuple[int, dict]]) -> None:
+    def __init__(self, answers: list[tuple]) -> None:
         self.answers = answers
         self.calls: list[tuple[str, str, dict]] = []
+        #: Request headers per call (lower-case names).
+        self.headers: list[dict[str, str]] = []
 
-    def response(self, method: str, url: str, params: dict | None) -> requests.Response:
+    def response(
+        self, method: str, url: str, params: dict | None, headers: Any = None
+    ) -> requests.Response:
         self.calls.append((method, url, dict(params or {})))
+        self.headers.append({k.lower(): v for k, v in dict(headers or {}).items()})
         if not self.answers:
             raise AssertionError(f"unexpected request {method} {url}")
-        status, body = self.answers.pop(0)
+        status, body, *extra = self.answers.pop(0)
         resp = requests.Response()
+        resp.headers.update(extra[0] if extra else {})
         resp.status_code = status
         resp.reason = {200: "OK", 401: "Unauthorized", 403: "Forbidden"}.get(status, "")
         resp._content = json.dumps(body).encode()
@@ -857,12 +1159,12 @@ def http(monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setattr(
             requests.Session,
             "get",
-            lambda self, url, params=None, **kw: fake.response("GET", url, params),
+            lambda self, url, params=None, **kw: fake.response("GET", url, params, self.headers),
         )
         monkeypatch.setattr(
             requests.Session,
             "post",
-            lambda self, url, data=None, **kw: fake.response("POST", url, data),
+            lambda self, url, data=None, **kw: fake.response("POST", url, data, self.headers),
         )
         return fake
 
@@ -894,35 +1196,65 @@ def test_real_context_throttled_check_is_one_request(
         _real_collector(db, settings).login()
 
     assert [(m, u) for m, u, _ in fake.calls] == [
-        ("GET", f"https://i.instagram.com/{IG_USER_INFO}")
+        ("GET", f"https://www.instagram.com/{IG_SAVED_FEED}")
     ]
+    assert fake.calls[0][2] == {"count": "50"}
     assert path.read_bytes() == before
 
 
-def test_real_context_valid_session_and_saved_feed(db: Database, settings: Settings, http) -> None:
+@pytest.mark.parametrize(
+    ("feed_api", "feed_url"),
+    [
+        ("web", f"https://www.instagram.com/{IG_SAVED_FEED}"),
+        ("iphone", f"https://i.instagram.com/{IG_SAVED_FEED}"),
+    ],
+)
+def test_real_context_valid_session_and_saved_feed(
+    db: Database, settings: Settings, http, feed_api: str, feed_url: str
+) -> None:
     _real_session_file(settings)
-    fake = http(
-        (200, {"user": {"pk": 4242, "username": "me"}, "status": "ok"}),
-        (200, saved_page([ig_iphone_media("r1", 2, video_url="https://cdn/r1.mp4")], "c1")),
+    pages = [
+        (
+            200,
+            saved_page([ig_iphone_media("r1", 2, video_url="https://cdn/r1.mp4")], "c1"),
+            {"x-ig-set-www-claim": "hmac.claim-1"},
+        ),
         (
             200,
             saved_page(
                 [ig_iphone_media("r2", 8, children=[ig_iphone_child(2, "https://cdn/r2.mp4")])]
             ),
         ),
-    )
-    collector = _real_collector(db, settings)
+    ]
+    user_info = (200, {"user": {"pk": 4242, "username": "me"}, "status": "ok"})
+    # web: the check is the first feed page (reused); iphone: user info, then the feed.
+    fake = http(*(pages if feed_api == "web" else [user_info, *pages]))
+    collector = _real_collector(db, settings, options=InstagramOptions(feed_api=feed_api))
     with collector:
         stats = collector.collect_saved()
 
     assert stats.new == 2
     urls = [u for _, u, _ in fake.calls]
-    assert (
-        urls
-        == [f"https://i.instagram.com/{IG_USER_INFO}"]
-        + [f"https://i.instagram.com/{IG_SAVED_FEED}"] * 2
-    )
-    assert fake.calls[2][2]["max_id"] == "c1"
+    if feed_api == "web":
+        assert urls == [feed_url] * 2
+    else:
+        assert urls == [f"https://i.instagram.com/{IG_USER_INFO}"] + [feed_url] * 2
+    page1 = 0 if feed_api == "web" else 1
+    assert fake.calls[page1 + 1][2]["max_id"] == "c1"
+    first, second = fake.headers[page1], fake.headers[page1 + 1]
+    if feed_api == "web":
+        assert fake.calls[page1][2] == {"count": "50"}
+        assert first["x-ig-app-id"] == "936619743392459"
+        assert first["x-csrftoken"] == SESSION_COOKIES["csrftoken"]
+        assert first["x-requested-with"] == "XMLHttpRequest"
+        assert first["referer"] == "https://www.instagram.com/me/saved/all-posts/"
+        assert first["host"] == "www.instagram.com"
+        assert (first["x-ig-www-claim"], second["x-ig-www-claim"]) == ("0", "hmac.claim-1")
+        assert "x-instagram-ajax" not in first and "x-pigeon-session-id" not in first
+    else:
+        assert fake.calls[page1][2] == {"include_igtv_preview": "false"}
+        assert first["x-ig-app-id"] == "124024574287414"  # instaloader's iPad headers
+        assert "x-requested-with" not in first
     assert all(LEGACY_LOGIN_HASH not in repr(call) for call in fake.calls)
     assert all("query_hash" not in call[2] for call in fake.calls)
     assert get(db, "r1")[2][0].remote_url == "https://cdn/r1.mp4"
@@ -934,11 +1266,854 @@ def test_real_context_login_required_falls_back_to_password(
     db: Database, settings: Settings, http, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _real_session_file(settings)
-    http((403, {"message": "login_required", "status": "fail"}))
+    fake = http(
+        (403, {"message": "login_required", "status": "fail"}),
+        (200, saved_page([])),  # check of the new session (first feed page)
+    )
     logins: list[str] = []
     monkeypatch.setattr(
         instaloader.Instaloader, "login", lambda self, user, passwd: logins.append(user)
     )
-    collector = _real_collector(db, settings)
+    collector = _real_collector(db, settings, allow_password_login=True)
     collector.login()
     assert logins == ["me"] and collector.logged_in
+    assert [u for _, u, _ in fake.calls] == [f"https://www.instagram.com/{IG_SAVED_FEED}"] * 2
+
+
+def test_real_context_login_required_never_logs_in_by_default(
+    db: Database, settings: Settings, http, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _real_session_file(settings)
+    before = path.read_bytes()
+    http(
+        (
+            403,
+            {"message": "login_required", "status": "fail"},
+            {"Set-Cookie": "sessionid=leaked-sid; Path=/"},
+        )
+    )
+    monkeypatch.setattr(
+        instaloader.Instaloader,
+        "login",
+        lambda self, user, passwd: pytest.fail("no password login"),
+    )
+    collector = _real_collector(db, settings)
+    with pytest.raises(InstagramAuthRequired) as info:
+        collector.login()
+    message = str(info.value)
+    assert "No password login was attempted (session logged out: login_required)" in message
+    assert "`postparse check instagram --login`" in message
+    assert "https://" not in message and "leaked-sid" not in message
+    assert path.read_bytes() == before and not collector.logged_in
+
+
+@pytest.mark.parametrize("feed_api", ["web", "iphone"])
+def test_real_context_feed_fail_status_is_exactly_one_request(
+    db: Database, settings: Settings, http, feed_api: str
+) -> None:
+    _real_session_file(settings)
+    fail = {"message": "We're sorry, but something went wrong. Please try again.", "status": "fail"}
+    user_info = (200, {"user": {"pk": 4242, "username": "me"}, "status": "ok"})
+    # web: the session check is the feed page; iphone: user info, then the feed.
+    answers = [(200, fail)] if feed_api == "web" else [user_info, (200, fail)]
+    fake = http(*answers)
+    collector = _real_collector(db, settings, options=InstagramOptions(feed_api=feed_api))
+    with pytest.raises(InstagramFeedUnavailable, match="something went wrong"), collector:
+        collector.collect_saved()
+    assert len(fake.calls) == len(answers)  # no retries
+    if feed_api == "web":
+        assert not collector.logged_in  # refused in the session check, nothing saved
+    else:
+        assert collector.stats.stopped_reason == "feed_unavailable"
+    assert collector.loader.context.max_connection_attempts == 3
+
+
+# ---------------------------------------------------------------------------
+# No automatic password login (extract runs, re-fetches, API jobs)
+# ---------------------------------------------------------------------------
+
+
+def _broken_session_file(loader: FakeLoader) -> FakeLoader:
+    def broken(username: str, filename: str) -> None:
+        raise EOFError("Ran out of input")
+
+    loader.load_session_from_file = broken  # type: ignore[method-assign]
+    return loader
+
+
+#: ``(setup, loader factory, reason in the message, feed_api)`` of sessions that
+#: cannot be used.
+UNUSABLE_SESSIONS = [
+    ("no_file", lambda: FakeLoader(session_user="me"), "no session file", "web"),
+    (
+        "file",
+        lambda: _broken_session_file(FakeLoader(session_user="me")),
+        "session file unreadable",
+        "web",
+    ),
+    ("file", lambda: FakeLoader(session_user=None), "session logged out: login_required", "web"),
+    (
+        "file",
+        lambda: FakeLoader(check_error=LoginRequiredException("Redirected to login page.")),
+        "session logged out: redirected to login page",
+        "web",
+    ),
+    (
+        "file",
+        lambda: FakeLoader(session_cookies={"csrftoken": "x"}),
+        "session logged out: the session file has no login cookies",
+        "web",
+    ),
+    (  # only the iPhone check names the viewer
+        "file",
+        lambda: FakeLoader(session_user="someone_else"),
+        "session logged out: the session belongs to another account",
+        "iphone",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "creds", [CREDS, InstagramCredentials("me", None)], ids=["password", "no-password"]
+)
+@pytest.mark.parametrize(
+    ("setup", "make_loader", "why", "feed_api"),
+    UNUSABLE_SESSIONS,
+    ids=["no-file", "unreadable", "login-required", "login-redirect", "no-cookies", "other-user"],
+)
+def test_extract_never_logs_in_with_the_password(
+    db: Database,
+    settings: Settings,
+    setup: str,
+    make_loader: Any,
+    why: str,
+    feed_api: str,
+    creds: InstagramCredentials,
+) -> None:
+    path = _existing_session(settings) if setup == "file" else _session(settings)
+    loader = make_loader()
+    events: list = []
+    collector = InstagramCollector(
+        db,
+        settings,
+        creds,
+        InstagramOptions(feed_api=feed_api),  # type: ignore[arg-type]
+        loader_factory=loader_factory(loader),
+        saved_posts=Feed([]),
+        sleep=SleepRecorder(),
+        prompt=lambda _: pytest.fail("must not prompt"),
+        progress=events.append,
+    )
+    assert collector.allow_password_login is False  # the default
+
+    with pytest.raises(InstagramAuthRequired) as info, collector:
+        pytest.fail("must not enter")
+
+    message = str(info.value)
+    assert message.startswith(f"No password login was attempted ({why}); automatic password ")
+    assert "trigger Instagram checkpoints" in message
+    assert "`postparse check instagram --import-session` in a terminal" in message
+    assert "`postparse check instagram --login`" in message and "#2487" in message
+    assert "2FA code" in message and "then retry" in message
+    assert loader.logins == [] and loader.two_factor_codes == [] and loader.saved == []
+    assert events == []  # no "logging in with the password" line
+    assert not collector.logged_in
+    if setup == "file":
+        assert path.read_text() == "original-session"
+    else:
+        assert not path.exists()
+    assert "pw-secret" not in message
+
+
+# ---------------------------------------------------------------------------
+# Instagram's reason in messages (sanitized)
+# ---------------------------------------------------------------------------
+
+#: A login redirect whose location carries a query string with cookie-like values.
+REDIRECT_WITH_QUERY = (
+    'Query to https://i.instagram.com/api/v1/users/4242/info/ responded with "302 Found" '
+    "redirect to https://www.instagram.com/accounts/login/?next=%2Fapi%2F&sessionid=leaked-sid"
+    "&csrftoken=leaked-csrf#frag"
+)
+
+
+@pytest.mark.parametrize(
+    ("text", "reason"),
+    [
+        ('403 Forbidden - "fail" status, message "login_required"', "login_required"),
+        ('400 Bad Request - "fail" status, message "checkpoint_required"', "checkpoint_required"),
+        ('400 Bad Request - "fail" status, message "challenge_required"', "challenge_required"),
+        ('400 Bad Request - "fail" status, message "feedback_required"', "feedback_required"),
+        (
+            'Query to https://i.instagram.com/x/ responded with "400 Bad Request": '
+            '{"message": "challenge_required", "status": "fail", "checkpoint_url": '
+            '"https://i.instagram.com/challenge/?token=leaked-token"}',
+            "challenge_required",
+        ),
+        (REDIRECT_WITH_QUERY, "redirect to https://www.instagram.com/accounts/login/"),
+        ("Redirected to login page. Use --login or --load-cookies.", "redirected to login page"),
+    ],
+    ids=[
+        "login_required",
+        "checkpoint_required",
+        "challenge_required",
+        "feedback_required",
+        "json-body",
+        "redirect",
+        "login-redirect",
+    ],
+)
+def test_instagram_reason_is_short_and_sanitized(text: str, reason: str) -> None:
+    from postparse.collectors.instagram.collector import _instagram_message
+
+    full = (
+        f"JSON Query to {IG_USER_INFO}: {text} when accessing "
+        "https://i.instagram.com/x?sessionid=leaked-sid"
+    )
+    result = _instagram_message(full)
+    assert result == reason
+    for leak in ("leaked", "sessionid", "csrftoken", "token=", "?", "#"):
+        assert leak not in result
+
+
+def test_instagram_reason_redacts_secrets_and_is_truncated() -> None:
+    from postparse.collectors.instagram.collector import MAX_REASON_LENGTH, _instagram_message
+
+    reason = _instagram_message("odd answer sessionid=leaked-sid; csrftoken=leaked " + "x" * 500)
+    assert "leaked" not in reason and "sessionid=<redacted>" in reason
+    assert len(reason) <= MAX_REASON_LENGTH
+
+
+def test_checkpoint_on_session_check_shows_the_reason(db: Database, settings: Settings) -> None:
+    from instaloader.exceptions import ConnectionException
+
+    _existing_session(settings)
+    loader = FakeLoader(
+        check_error=ConnectionException(
+            f'JSON Query to {IG_USER_INFO}: 400 Bad Request - "fail" status, message '
+            f'"checkpoint_required" when accessing https://i.instagram.com/{IG_USER_INFO}'
+            "?sessionid=leaked-sid"
+        )
+    )
+    with pytest.raises(InstagramAuthRequired) as info:
+        make(db, settings, loader=loader, allow_password_login=False).login()
+    message = str(info.value)
+    assert "(Instagram: checkpoint_required)" in message
+    assert "leaked-sid" not in message and "https://" not in message
+    assert loader.logins == []
+
+
+def test_login_redirect_during_feed_shows_the_redirect_without_query(
+    db: Database, settings: Settings
+) -> None:
+    collector, loader = _feed_collector(db, settings)
+    first = saved_page([ig_iphone_media("a")], next_max_id="c1")
+    loader.context.web_responses[IG_SAVED_FEED] = lambda params: (
+        AbortDownloadException(REDIRECT_WITH_QUERY) if params.get("max_id") else first
+    )
+    with pytest.raises(InstagramAuthRequired) as info, collector:
+        collector.collect_saved()
+    message = str(info.value)
+    assert "(Instagram: redirect to https://www.instagram.com/accounts/login/)" in message
+    assert "`postparse check instagram --login`" in message
+    for leak in ("leaked", "next=", "?", "#frag"):
+        assert leak not in message
+    assert collector.stats.stopped_reason == "auth_required"
+    assert loader.logins == []
+
+
+def test_throttled_session_check_message_has_no_url(db: Database, settings: Settings) -> None:
+    _existing_session(settings)
+    loader = FakeLoader(check_error=ig_error(THROTTLED_401))
+    with pytest.raises(InstagramSessionCheckFailed) as info:
+        make(db, settings, loader=loader).login()
+    message = str(info.value)
+    assert "(Please wait a few minutes before you try again.)" in message
+    assert "https://" not in message and IG_USER_INFO not in message
+    assert loader.logins == []
+
+
+# ---------------------------------------------------------------------------
+# "429" only as an HTTP status, never inside URLs
+# ---------------------------------------------------------------------------
+
+
+def _feed_fail_with_cursor(cursor: str) -> Exception:
+    from instaloader.exceptions import ConnectionException
+
+    return ConnectionException(
+        f'JSON Query to {IG_SAVED_FEED}: 200 OK - "fail" status, message "We\'re sorry, but '
+        f'something went wrong." when accessing https://www.instagram.com/{IG_SAVED_FEED}'
+        f"?count=50&max_id={cursor}"
+    )
+
+
+@pytest.mark.parametrize("cursor", ["3429876543210", "429", "QVFD429-x_429"])
+def test_429_inside_the_url_is_not_a_rate_limit(
+    db: Database, settings: Settings, cursor: str
+) -> None:
+    collector, loader = _feed_collector(db, settings)
+    pages = saved_feed_pages(saved_page([ig_iphone_media("a")], next_max_id=cursor))
+    loader.context.web_responses[IG_SAVED_FEED] = lambda params: (
+        _feed_fail_with_cursor(cursor) if params.get("max_id") else pages(params)
+    )
+    with pytest.raises(InstagramFeedUnavailable) as info, collector:
+        collector.collect_saved()
+    assert "something went wrong" in str(info.value) and "max_id" not in str(info.value)
+    assert collector.stats.stopped_reason == "feed_unavailable"
+    assert count(db) == 1
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        TooManyRequestsException("429 Too Many Requests when accessing https://x/?max_id=1"),
+        ig_error("429 Too Many Requests", IG_SAVED_FEED),
+        ig_error('429 - "fail" status, message "slow down"', IG_SAVED_FEED),
+        ig_error(THROTTLED_401, IG_SAVED_FEED),
+    ],
+    ids=["exception", "status-429", "status-429-bare", "401-please-wait"],
+)
+def test_real_rate_limits_are_still_detected(
+    db: Database, settings: Settings, error: Exception
+) -> None:
+    collector, loader = _feed_collector(db, settings)
+    first = saved_page([ig_iphone_media("a")], next_max_id="c1")
+    loader.context.web_responses[IG_SAVED_FEED] = lambda params: (
+        error if params.get("max_id") else first
+    )
+    with pytest.raises(InstagramRateLimited) as info, collector:
+        collector.collect_saved()
+    assert not isinstance(info.value, InstagramFeedUnavailable)
+    assert collector.stats.stopped_reason == "rate_limited"
+    assert "https://" not in str(info.value)
+
+
+def test_session_check_ids_in_the_path_are_not_a_throttle() -> None:
+    """A user id containing 429 does not turn "login_required" into a throttle."""
+    from postparse.collectors.instagram.collector import _session_check_verdict
+
+    exc = ig_error(LOGGED_OUT_403, "api/v1/users/14290/info/")
+    assert "429" in str(exc)
+    assert _session_check_verdict(exc) == "logged_out"
+    assert _session_check_verdict(ig_error("429 Too Many Requests")) == "failed"
+
+
+# ---------------------------------------------------------------------------
+# Password login: verified before it is saved (instaloader issue #2487)
+# ---------------------------------------------------------------------------
+
+
+def test_placeholder_cookies_are_dropped() -> None:
+    from postparse.collectors.instagram.collector import _drop_placeholder_cookies
+
+    from .fakes import LOGIN_PLACEHOLDERS
+
+    session = requests.Session()
+    session.cookies.update(LOGIN_PLACEHOLDERS)  # as InstaloaderContext.login does
+    session.cookies.set("csrftoken", "real-csrf", domain=".instagram.com", path="/")
+    session.cookies.set("mid", "real-mid", domain=".instagram.com", path="/")
+    session.cookies.set("rur", "", domain=".instagram.com", path="/")  # set by Instagram: kept
+
+    assert _drop_placeholder_cookies(session.cookies) == 5
+    kept = {(c.name, c.value, c.domain) for c in session.cookies}
+    assert kept == {
+        ("ig_pr", "1", ""),
+        ("ig_vw", "1920", ""),
+        ("ig_cb", "1", ""),
+        ("csrftoken", "real-csrf", ".instagram.com"),
+        ("mid", "real-mid", ".instagram.com"),
+        ("rur", "", ".instagram.com"),
+    }
+    assert _drop_placeholder_cookies(session.cookies) == 0
+
+
+@pytest.mark.parametrize("setup", ["logged_out", "no_file"])
+def test_password_login_without_session_cookie_saves_nothing(
+    db: Database, settings: Settings, setup: str
+) -> None:
+    path = _existing_session(settings) if setup == "logged_out" else _session(settings)
+    # Instagram answered "authenticated" but set no sessionid / ds_user_id cookie.
+    loader = FakeLoader(session_user=None, login_cookies={"csrftoken": "c-new", "mid": "m"})
+    collector = make(db, settings, loader=loader)
+
+    with pytest.raises(InstagramAuthRequired) as info, collector:
+        pytest.fail("must not enter")
+
+    message = str(info.value)
+    assert message.startswith(
+        "Instagram accepted the password but returned no session cookie "
+        "(instaloader issue #2487); nothing was saved."
+    )
+    assert "`postparse check instagram --import-session`" in message
+    assert loader.logins == ["me"] and loader.saved == [] and not collector.logged_in
+    # Only the check of the session file; no request with the cookie-less session.
+    assert len(loader.context.requests) == (1 if setup == "logged_out" else 0)
+    if setup == "logged_out":
+        assert path.read_text() == "original-session"
+    else:
+        assert not path.exists()
+    assert "pw-secret" not in message
+
+
+@pytest.mark.parametrize(
+    ("loader", "why", "feed_api"),
+    [
+        (
+            FakeLoader(session_user=None, new_user=None),
+            "session logged out: login_required",
+            "web",
+        ),
+        (
+            FakeLoader(session_user=None, new_user=None),
+            "session logged out: login_required",
+            "iphone",
+        ),
+        (
+            FakeLoader(session_user=None, new_user="someone_else"),
+            "session logged out: the session belongs to another account",
+            "iphone",
+        ),
+    ],
+    ids=["logged-out", "logged-out-iphone", "other-user-iphone"],
+)
+def test_password_login_with_a_failing_check_saves_nothing(
+    db: Database, settings: Settings, loader: FakeLoader, why: str, feed_api: str
+) -> None:
+    path = _existing_session(settings)
+    options = InstagramOptions(feed_api=feed_api)  # type: ignore[arg-type]
+    collector = make(db, settings, loader=loader, options=options)
+    with pytest.raises(InstagramAuthRequired) as info:
+        collector.login()
+    assert str(info.value).startswith(
+        "Instagram accepted the password, but the session check after the password login "
+        f"failed ({why}); nothing was saved."
+    )
+    assert loader.logins == ["me"] and loader.saved == [] and not collector.logged_in
+    assert len(loader.check_requests()) == 2  # session file, then the new session
+    assert path.read_text() == "original-session"
+
+
+def test_password_login_with_a_throttled_check_saves_nothing(
+    db: Database, settings: Settings
+) -> None:
+    path = _existing_session(settings)
+    loader = FakeLoader(session_user=None, new_check_error=ig_error(THROTTLED_401))
+    collector = make(db, settings, loader=loader)
+    with pytest.raises(InstagramSessionCheckFailed) as info:
+        collector.login()
+    message = str(info.value)
+    assert message.startswith("Instagram did not confirm the session after the password login")
+    assert "No password login was attempted" not in message and "Nothing was saved" in message
+    assert info.value.after == "password login"
+    assert loader.saved == [] and not collector.logged_in
+    assert path.read_text() == "original-session"
+
+
+def test_password_login_is_verified_before_it_is_saved(db: Database, settings: Settings) -> None:
+    path = _existing_session(settings)
+    loader = FakeLoader(session_user=None, login_cookies={**SESSION_COOKIES, "csrftoken": "c-new"})
+    with make(db, settings, loader=loader) as collector:
+        assert collector.logged_in
+        assert loader.saved == [str(path)]  # saved after the check
+    _check_file, check_new = loader.check_requests()
+    assert check_new[0] == "web" and check_new[3] == 1
+    # The web client follows the new session (its csrftoken), not the loaded file.
+    assert loader.context.web_headers[-1]["X-CSRFToken"] == "c-new"
+    cookies = loader.save_session()
+    assert cookies["sessionid"] == SESSION_COOKIES["sessionid"]
+    assert {"s_network", "ig_pr"} & set(cookies) == {"ig_pr"}  # placeholders gone, rest kept
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"login_cookies": {"csrftoken": "c"}}, "returned no session cookie"),
+        ({"new_user": None}, "session check after the password login failed"),
+    ],
+    ids=["no-cookie", "logged-out"],
+)
+def test_two_factor_login_is_verified_the_same_way(
+    db: Database, settings: Settings, kwargs: dict, message: str
+) -> None:
+    loader = FakeLoader(login_error=TwoFactorAuthRequiredException("2fa"), **kwargs)
+    collector = make(db, settings, loader=loader, prompt=lambda _: "123456")
+    with pytest.raises(InstagramAuthRequired, match=message):
+        collector.login()
+    assert loader.two_factor_codes == ["123456"]
+    assert loader.saved == [] and not collector.logged_in
+    assert not _session(settings).exists()
+
+
+# ---------------------------------------------------------------------------
+# Session check routing: web API by default, iPhone API with feed_api="iphone"
+# ---------------------------------------------------------------------------
+
+
+@FEED_APIS
+def test_session_check_uses_the_feed_api(db: Database, settings: Settings, feed_api: str) -> None:
+    _existing_session(settings)
+    loader = FakeLoader(session_user="me")
+    collector = make(db, settings, loader=loader, options=InstagramOptions(feed_api=feed_api))
+    collector.login()
+    assert [r[:2] for r in loader.context.requests] == [CHECK[feed_api]]
+    assert loader.context.requests[0][3] == 1
+    if feed_api == "iphone":
+        assert loader.context.web_headers == []  # no web request at all
+        return
+    # web: the first saved-feed page, exactly as the walk asks for it; no user info.
+    assert loader.context.requests[0][2] == BASE_PARAMS["web"]
+    headers = {k.lower(): v for k, v in loader.context.web_headers[0].items()}
+    assert headers["x-ig-app-id"] == "936619743392459"
+    assert headers["x-asbd-id"] == "129477"
+    assert headers["x-csrftoken"] == SESSION_COOKIES["csrftoken"]
+    assert headers["x-ig-www-claim"] == "0"
+    assert headers["x-requested-with"] == "XMLHttpRequest"
+    assert headers["referer"] == SAVED_REFERER
+    assert headers["origin"] == "https://www.instagram.com"
+    assert headers["accept"] == "*/*"
+    assert headers["sec-fetch-mode"] == "cors" and headers["sec-fetch-site"] == "same-origin"
+    assert headers["sec-fetch-dest"] == "empty"
+    assert "x-instagram-ajax" not in headers
+
+
+def test_real_context_web_check_and_feed_share_one_client(
+    db: Database, settings: Settings, http
+) -> None:
+    _real_session_file(settings)
+    fake = http(
+        (
+            200,
+            saved_page([ig_iphone_media("s1")], "c1"),
+            {"x-ig-set-www-claim": "hmac.from-check"},
+        ),
+        (200, saved_page([ig_iphone_media("s2")])),
+    )
+    collector = _real_collector(db, settings)
+    with collector:
+        stats = collector.collect_saved()
+    assert stats.new == 2
+    # The check's page is page 1 of the walk; only page 2 is requested afterwards.
+    assert [u for _, u, _ in fake.calls] == [f"https://www.instagram.com/{IG_SAVED_FEED}"] * 2
+    assert fake.calls[0][2] == {"count": "50"}
+    assert fake.calls[1][2] == {"count": "50", "max_id": "c1"}
+    check, feed = fake.headers
+    assert check["referer"] == SAVED_REFERER
+    assert check["x-ig-app-id"] == "936619743392459" and check["x-ig-www-claim"] == "0"
+    assert check["x-csrftoken"] == SESSION_COOKIES["csrftoken"]
+    assert feed["referer"] == SAVED_REFERER
+    assert feed["x-ig-www-claim"] == "hmac.from-check"  # one client identity per run
+    assert "x-pigeon-session-id" not in check  # no iPad headers
+
+
+# ---------------------------------------------------------------------------
+# Importing the browser session (no password)
+# ---------------------------------------------------------------------------
+
+#: A fake ``sessionid`` as the browser shows it (URL-encoded).
+BROWSER_SID = f"{IG_USER_ID}%3AsecretBrowserSid%3A27%3AAYleakyleaky"
+BROWSER_CSRF = "browsercsrfLEAK0123456789abcdefX"
+
+
+def _assert_no_cookie_values(*texts: str) -> None:
+    for text in texts:
+        for leak in ("secretBrowserSid", "AYleakyleaky", BROWSER_CSRF):
+            assert leak not in text
+
+
+def test_import_session_saves_a_verified_browser_session(
+    db: Database, settings: Settings, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    caplog.set_level(logging.DEBUG)
+    events: list = []
+    loader = FakeLoader()
+    collector = make(
+        db,
+        settings,
+        loader=loader,
+        creds=InstagramCredentials("me", None),
+        allow_password_login=False,
+        progress=events.append,
+    )
+
+    collector.import_session(f"  {BROWSER_SID}\n", BROWSER_CSRF)
+
+    assert loader.imported == [
+        ("me", {"sessionid": BROWSER_SID, "ds_user_id": IG_USER_ID, "csrftoken": BROWSER_CSRF})
+    ]
+    assert [r[:2] for r in loader.context.requests] == [CHECK["web"]]  # exactly one
+    assert loader.context.requests[0][2:] == ({"count": "50"}, 1)
+    headers = {k.lower(): v for k, v in loader.context.web_headers[0].items()}
+    assert headers["x-csrftoken"] == BROWSER_CSRF and headers["x-ig-app-id"] == "936619743392459"
+    assert headers["referer"] == SAVED_REFERER
+    assert collector.logged_in and loader.saved == [str(_session(settings))]
+    assert _session(settings).read_text() == "fake-session"
+    assert loader.logins == [] and loader.two_factor_codes == []
+    assert [(e.phase, e.message) for e in events] == [
+        ("session", "Browser session imported and verified (no password login)")
+    ]
+    _assert_no_cookie_values(caplog.text, repr(events))
+
+
+def test_import_session_with_the_iphone_api_checks_on_i_instagram(
+    db: Database, settings: Settings
+) -> None:
+    loader = FakeLoader()
+    collector = make(db, settings, loader=loader, options=InstagramOptions(feed_api="iphone"))
+    collector.import_session(BROWSER_SID, BROWSER_CSRF)
+    assert [r[:2] for r in loader.context.requests] == [("iphone", IG_USER_INFO)]
+    assert collector.logged_in
+
+
+@pytest.mark.parametrize(
+    "pasted",
+    [
+        f"{IG_USER_ID}:secretBrowserSid:27:AYleakyleaky",  # URL-decoded copy
+        f'"{BROWSER_SID}"',
+        f"'{IG_USER_ID}:secretBrowserSid%3A27:AYleakyleaky'  ",
+    ],
+    ids=["decoded", "double-quoted", "mixed"],
+)
+def test_import_session_normalizes_the_value(db: Database, settings: Settings, pasted: str) -> None:
+    from postparse.collectors.instagram import parse_sessionid
+
+    assert parse_sessionid(pasted) == (BROWSER_SID, IG_USER_ID)
+    loader = FakeLoader()
+    make(db, settings, loader=loader).import_session(pasted, BROWSER_CSRF)
+    assert loader.imported[0][1]["sessionid"] == BROWSER_SID
+    assert loader.imported[0][1]["ds_user_id"] == IG_USER_ID
+
+
+@pytest.mark.parametrize(
+    "pasted",
+    ["", "   ", "secretBrowserSid", "4242", "4242%3A", "x4242%3AsecretBrowserSid", "4242%3Aa b"],
+)
+def test_malformed_sessionid_is_rejected_without_the_value(
+    db: Database, settings: Settings, pasted: str
+) -> None:
+    from postparse.collectors.instagram import InvalidSessionCookie
+
+    loader = FakeLoader()
+    collector = make(db, settings, loader=loader)
+    with pytest.raises(InvalidSessionCookie) as info:
+        collector.import_session(pasted, BROWSER_CSRF)
+    message = str(info.value)
+    assert "does not look like an Instagram sessionid cookie (expected <digits>%3A…)" in message
+    _assert_no_cookie_values(message)
+    assert loader.imported == [] and loader.context.requests == [] and loader.saved == []
+
+
+def test_malformed_csrftoken_is_rejected(db: Database, settings: Settings) -> None:
+    from postparse.collectors.instagram import InvalidSessionCookie
+
+    loader = FakeLoader()
+    with pytest.raises(InvalidSessionCookie, match="csrftoken") as info:
+        make(db, settings, loader=loader).import_session(BROWSER_SID, "bad token;x")
+    _assert_no_cookie_values(str(info.value))
+    assert loader.context.requests == []
+
+
+@pytest.mark.parametrize("csrftoken", [None, "", "  "])
+def test_import_session_generates_a_csrftoken(
+    db: Database, settings: Settings, csrftoken: str | None
+) -> None:
+    tokens = []
+    for _ in range(2):
+        loader = FakeLoader()
+        make(db, settings, loader=loader).import_session(BROWSER_SID, csrftoken)
+        token = loader.imported[0][1]["csrftoken"]
+        assert len(token) == 32 and token.isalnum() and token.isascii()
+        assert loader.context.web_headers[0]["X-CSRFToken"] == token
+        tokens.append(token)
+    assert tokens[0] != tokens[1]
+
+
+@pytest.mark.parametrize(
+    ("loader", "why", "feed_api"),
+    [
+        (FakeLoader(new_user=None), "session logged out: login_required", "web"),
+        (FakeLoader(new_user=None), "session logged out: login_required", "iphone"),
+        (
+            FakeLoader(new_user="someone_else"),
+            "session logged out: the session belongs to another account",
+            "iphone",
+        ),
+    ],
+    ids=["logged-out", "logged-out-iphone", "other-user-iphone"],
+)
+def test_unusable_imported_session_saves_nothing(
+    db: Database, settings: Settings, loader: FakeLoader, why: str, feed_api: str
+) -> None:
+    path = _existing_session(settings)
+    options = InstagramOptions(feed_api=feed_api)  # type: ignore[arg-type]
+    collector = make(db, settings, loader=loader, options=options)
+    with pytest.raises(InstagramAuthRequired) as info:
+        collector.import_session(BROWSER_SID, BROWSER_CSRF)
+    message = str(info.value)
+    assert message.startswith(f"The imported session is not usable ({why}); nothing was saved.")
+    _assert_no_cookie_values(message)
+    assert loader.saved == [] and loader.logins == [] and not collector.logged_in
+    assert len(loader.context.requests) == 1
+    assert path.read_text() == "original-session"
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (ig_error(THROTTLED_401, IG_SAVED_FEED), InstagramSessionCheckFailed),
+        (ig_error("429 Too Many Requests", IG_SAVED_FEED), InstagramSessionCheckFailed),
+        (
+            ig_error('400 Bad Request - "fail" status, message "checkpoint_required"'),
+            InstagramAuthRequired,
+        ),
+        (ig_error(FEED_FAIL_200, IG_SAVED_FEED), InstagramFeedUnavailable),
+    ],
+    ids=["throttled", "429", "checkpoint", "fail-status"],
+)
+def test_failed_check_of_an_imported_session_saves_nothing(
+    db: Database, settings: Settings, error: Exception, expected: type
+) -> None:
+    path = _existing_session(settings)
+    loader = FakeLoader(new_check_error=error)
+    collector = make(db, settings, loader=loader)
+    with pytest.raises(expected) as info:
+        collector.import_session(BROWSER_SID, BROWSER_CSRF)
+    if expected is InstagramSessionCheckFailed:
+        assert "after the session import" in str(info.value)
+        assert "No password login was attempted" not in str(info.value)
+    _assert_no_cookie_values(str(info.value))
+    assert loader.saved == [] and loader.logins == [] and not collector.logged_in
+    assert len(loader.context.requests) == 1
+    assert loader.context.max_connection_attempts == 3
+    assert path.read_text() == "original-session"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        f'odd answer {{"sessionid": "{BROWSER_SID}", "csrftoken": "{BROWSER_CSRF}"}}',
+        f"Cookie: sessionid={BROWSER_SID}; csrftoken={BROWSER_CSRF}",
+        f"unexpected value {BROWSER_SID} in the answer",
+        f"decoded {IG_USER_ID}:secretBrowserSid:27:AYleakyleaky here",
+    ],
+    ids=["json", "header", "bare-value", "bare-decoded"],
+)
+def test_instagram_reason_redacts_session_cookie_values(text: str) -> None:
+    from postparse.collectors.instagram.collector import _instagram_message
+
+    reason = _instagram_message(text)
+    _assert_no_cookie_values(reason)
+    assert "<redacted>" in reason
+
+
+# ---------------------------------------------------------------------------
+# Web: the session check's feed page is the walk's first page
+# ---------------------------------------------------------------------------
+
+
+def test_web_run_with_a_valid_session_is_exactly_one_request(
+    db: Database, settings: Settings
+) -> None:
+    """``extract --limit 1 --stop-after-known 1``: the check's page is enough."""
+    store(db, "k1")
+    collector, loader = _feed_collector(
+        db,
+        settings,
+        saved_page([ig_iphone_media("n1"), ig_iphone_media("k1")], next_max_id="c1"),
+        saved_page([ig_iphone_media("n2")]),
+    )
+    with collector:
+        stats = collector.collect_saved(limit=1, stop_after_known=1)
+    assert (stats.new, stats.stopped_reason) == (1, "limit")
+    assert count(db) == 2  # n1 stored, k1 was known
+    assert loader.context.requests == [("web", IG_SAVED_FEED, {"count": "50"}, 1)]
+
+
+def test_web_walk_continues_after_the_checks_page_with_its_cursor(
+    db: Database, settings: Settings
+) -> None:
+    collector, loader = _feed_collector(
+        db,
+        settings,
+        saved_page([ig_iphone_media("a")], next_max_id="cursor-1"),
+        saved_page([ig_iphone_media("b")]),
+    )
+    with collector:
+        stats = collector.collect_saved()
+    assert stats.new == 2
+    assert _feed_requests(loader) == [{"count": "50"}, {"count": "50", "max_id": "cursor-1"}]
+    assert loader.check_requests() == loader.context.requests[:1]
+
+
+def test_web_checks_page_is_used_once(db: Database, settings: Settings) -> None:
+    collector, loader = _feed_collector(db, settings, saved_page([ig_iphone_media("a")]))
+    with collector:
+        collector.collect_saved()
+        collector.collect_saved()  # a second walk asks for page 1 itself
+    assert _feed_requests(loader) == [{"count": "50"}, {"count": "50"}]
+
+
+def test_web_checks_page_is_dropped_when_the_session_changes(
+    db: Database, settings: Settings
+) -> None:
+    collector, loader = _feed_collector(db, settings, saved_page([ig_iphone_media("a")]))
+    with collector:
+        loader.context.set_cookies(SESSION_COOKIES)  # instaloader replaced its session
+        collector.collect_saved()
+    assert _feed_requests(loader) == [{"count": "50"}, {"count": "50"}]
+
+
+def test_web_password_login_reuses_the_page_of_the_new_session(
+    db: Database, settings: Settings
+) -> None:
+    _existing_session(settings)
+    loader = FakeLoader(session_user=None)  # the session file is logged out
+    loader.context.web_responses[IG_SAVED_FEED] = saved_feed_pages(
+        saved_page([ig_iphone_media("a")])
+    )
+    collector = InstagramCollector(
+        db,
+        settings,
+        CREDS,
+        allow_password_login=True,
+        loader_factory=loader_factory(loader),
+        sleep=SleepRecorder(),
+    )
+    with collector:
+        collector.collect_saved()
+    assert loader.logins == ["me"] and count(db) == 1
+    # Check of the file (logged out), check of the new session = the walk's page 1.
+    assert _feed_requests(loader) == [{"count": "50"}, {"count": "50"}]
+
+
+def test_injected_saved_posts_ignore_the_checks_page(db: Database, settings: Settings) -> None:
+    _existing_session(settings)
+    loader = FakeLoader(session_user="me")
+    loader.context.web_responses[IG_SAVED_FEED] = saved_page([ig_iphone_media("cached")])
+    feed = Feed([ig_post(ig_node("injected"))])
+    with make(db, settings, feed, loader=loader) as collector:
+        collector.collect_saved()
+    assert feed.consumed == 1 and count(db) == 1 and get(db, "injected")
+    assert len(loader.context.requests) == 1  # only the check
+
+
+@FEED_APIS
+def test_fetch_post_needs_no_feed_request(db: Database, settings: Settings, feed_api: str) -> None:
+    """A transcription re-fetch: the session check, then the post itself."""
+    _existing_session(settings)
+    loader = FakeLoader(session_user="me")
+    fetched: list[str] = []
+
+    def from_shortcode(_loader: Any, code: str) -> Any:
+        fetched.append(code)
+        return ig_post(ig_node(code))
+
+    options = InstagramOptions(feed_api=feed_api)  # type: ignore[arg-type]
+    with make(
+        db, settings, loader=loader, options=options, post_from_shortcode=from_shortcode
+    ) as collector:
+        collector.fetch_post("p1")
+    assert fetched == ["p1"]
+    assert [r[:2] for r in loader.context.requests] == [CHECK[feed_api]]

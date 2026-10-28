@@ -76,6 +76,7 @@ class TestValidate:
         assert "Taxonomies" in result.output
         assert "Transcription" in result.output
         assert "Enrichment" in result.output
+        assert "feed_api web" in result.output
 
     def test_fix_creates_directories(self, tmp_path: Path) -> None:
         cfg = _write_config(tmp_path, f'[paths]\ndata_dir = "{(tmp_path / "d").as_posix()}"\n')
@@ -89,6 +90,7 @@ class TestValidate:
         [
             ('[transcription]\nbackend = "cloud"\n', "Transcription"),
             ("[enrichment]\nconcurrency = 0\n", "Enrichment"),
+            ('[instagram]\nfeed_api = "graphql"\n', "instagram.feed_api must be one of"),
             (
                 '[[classification.taxonomies]]\nname = "t"\nmode = "weird"\nlabels = ["a"]\n',
                 "Taxonomies",

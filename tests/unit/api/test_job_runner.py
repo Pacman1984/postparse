@@ -15,6 +15,7 @@ from postparse.api.services.job_manager import JobManager
 from postparse.collectors.base import (
     CredentialsMissing,
     InstagramAuthRequired,
+    InstagramFeedUnavailable,
     TelegramRateLimited,
 )
 
@@ -90,12 +91,29 @@ async def test_report_stop_reason_fails_job_and_keeps_counts() -> None:
     assert cache.invalidations == 1  # partial runs may have written data
 
 
+async def test_feed_unavailable_report_fails_the_job() -> None:
+    runner, jobs, _ws, _cache = _runner()
+
+    async def work(progress: Any) -> Report:
+        return Report(processed=2, stopped_reason="feed_unavailable", error="feed refused")
+
+    job_id = runner.submit("instagram_extract", {}, work)
+    await runner.wait(job_id, timeout=5)
+    job = jobs.get_job(job_id)
+    assert (job.status, job.error_code, job.messages_processed) == (
+        ExtractionStatus.FAILED,
+        "feed_unavailable",
+        2,
+    )
+
+
 @pytest.mark.parametrize(
     ("exc", "code"),
     [
         (CredentialsMissing("Telegram", ("TELEGRAM_API_ID",)), "credentials_missing"),
         (InstagramAuthRequired(), "auth_required"),
         (TelegramRateLimited(30), "rate_limited"),
+        (InstagramFeedUnavailable("web", "something went wrong"), "feed_unavailable"),
         (ValueError("bad provider"), "invalid_request"),
         (KeyError("taxonomy"), "invalid_request"),
         (RuntimeError("boom"), "internal_error"),

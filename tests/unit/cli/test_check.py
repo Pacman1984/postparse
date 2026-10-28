@@ -102,6 +102,14 @@ def test_instagram_status_variants(settings: Settings) -> None:
     assert ok.status == "ok"
 
 
+@pytest.mark.parametrize("password", [True, False])
+def test_instagram_status_recommends_the_session_import(settings: Settings, password: bool) -> None:
+    env = {"INSTAGRAM_USERNAME": "me", **({"INSTAGRAM_PASSWORD": "pw"} if password else {})}
+    hints = check_mod.instagram_status(settings, env=env).hints
+    assert "--import-session" in hints[0] and "no password" in hints[0]
+    assert "--login" in hints[1] and "#2487" in hints[1]
+
+
 def test_check_telegram_command_makes_no_network_call(
     no_network: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -191,6 +199,317 @@ def test_check_instagram_login(
     )
     result = CliRunner().invoke(cli, ["check", "instagram", "--login"])
     assert result.exit_code == code, result.output
+
+
+@pytest.fixture
+def ig_login(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """``check instagram --login`` with the real collector on a fake instaloader."""
+    from postparse.collectors.instagram import collector as collector_mod
+    from tests.unit.collectors.fakes import FakeLoader
+
+    monkeypatch.chdir(tmp_path)
+    settings = Settings(data_dir=tmp_path / "data")
+    assert settings.sessions_dir is not None
+    session = settings.sessions_dir / "instagram_me"
+    session.parent.mkdir(parents=True)
+    session.write_text("original-session")
+    monkeypatch.setattr(check_mod, "_settings", lambda ctx: settings)
+    monkeypatch.setattr(check_mod, "_config", lambda ctx: None)
+    state: dict[str, Any] = {"session": session, "loader": FakeLoader(session_user="me")}
+    monkeypatch.setattr(collector_mod, "_default_loader_factory", lambda options: state["loader"])
+
+    def invoke() -> Any:
+        return CliRunner().invoke(
+            cli,
+            ["check", "instagram", "--login"],
+            env={"INSTAGRAM_USERNAME": "me", "INSTAGRAM_PASSWORD": "pw-secret"},
+        )
+
+    state["invoke"] = invoke
+    return state
+
+
+@pytest.mark.parametrize("setup", ["logged_out", "no_file"])
+def test_check_instagram_login_is_the_only_password_login(ig_login, setup: str) -> None:
+    from tests.unit.collectors.fakes import FakeLoader
+
+    loader = FakeLoader(session_user=None)
+    ig_login["loader"] = loader
+    if setup == "no_file":
+        ig_login["session"].unlink()
+
+    result = ig_login["invoke"]()
+
+    assert result.exit_code == 0, result.output
+    text = " ".join(result.output.split())
+    why = "session logged out: login_required" if setup == "logged_out" else "no session file"
+    assert f"No usable Instagram session ({why}); logging in with the password now" in text
+    assert "only command that logs in with the password" in text
+    assert loader.logins == ["me"]
+    assert loader.saved and ig_login["session"].read_text() == "fake-session"
+    assert "pw-secret" not in result.output
+
+
+def test_check_instagram_login_with_a_valid_session_uses_no_password(ig_login) -> None:
+    result = ig_login["invoke"]()
+    assert result.exit_code == 0, result.output
+    assert "Instagram session verified (no password login)" in result.output
+    assert ig_login["loader"].logins == []
+
+
+def test_check_instagram_login_never_reports_a_session_without_cookie(ig_login) -> None:
+    """instaloader #2487: "authenticated" without a sessionid cookie is not a valid session."""
+    from tests.unit.collectors.fakes import FakeLoader
+
+    loader = FakeLoader(session_user=None, login_cookies={"csrftoken": "c-new"})
+    ig_login["loader"] = loader
+
+    result = ig_login["invoke"]()
+
+    assert result.exit_code == 1, result.output
+    text = " ".join(result.output.split())
+    assert "returned no session cookie (instaloader issue #2487); nothing was saved" in text
+    assert "`postparse check instagram --import-session`" in text
+    assert "session is valid" not in text
+    assert loader.logins == ["me"] and loader.saved == []
+    assert ig_login["session"].read_text() == "original-session"
+    assert "pw-secret" not in result.output
+
+
+def test_check_instagram_login_never_logs_in_on_a_throttled_check(ig_login) -> None:
+    from tests.unit.collectors.fakes import THROTTLED_401, FakeLoader, ig_error
+
+    loader = FakeLoader(check_error=ig_error(THROTTLED_401))
+    ig_login["loader"] = loader
+
+    result = ig_login["invoke"]()
+
+    assert result.exit_code == 1, result.output
+    text = " ".join(result.output.split())
+    assert "No password login was attempted" in text
+    assert "Please wait a few minutes" in text and "https://" not in text
+    assert "logging in with the password" not in text
+    assert loader.logins == [] and loader.saved == []
+    assert ig_login["session"].read_text() == "original-session"
+
+
+# -- --import-session (browser session, hidden prompt) -------------------------------
+
+#: Fake browser cookies (never shown in any output).
+BROWSER_SID = "4242%3AsecretBrowserSid%3A27%3AAYleakyleaky"
+BROWSER_CSRF = "browsercsrfLEAK0123456789abcdefX"
+
+
+def _assert_no_cookie_values(text: str) -> None:
+    for leak in ("secretBrowserSid", "AYleakyleaky", BROWSER_CSRF):
+        assert leak not in text
+
+
+@pytest.fixture
+def ig_import(ig_login, monkeypatch: pytest.MonkeyPatch):
+    """``check instagram --import-session`` on a terminal (real collector, fake instaloader)."""
+    from tests.unit.collectors.fakes import FakeLoader
+
+    monkeypatch.setattr(check_mod, "_stdin_is_tty", lambda: True)
+    ig_login["loader"] = FakeLoader(session_user="me")
+
+    def invoke(stdin: str, *args: str, env: dict[str, str] | None = None) -> Any:
+        return CliRunner().invoke(
+            cli,
+            ["check", "instagram", "--import-session", *args],
+            input=stdin,
+            env={"INSTAGRAM_USERNAME": "me"} if env is None else env,
+        )
+
+    ig_login["invoke"] = invoke
+    return ig_login
+
+
+def test_check_instagram_import_session_saves_the_browser_session(ig_import) -> None:
+    loader = ig_import["loader"]
+
+    result = ig_import["invoke"](f"{BROWSER_SID}\n\n")
+
+    assert result.exit_code == 0, result.output
+    text = " ".join(result.output.split())
+    assert "Browser session imported and verified (no password login)" in text
+    assert "instagram import: browser session imported and verified" in text
+    assert "user_agent" in text and "Do not log out of Instagram in that browser" in text
+    assert "(input hidden)" in text
+    # Exactly one request: the first page of the saved feed (as the web app asks for it).
+    assert [r[:3] for r in loader.context.requests] == [
+        ("web", "api/v1/feed/saved/posts/", {"count": "50"})
+    ]
+    assert loader.logins == []
+    assert loader.imported[0][1]["sessionid"] == BROWSER_SID
+    assert len(loader.imported[0][1]["csrftoken"]) == 32  # generated (Enter)
+    assert ig_import["session"].read_text() == "fake-session"
+    _assert_no_cookie_values(result.output)
+
+
+def test_check_instagram_import_session_with_csrftoken_and_session_option(
+    ig_import, tmp_path: Path
+) -> None:
+    target = tmp_path / "custom_session"
+    result = ig_import["invoke"](f"{BROWSER_SID}\n{BROWSER_CSRF}\n", "--session", str(target))
+    assert result.exit_code == 0, result.output
+    assert ig_import["loader"].imported[0][1]["csrftoken"] == BROWSER_CSRF
+    assert target.read_text() == "fake-session"
+    assert ig_import["session"].read_text() == "original-session"
+    _assert_no_cookie_values(result.output)
+
+
+def test_check_instagram_import_session_needs_no_password(ig_import) -> None:
+    ig_import["session"].unlink()
+    result = ig_import["invoke"](f"{BROWSER_SID}\n\n")
+    assert result.exit_code == 0, result.output  # "no session file" is fixed by the import
+    assert ig_import["session"].read_text() == "fake-session"
+
+
+class _FeedApiConfig:
+    """ConfigManager stand-in that only sets ``instagram.feed_api``."""
+
+    def __init__(self, feed_api: str) -> None:
+        self.feed_api = feed_api
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self.feed_api if key == "instagram.feed_api" else default
+
+
+@pytest.mark.parametrize(
+    ("loader_kwargs", "why", "feed_api"),
+    [
+        ({"new_user": None}, "session logged out: login_required", "web"),
+        ({"new_user": None}, "session logged out: login_required", "iphone"),
+        # Only the iPhone check (user info) names the viewer.
+        ({"new_user": "someone_else"}, "the session belongs to another account", "iphone"),
+    ],
+    ids=["logged-out", "logged-out-iphone", "other-user-iphone"],
+)
+def test_check_instagram_import_session_unusable_saves_nothing(
+    ig_import, monkeypatch: pytest.MonkeyPatch, loader_kwargs: dict, why: str, feed_api: str
+) -> None:
+    from tests.unit.collectors.fakes import IG_SAVED_FEED, IG_USER_INFO, FakeLoader
+
+    monkeypatch.setattr(check_mod, "_config", lambda ctx: _FeedApiConfig(feed_api))
+    loader = FakeLoader(**loader_kwargs)
+    ig_import["loader"] = loader
+    result = ig_import["invoke"](f"{BROWSER_SID}\n{BROWSER_CSRF}\n")
+    assert result.exit_code == 1, result.output
+    text = " ".join(result.output.split())
+    assert "The imported session is not usable" in text and why in text
+    assert "nothing was saved" in text
+    assert loader.saved == [] and loader.logins == []
+    expected = ("web", IG_SAVED_FEED) if feed_api == "web" else ("iphone", IG_USER_INFO)
+    assert [r[:2] for r in loader.context.requests] == [expected]
+    assert ig_import["session"].read_text() == "original-session"
+    _assert_no_cookie_values(result.output)
+
+
+#: A 200 answer with ``"status": "fail"`` (not a statement about the session).
+FEED_FAIL_200 = (
+    '200 OK - "fail" status, message "We\'re sorry, but something went wrong. Please try again."'
+)
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        ("429 Too Many Requests", "Instagram did not confirm the session after the session import"),
+        (
+            '400 Bad Request - "fail" status, message "checkpoint_required"',
+            "asks for a confirmation of the saved session (Instagram: checkpoint_required)",
+        ),
+        (FEED_FAIL_200, "Instagram refused the saved feed (web API)"),
+    ],
+    ids=["429", "checkpoint", "fail-status"],
+)
+def test_check_instagram_import_session_failed_check_saves_nothing(
+    ig_import, status: str, expected: str
+) -> None:
+    from tests.unit.collectors.fakes import IG_SAVED_FEED, FakeLoader, ig_error
+
+    loader = FakeLoader(new_check_error=ig_error(status, IG_SAVED_FEED))
+    ig_import["loader"] = loader
+    result = ig_import["invoke"](f"{BROWSER_SID}\n{BROWSER_CSRF}\n")
+    assert result.exit_code == 1, result.output
+    text = " ".join(result.output.split())
+    verdict = text.split("instagram import:", 1)[1]  # after the instructions
+    assert expected in verdict
+    assert "session logged out" not in verdict and "https://" not in verdict
+    assert loader.saved == [] and loader.logins == []
+    assert [r[:2] for r in loader.context.requests] == [("web", IG_SAVED_FEED)]  # one request
+    assert ig_import["session"].read_text() == "original-session"
+    _assert_no_cookie_values(result.output)
+
+
+def test_check_instagram_import_session_malformed_value(ig_import) -> None:
+    result = ig_import["invoke"]("secretBrowserSid-AYleakyleaky\n\n")
+    assert result.exit_code == 1, result.output
+    text = " ".join(result.output.split())
+    assert "does not look like an Instagram sessionid cookie" in text
+    assert ig_import["loader"].context.requests == []
+    assert ig_import["session"].read_text() == "original-session"
+    _assert_no_cookie_values(result.output)
+
+
+def test_check_instagram_import_session_needs_a_terminal(
+    no_network: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("INSTAGRAM_USERNAME", "me")
+    result = CliRunner().invoke(
+        cli, ["check", "instagram", "--import-session"], input=f"{BROWSER_SID}\n\n"
+    )
+    assert result.exit_code == 1, result.output
+    assert "needs an interactive terminal" in " ".join(result.output.split())
+    assert "(input hidden)" not in result.output  # no prompt
+    assert no_network["instagram"] == 0
+    _assert_no_cookie_values(result.output)
+
+
+def test_check_instagram_import_session_needs_a_username(
+    no_network: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("INSTAGRAM_USERNAME", raising=False)
+    monkeypatch.setattr(check_mod, "_stdin_is_tty", lambda: True)
+    result = CliRunner().invoke(cli, ["check", "instagram", "--import-session"], input="x\n\n")
+    assert result.exit_code == 1, result.output
+    assert "INSTAGRAM_USERNAME not set" in result.output
+    assert no_network["instagram"] == 0
+
+
+def test_check_instagram_import_session_and_login_are_exclusive(
+    no_network: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("INSTAGRAM_USERNAME", "me")
+    result = CliRunner().invoke(cli, ["check", "instagram", "--import-session", "--login"])
+    assert result.exit_code == 2, result.output
+    assert "cannot be combined" in result.output
+    assert no_network["instagram"] == 0
+
+
+def test_instagram_import_with_an_injected_prompt(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from postparse.collectors.instagram import collector as collector_mod
+    from tests.unit.collectors.fakes import FakeLoader
+
+    monkeypatch.setattr(check_mod, "_stdin_is_tty", lambda: False)  # not needed with a prompt
+    monkeypatch.delenv("INSTAGRAM_PASSWORD", raising=False)
+    loader = FakeLoader(session_user="me")
+    monkeypatch.setattr(collector_mod, "_default_loader_factory", lambda options: loader)
+    asked: list[tuple[str, bool]] = []
+
+    def prompt(text: str, optional: bool) -> str:
+        asked.append((text, optional))
+        return BROWSER_SID if not optional else ""
+
+    result = check_mod.instagram_import(settings, None, "me", None, prompt=prompt)
+    assert result.status == "ok", result.summary
+    assert [optional for _, optional in asked] == [False, True]
+    assert all("hidden" in text for text, _ in asked)
+    rows = " ".join(f"{k} {v}" for k, v in result.rows) + " ".join(result.hints)
+    _assert_no_cookie_values(rows + result.summary)
 
 
 # -- transcription --------------------------------------------------------------------

@@ -177,25 +177,117 @@ postparse db reindex
 * Exit code 3 / FloodWait: Telegram asked to wait longer than
   `telegram.flood_sleep_threshold`; retry later.
 
-### Instagram: checkpoint, 2FA, soft block
+### Instagram: logging in, checkpoint, 2FA, soft block
 
-* **2FA**: interactive runs prompt for the code; non-interactive runs exit with
-  code 2. Run `postparse extract instagram` in a terminal.
+* **Logging in (recommended): import the browser session** with
+  `postparse check instagram --import-session` in a terminal. No password is
+  used:
+  1. Log in to Instagram in your browser (the account of
+     `INSTAGRAM_USERNAME`).
+  2. Open the developer tools (F12). Chrome / Edge: **Application** →
+     **Cookies** → `https://www.instagram.com`; Firefox: **Storage** →
+     **Cookies** → `https://www.instagram.com`.
+  3. Copy the value of the `sessionid` cookie (it looks like
+     `<digits>%3A...`; a copy with `:` instead of `%3A` is accepted too) and
+     paste it into the hidden prompt. The `csrftoken` prompt is optional
+     (Enter generates one).
+  4. postparse makes exactly **one** request (the session check: with
+     `instagram.feed_api = "web"`, the default, the first page of the saved
+     feed, `www.instagram.com/api/v1/feed/saved/posts/`, the request the web
+     app itself makes when the saved page is opened) and saves the session
+     file (`data/sessions/instagram_<username>`, or `--session`) only when
+     Instagram confirms the session; a logged-out session, a confirmation
+     request, a throttled check or a refused feed saves nothing and leaves an
+     existing session file alone. The feed does not name the viewer, so in
+     web mode the account is the one the `sessionid` belongs to (its leading
+     number is the `ds_user_id`): copy the cookie of the `INSTAGRAM_USERNAME`
+     account. With `feed_api = "iphone"` the check asks the user info on
+     `i.instagram.com` and rejects a session of another account.
+  5. Set `[instagram] user_agent` in `config/config.toml` to the User-Agent of
+     that browser (e.g. from `navigator.userAgent` in the browser console), so
+     the session is used with the same browser identity.
+  6. Do not log out of Instagram in that browser: logging out ends this
+     session too (closing the browser is fine).
+
+  The prompt needs an interactive terminal; the cookie is never read from
+  arguments, pipes or the environment and is never shown or logged.
+* **Password login (alternative)**: `postparse check instagram --login`
+  verifies the saved session and, only if there is none or Instagram says it
+  is logged out, logs in with `INSTAGRAM_PASSWORD`. It prints a warning before
+  that password login and may ask for a 2FA code or a confirmation in the
+  Instagram app. It is the **only** command that ever uses the password. The
+  new session is verified (one request) before it is saved: instaloader may
+  report a successful login although Instagram set no `sessionid` cookie
+  (instaloader issue #2487); then `--login` stops with "Instagram accepted the
+  password but returned no session cookie ...; nothing was saved" instead of
+  saving an unusable session. Use `--import-session` in that case.
+* **Extract never uses the password**: `extract instagram` (also with
+  `--transcribe`), `transcribe run` re-fetches and all API jobs only use the
+  saved session. Without a usable one (no session file, unreadable file,
+  session logged out) they stop with exit code 2 / `error_code:
+  auth_required` and a message like "No password login was attempted
+  (session logged out: login_required); automatic password logins are
+  disabled because they trigger Instagram checkpoints. Instagram login
+  required: import the session of your logged-in browser with `postparse
+  check instagram --import-session` in a terminal (no password), or run
+  `postparse check instagram --login` ..., then retry." Repeated scripted password logins are what makes Instagram ask for
+  checkpoints, so there is no switch to turn them back on.
+* **Instagram's reason**: logged-out sessions, confirmations, feed refusals
+  and rate limits quote Instagram's own short reason, e.g. `(Instagram:
+  checkpoint_required)`, `login_required`, `challenge_required`,
+  `feedback_required`, or for a login redirect the target as
+  `https://host/path`. Query strings, cookies, tokens and response bodies are
+  never shown (at most 200 characters).
+* **2FA**: `check instagram --login` prompts for the code in the terminal.
 * **Checkpoint / "confirm it was you"**: confirm the login in the Instagram app,
-  then retry. If the saved session keeps failing, delete
-  `data/sessions/instagram_<username>` and log in again (needs
-  `INSTAGRAM_PASSWORD`).
+  then run `postparse check instagram --import-session` (or `--login`) and
+  retry the extract. Do not
+  delete the session file just because a run failed.
 * **"Instagram did not confirm the saved session"**: exit code 3. The session
-  check (one request to `i.instagram.com/api/v1/users/<id>/info/`, a single
-  attempt) was throttled (401 "Please wait a few minutes", 429) or Instagram
-  was unreachable. This says nothing about the session itself, so **no password
+  check (one request, a single attempt; with `instagram.feed_api = "web"`, the
+  default, the first page of the saved feed on `www.instagram.com`, exactly as
+  the feed walk and the web app request it, with the saved page as `Referer`;
+  with `"iphone"` `api/v1/users/<id>/info/` on `i.instagram.com`, so a run
+  uses one client identity and a browser session is never sent with iPad
+  headers to `i.instagram.com`) was throttled (401 "Please wait a few
+  minutes", 429) or Instagram was unreachable. This says nothing about the session itself, so **no password
   login is attempted** and the session file is left untouched; nothing was
-  collected or lost. Wait a few hours and retry. A password login (with
-  `INSTAGRAM_PASSWORD`) only happens when the check positively says the session
-  is logged out (login redirect, `login_required`, session of another account,
-  no `sessionid` cookie) or when there is no session file. Repeated scripted
-  password logins are what triggers checkpoints, so do not delete a session
+  collected or lost. Wait a few hours and retry. Even `check instagram
+  --login` only logs in with the password when the check positively says the
+  session is logged out (login redirect, `login_required`, with `"iphone"` a
+  session of another account, no `sessionid` cookie) or when there is no
+  session file; a
+  throttled check never leads to a password login. Do not delete a session
   file just because of this message.
+* **Session outcome on the console**: every `extract instagram` run prints
+  "Instagram session verified (no password login)" or stops with exit code 2
+  and the reason. `check instagram --login` prints the warning "No usable
+  Instagram session (<reason>); logging in with the password now ..." before
+  a password login, so it is never silent.
+* **Request count in web mode**: the page the session check fetched is the
+  first page of the saved-feed walk (it is not requested again; later pages
+  follow with `max_id`). `extract instagram --limit 1 --stop-after-known 1`
+  with a valid session therefore makes exactly **one** request; an import
+  makes one; a `transcribe run` re-fetch makes the check (one feed page) plus
+  one request per post.
+* **"Instagram refused the saved feed ... something went wrong"**: exit code 3
+  (`stopped_reason` / job `error_code` `feed_unavailable`). No password login
+  is attempted; Instagram answered the feed request
+  (`api/v1/feed/saved/posts/`) with HTTP 200 and `"status": "fail"`, which is
+  not a statement about the session (in web mode this can already be the
+  session check's page: then nothing is saved and nothing collected).
+  Everything committed before is kept. Feed pages get a
+  single attempt (only network errors such as timeouts are retried, up to
+  `instagram.max_connection_attempts`), so a refusal costs one request. The
+  answer depends on how the feed is requested, so the API is configurable:
+  `instagram.feed_api = "web"` (default) requests
+  `https://www.instagram.com/api/v1/feed/saved/posts/` with the web app's
+  headers (`X-IG-App-ID`, `X-CSRFToken` from the session cookie,
+  `X-Requested-With`, `X-ASBD-ID`, `X-IG-WWW-Claim`, the saved page as
+  `Referer`), which fits a session created on the website; `"iphone"` uses
+  the private API on `i.instagram.com` with instaloader's iPad headers. If one
+  keeps failing, switch to the other in `config/config.toml` and retry once;
+  if both fail, wait a few hours.
 * **Rate limit (429) / soft block**: exit code 3. Instagram sometimes answers a
   soft-blocked session with errors that look like deleted posts; the
   transcription circuit breaker stops after

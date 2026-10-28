@@ -165,6 +165,15 @@ def test_summarize_run(env) -> None:
     assert "Nothing to summarize" in again.output
 
 
+def _saved_session(settings: Settings) -> FakeLoader:
+    """A verified saved Instagram session (extract never logs in with the password)."""
+    assert settings.sessions_dir is not None
+    path = settings.sessions_dir / "instagram_me"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("session")
+    return FakeLoader(session_user="me")
+
+
 def test_extract_instagram_transcribe(env, monkeypatch: pytest.MonkeyPatch) -> None:
     db: Database = env["db"]
     feed = Feed(
@@ -181,7 +190,7 @@ def test_extract_instagram_transcribe(env, monkeypatch: pytest.MonkeyPatch) -> N
             db,
             env["settings"],
             instagram_overrides={
-                "loader_factory": loader_factory(FakeLoader()),
+                "loader_factory": loader_factory(_saved_session(env["settings"])),
                 "saved_posts": feed,
                 "sleep": SleepRecorder(),
             },
@@ -214,7 +223,7 @@ def test_extract_instagram_without_transcribe_flag(env, monkeypatch) -> None:
             env["db"],
             env["settings"],
             instagram_overrides={
-                "loader_factory": loader_factory(FakeLoader()),
+                "loader_factory": loader_factory(_saved_session(env["settings"])),
                 "saved_posts": feed,
                 "sleep": SleepRecorder(),
             },

@@ -3,8 +3,9 @@
 - ``db``: same as ``postparse db check``
 - ``transcription``: ASR backend availability (no model download unless ``--load-model``)
 - ``telegram`` / ``instagram``: which session file would be used and whether
-  credentials are set (names only). Only ``--login`` contacts the service
-  (interactive prompts are allowed); the default makes no network call.
+  credentials are set (names only). Only ``--login`` (and Instagram's
+  ``--import-session``) contacts the service (interactive prompts are
+  allowed); the default makes no network call.
 - ``llm``: list models, discovered model, chat ping and latency per provider
 - ``all``: everything above (``--login`` passes through); also the default
 
@@ -13,6 +14,7 @@ Exit codes: 0 ok (warnings allowed), 1 problems found.
 Example:
     $ postparse check
     $ postparse check telegram --login
+    $ postparse check instagram --import-session
     $ postparse check transcription --load-model
     $ postparse check llm --provider llama_cpp
 """
@@ -24,7 +26,8 @@ import logging
 import os
 import shutil
 import subprocess
-from collections.abc import Mapping
+import sys
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -38,6 +41,7 @@ from postparse.cli.utils import (
     config_path_from_ctx,
     get_console,
     print_error,
+    print_info,
     print_success,
     print_warning,
     resolve_db_path,
@@ -248,6 +252,13 @@ def telegram_login(settings: Settings, config: Any, session: str | None) -> Chec
     return result
 
 
+#: How to create an Instagram session (recommended way first).
+_IMPORT_HINT = (
+    "Import the session of your logged-in browser: `postparse check instagram "
+    "--import-session` (in a terminal, no password)"
+)
+
+
 def instagram_status(
     settings: Settings,
     env: Mapping[str, str] | None = None,
@@ -293,21 +304,51 @@ def instagram_status(
         result.hints.append("Verify the login with `postparse check instagram --login`")
     elif has_password:
         result.worsen("warn")
-        result.summary = "no session file; the next extract logs in with the password"
+        result.summary = "no session file; extract never logs in with the password"
+        result.hints.append(_IMPORT_HINT)
+        result.hints.append(
+            "Alternative: `postparse check instagram --login` (password login; may not "
+            "yield a usable session, instaloader #2487)"
+        )
     else:
         result.worsen("fail")
         result.summary = "no session file and INSTAGRAM_PASSWORD not set"
+        result.hints.append(_IMPORT_HINT)
         result.hints.append(
-            "Set INSTAGRAM_PASSWORD once and run `postparse check instagram "
-            "--login` to create the session"
+            "Alternative: set INSTAGRAM_PASSWORD and run `postparse check instagram --login` "
+            "(may not yield a usable session, instaloader #2487)"
         )
     return result
 
 
+def _print_session_event(event: Any) -> None:
+    """Print the session outcome of ``--login`` (a password login as a warning)."""
+    if event.phase == "login":
+        print_warning(
+            escape(
+                f"{event.message}. This is the only command that logs in with the password; "
+                "Instagram may ask for a 2FA code or a confirmation in the Instagram app."
+            )
+        )
+    elif event.phase == "session" and event.message:
+        print_info(escape(event.message))
+
+
 def _make_instagram_collector(
-    settings: Settings, credentials: Any, config: Any, session: str | None
+    settings: Settings,
+    credentials: Any,
+    config: Any,
+    session: str | None,
+    *,
+    allow_password_login: bool = True,
 ) -> Any:
-    """Create the Instagram collector used by ``--login`` (tests replace this)."""
+    """Create the Instagram collector used by ``--login`` / ``--import-session``.
+
+    Tests replace this. ``--login`` creates the only collector with
+    ``allow_password_login=True``: an interactive, explicitly requested login.
+    ``--import-session``, extract runs, transcription re-fetches and API jobs
+    never log in with the password.
+    """
     from postparse.collectors.instagram import InstagramCollector, InstagramOptions
     from postparse.core.db import Database
 
@@ -319,13 +360,20 @@ def _make_instagram_collector(
         InstagramOptions.from_config(config),
         interactive=True,
         session=session,
+        allow_password_login=allow_password_login,
+        progress=_print_session_event,
     )
 
 
 def instagram_login(
     settings: Settings, config: Any, username: str | None, session: str | None
 ) -> CheckResult:
-    """Load the Instagram session (or log in) and save it."""
+    """Verify the saved Instagram session, or log in with the password, and save it.
+
+    The password login (with a 2FA prompt if needed) only happens here, and
+    only when there is no usable session; a throttled session check never
+    leads to one.
+    """
     from postparse.collectors import CollectorError, instagram_credentials
 
     result = CheckResult("instagram login")
@@ -340,6 +388,93 @@ def instagram_login(
         return result
     result.summary = "session is valid"
     result.rows.append(("Session file", _file_row(Path(collector.save_path))))
+    return result
+
+
+#: Reads one secret from the terminal (hidden input); tests replace it.
+SecretPrompt = Callable[[str, bool], str]
+
+
+def _stdin_is_tty() -> bool:
+    """True if stdin is an interactive terminal (tests replace this)."""
+    try:
+        return sys.stdin.isatty()
+    except (AttributeError, ValueError):
+        return False
+
+
+def _prompt_secret(text: str, optional: bool) -> str:
+    """Prompt with hidden input (``optional``: Enter returns ``""``)."""
+    value: str = click.prompt(
+        text, hide_input=True, default="" if optional else None, show_default=False
+    )
+    return value
+
+
+def instagram_import(
+    settings: Settings,
+    config: Any,
+    username: str | None,
+    session: str | None,
+    prompt: SecretPrompt | None = None,
+) -> CheckResult:
+    """Import the ``sessionid`` cookie of the user's logged-in browser and save it.
+
+    The cookie is read from a hidden prompt (never from arguments or the
+    environment, never shown or logged), verified with one request
+    (:meth:`InstagramCollector.import_session`) and saved only when Instagram
+    confirms it. The password is never used.
+
+    Args:
+        settings: Application settings.
+        config: ``ConfigManager`` or ``None``.
+        username: ``--username`` override of ``INSTAGRAM_USERNAME``.
+        session: ``--session`` override (file path).
+        prompt: ``(text, optional) -> value`` (default: hidden terminal prompt).
+
+    Returns:
+        ``ok`` with the saved session file, ``fail`` with the reason.
+    """
+    from postparse.collectors import CollectorError, instagram_credentials
+    from postparse.collectors.instagram import InvalidSessionCookie
+
+    result = CheckResult("instagram import")
+    if prompt is None:
+        if not _stdin_is_tty():
+            result.worsen("fail")
+            result.summary = (
+                "--import-session needs an interactive terminal: the sessionid cookie is "
+                "read from a hidden prompt (never from arguments, pipes or the environment)"
+            )
+            return result
+        prompt = _prompt_secret
+    try:
+        credentials = instagram_credentials(username=username)
+        collector = _make_instagram_collector(
+            settings, credentials, config, session, allow_password_login=False
+        )
+        print_info(
+            "Copy the value of the `sessionid` cookie of https://www.instagram.com from your "
+            "logged-in browser (developer tools, F12). One request verifies it."
+        )
+        sessionid = prompt("Instagram sessionid cookie from your browser (input hidden)", False)
+        csrftoken = prompt(
+            "Instagram csrftoken cookie (optional, input hidden; Enter to generate one)", True
+        )
+        collector.import_session(sessionid, csrftoken or None)
+    except (CollectorError, InvalidSessionCookie) as exc:
+        result.worsen("fail")
+        result.summary = str(exc)
+        return result
+    result.summary = "browser session imported and verified"
+    result.rows.append(("Session file", _file_row(Path(collector.save_path))))
+    result.hints.append(
+        "Set `[instagram] user_agent` in config/config.toml to the User-Agent of that "
+        "browser, so the session is used with the same browser identity"
+    )
+    result.hints.append(
+        "Do not log out of Instagram in that browser: logging out ends this session too"
+    )
     return result
 
 
@@ -586,8 +721,8 @@ def llm_status(
 def check(ctx: click.Context) -> None:
     """🔍 Health checks (database, transcription, sessions, LLM providers).
 
-    Without a subcommand this runs `check all`. Only `--login` and `check llm`
-    talk to external services.
+    Without a subcommand this runs `check all`. Only `--login`,
+    `check instagram --import-session` and `check llm` talk to external services.
     """
     if ctx.invoked_subcommand is None:
         ctx.invoke(all_checks)
@@ -634,20 +769,49 @@ def telegram(ctx: click.Context, session: str | None, login: bool) -> None:
 @click.option(
     "--login",
     is_flag=True,
-    help="Load the session or log in to Instagram (may prompt for a 2FA code)",
+    help=(
+        "Verify the saved session; without a usable one log in with INSTAGRAM_PASSWORD "
+        "(may prompt for a 2FA code). The only command that uses the password."
+    ),
+)
+@click.option(
+    "--import-session",
+    "import_session",
+    is_flag=True,
+    help=(
+        "Import the sessionid cookie of your logged-in browser (hidden prompt, no "
+        "password), verify it with one request and save it. Needs a terminal."
+    ),
 )
 @click.pass_context
-def instagram(ctx: click.Context, username: str | None, session: str | None, login: bool) -> None:
-    """📸 Instagram session file and credentials (`--login` verifies online).
+def instagram(
+    ctx: click.Context,
+    username: str | None,
+    session: str | None,
+    login: bool,
+    import_session: bool,
+) -> None:
+    """📸 Instagram session file and credentials (`--login` / `--import-session` go online).
+
+    `--import-session` is the recommended way to log in: it takes the session
+    of your logged-in browser (no password login).
 
     Examples:
         postparse check instagram
+        postparse check instagram --import-session
         postparse check instagram --login
     """
+    if login and import_session:
+        raise click.UsageError("--login and --import-session cannot be combined.")
     settings = _settings(ctx)
     results = [instagram_status(settings, username=username, session=session)]
     print_result(results[0])
-    if login and results[0].status != "fail":
+    if import_session:
+        # The import replaces a missing session; its own result decides the exit code.
+        if (username or "").strip() or (os.environ.get("INSTAGRAM_USERNAME") or "").strip():
+            results = [instagram_import(settings, _config(ctx), username, session)]
+            print_result(results[0])
+    elif login and results[0].status != "fail":
         results.append(instagram_login(settings, _config(ctx), username, session))
         print_result(results[-1])
     _finish(ctx, results)

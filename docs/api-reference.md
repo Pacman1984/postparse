@@ -54,7 +54,7 @@ with `[...]`.
 |---|---|---|
 | POST | `/api/v1/telegram/extract` | Start a `telegram_extract` job. Body: `api_id`, `api_hash`, `phone` (override the env variables), `limit` (100), `force_update`. Never interactive: log in once with `postparse extract telegram`; the session in `sessions_dir` is reused. |
 | GET | `/api/v1/telegram/messages`, `/api/v1/telegram/messages/{message_id}` | Saved Telegram messages |
-| POST | `/api/v1/instagram/extract` | Start an `instagram_extract` job. Body: `username`, `password` (optional with a valid session), `limit` (50), `force_update`, `stop_after_known` (20), `refresh_dates`. `use_api=true` is not supported (400). |
+| POST | `/api/v1/instagram/extract` | Start an `instagram_extract` job. Body: `username`, `password` (accepted, but jobs never log in with it: they use the saved session; import the browser session with `postparse check instagram --import-session` or log in with `postparse check instagram --login`), `limit` (50), `force_update`, `stop_after_known` (20), `refresh_dates`. `use_api=true` is not supported (400). |
 | GET | `/api/v1/instagram/posts`, `/api/v1/instagram/posts/{shortcode}` | Saved Instagram posts (`offset` deprecated, use `cursor`) |
 
 ### Processing jobs
@@ -131,6 +131,7 @@ service raises or its report stops for a hard reason:
 | `credentials_missing` | `TELEGRAM_*` / `INSTAGRAM_*` not set and not in the request |
 | `auth_required` | session invalid, login code / 2FA needed (log in once via the CLI) |
 | `rate_limited` | Telegram FloodWait above the threshold, Instagram 429 |
+| `feed_unavailable` | Instagram refused the saved feed with a `"fail"` status ("something went wrong"); the session is fine, see `instagram.feed_api` |
 | `suspected_block` | transcription stopped by the soft-block circuit breaker |
 | `backend_unavailable` | ASR backend not installed or unreachable |
 | `llm_error` | classification / summarization failed at the LLM |

@@ -269,7 +269,8 @@ class JobStatusResponse(BaseModel):
     error_code: str | None = Field(
         default=None,
         description="Machine-readable failure reason (auth_required, credentials_missing, "
-        "rate_limited, suspected_block, backend_unavailable, llm_error, invalid_request, "
+        "rate_limited, feed_unavailable, suspected_block, backend_unavailable, llm_error, "
+        "invalid_request, "
         "cancelled, internal_error)",
     )
     result: dict[str, Any] | None = Field(

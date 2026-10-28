@@ -6,7 +6,75 @@ All notable changes to PostParse are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **`postparse check instagram --import-session`**: imports the session of
+  the user's logged-in browser without a password. The `sessionid` cookie is
+  read from a hidden terminal prompt (`csrftoken` optional, generated when
+  empty; a `:`-decoded copy is normalized to `%3A`), verified with exactly one
+  request (with `feed_api = "web"` the first saved-feed page, see below) and
+  saved only when Instagram confirms the session (`InstagramCollector.import_session`). Needs an
+  interactive terminal; cannot be combined with `--login`. The value is never
+  shown or logged. Messages that tell how to log in now recommend it first and
+  `--login` as the alternative. See docs/operations.md.
+
+### Changed
+
+- **Session check over the web API, with the saved feed's first page**: with
+  `instagram.feed_api = "web"` (the default) the session check requests the
+  first page of the saved feed (`https://www.instagram.com/api/v1/feed/saved/posts/`),
+  exactly as the feed walk does and as the Instagram web app does when the
+  saved page is opened (same web client and headers, saved page as
+  `Referer`, single attempt), instead of `i.instagram.com` with instaloader's
+  iPad headers: one client identity per run, and a browser session is never
+  sent with iPad headers to `i.instagram.com`. An intermediate version asked
+  `www.instagram.com/api/v1/users/<id>/info/`, which the web app does not
+  normally call; Instagram answered a fresh `--import-session` there with 429.
+  The checked page is reused as the walk's first page, so `extract instagram
+  --limit 1 --stop-after-known 1` with a valid session makes exactly one
+  request (an import makes one as well). A 200 answer with `"status": "fail"`
+  to that page raises `InstagramFeedUnavailable` (not "logged out"); nothing is
+  saved. The feed does not name the viewer, so in web mode the account is the
+  one the `sessionid` belongs to; `feed_api = "iphone"` keeps the user-info
+  check with the username comparison.
+
+- **No automatic Instagram password login**: `extract instagram` (also with
+  `--transcribe`), `transcribe run` re-fetches and all API jobs never log in
+  with `INSTAGRAM_PASSWORD`. Without a usable session (no session file,
+  unreadable file, session logged out) they raise `InstagramAuthRequired`
+  (exit code 2, `error_code: auth_required`) that names the reason and says to
+  run `postparse check instagram --login` in a terminal; the session file is
+  not touched. `InstagramCollector` has a new `allow_password_login` argument
+  (default `False`) that only `check instagram --login` sets; it prints a
+  warning before the password login. A scripted password login after a
+  session check had made Instagram flag the account (confirmation request /
+  login redirect on the first feed page).
+
 ### Fixed
+
+- **`check instagram --login` saved an unusable session**: instaloader reports
+  a password login as successful as soon as Instagram answers
+  `authenticated: true`, even when no `sessionid` cookie came back, and keeps
+  its empty placeholder cookies in the jar (instaloader issue #2487). The
+  placeholders are now removed, a login without `sessionid` / `ds_user_id`
+  stops with `InstagramAuthRequired` ("Instagram accepted the password but
+  returned no session cookie ...; nothing was saved") and a new session is
+  verified with one session check before it is saved (also after a 2FA code).
+  Nothing is saved on any failure; the existing session file stays untouched.
+  A throttled check of a new session says "did not confirm the session after
+  the password login" (still `InstagramSessionCheckFailed`, exit code 3).
+- **Cookie values in messages**: `"sessionid": "..."` (JSON) and bare
+  `sessionid` values are redacted as well.
+- **Instagram's reason in messages**: logged-out sessions, confirmations,
+  feed refusals and rate limits quote Instagram's sanitized short reason
+  (`message "..."`, e.g. `checkpoint_required`, or a login redirect as
+  `scheme://host/path`); query strings, cookies, tokens and response bodies
+  are never included (at most 200 characters). A failed session check no
+  longer quotes the request URL.
+- **No false "429" rate limits**: rate-limit markers are no longer matched
+  inside URLs or request paths (cursor and user ids such as `max_id=...3429...`);
+  an HTTP 429 / `TooManyRequestsException` is still a rate limit. A feed
+  refusal with such a cursor is reported as `feed_unavailable`.
 
 - **Instagram session check**: the saved session is no longer verified with
   instaloader's `test_login()` (legacy GraphQL `query_hash` d6f4427…, which
@@ -16,8 +84,8 @@ All notable changes to PostParse are documented here. The format follows
   connection attempt). A throttled or failed check raises the new
   `InstagramSessionCheckFailed` (a subclass of `InstagramRateLimited`, exit
   code 3) and **never falls back to a password login**; the session file is
-  left untouched. The password login is only used when the session is
-  positively logged out.
+  left untouched. A password login (now only `check instagram --login`, see
+  above) is only used when the session is positively logged out.
 - **Instagram saved feed**: collected through the private API
   (`api/v1/feed/saved/posts/`, paginated with `max_id`) instead of
   `Profile.own_profile().get_saved_posts()`, which use legacy GraphQL
@@ -25,6 +93,25 @@ All notable changes to PostParse are documented here. The format follows
   (with durations) are read from the private API media structs.
 - `AbortDownloadException` (checkpoint, login redirect) during a run is mapped
   to `InstagramAuthRequired`.
+- **Instagram saved feed via the web REST API**: with a web session the
+  private-API feed on `i.instagram.com` (iPad headers) was answered with 200
+  `"fail"` "We're sorry, but something went wrong" (and retried three times).
+  The feed is now requested like the Instagram web app does it:
+  `https://www.instagram.com/api/v1/feed/saved/posts/` with `X-IG-App-ID`,
+  `X-CSRFToken` (from the `csrftoken` cookie), `X-Requested-With`,
+  `X-ASBD-ID`, `X-IG-WWW-Claim` and the saved page as `Referer`, through
+  instaloader's session (cookies, rate controller). New option
+  `instagram.feed_api = "web" | "iphone"` (default `"web"`; invalid values are
+  reported by `config validate` and fail the run with a clear message).
+- **Instagram feed refusals are not retried**: feed pages get one attempt
+  (network errors are still retried up to `max_connection_attempts`). A
+  `"fail"` answer raises the new `InstagramFeedUnavailable` (a `RateLimited`
+  subclass): CLI exit code 3 with a message that the session is fine, nothing
+  was lost and which `instagram.feed_api` to try; report `stopped_reason` and
+  job `error_code` `feed_unavailable`.
+- **Instagram session outcome is shown**: `extract instagram` prints
+  "Instagram session verified (no password login)"; API jobs get the same
+  progress message.
 
 ## [0.2.0] - 2026-10-26
 

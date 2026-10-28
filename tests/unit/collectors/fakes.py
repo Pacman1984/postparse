@@ -260,24 +260,45 @@ LOGGED_OUT_403 = '403 Forbidden - "fail" status, message "login_required"'
 class FakeIgContext:
     """instaloader context that records requests and answers only scripted ones.
 
-    ``iphone_responses`` maps a private API path to a response dict, an
-    exception to raise, or a callable ``params -> dict | exception``. Any other
-    request raises :class:`NetworkUsed`.
+    ``iphone_responses`` (``get_iphone_json``, ``i.instagram.com``) and
+    ``web_responses`` (``get_json`` with ``host="www.instagram.com"``) map a
+    path to a response dict, an exception to raise, or a callable
+    ``params -> dict | exception``. Any other request raises :class:`NetworkUsed`.
+    ``web_gate(path, params)`` (optional) runs before a web answer: an
+    exception it returns is raised instead (the session state of
+    :class:`FakeLoader`).
+    ``_session`` is a real (never used for I/O) ``requests.Session`` holding the
+    loaded cookies, as in instaloader.
     """
 
     def __init__(self, username: str | None = None) -> None:
+        import requests
+
         self.username = username
         self.is_logged_in = username is not None
         self.iphone_support = False
         self.user_id: int | None = None
         self.max_connection_attempts = 3
+        self.request_timeout = 30.0
+        self._session = requests.Session()
         self.iphone_responses: dict[str, Any] = {}
+        self.web_responses: dict[str, Any] = {}
+        self.web_gate: Any = None
         #: ``(kind, path or query id, params, max_connection_attempts)`` per request.
         self.requests: list[tuple[str, str, dict[str, Any], int]] = []
+        #: Request headers of each ``get_json`` call (same order as the "web" requests).
+        self.web_headers: list[dict[str, str]] = []
 
-    def get_iphone_json(self, path: str, params: dict[str, Any]) -> dict[str, Any]:
-        self.requests.append(("iphone", path, dict(params), self.max_connection_attempts))
-        answer = self.iphone_responses.get(path)
+    def set_cookies(self, cookies: dict[str, str]) -> None:
+        """Replace the session with a new one holding ``cookies`` (as instaloader does)."""
+        import requests
+
+        self._session = requests.Session()
+        self._session.cookies = requests.utils.cookiejar_from_dict(dict(cookies))
+
+    @staticmethod
+    def _answer(table: dict[str, Any], path: str, params: dict[str, Any]) -> dict[str, Any]:
+        answer = table.get(path)
         if answer is None:
             raise NetworkUsed(f"unexpected Instagram request: {path}")
         if callable(answer):
@@ -285,6 +306,30 @@ class FakeIgContext:
         if isinstance(answer, BaseException):
             raise answer
         return answer
+
+    def get_iphone_json(self, path: str, params: dict[str, Any]) -> dict[str, Any]:
+        self.requests.append(("iphone", path, dict(params), self.max_connection_attempts))
+        return self._answer(self.iphone_responses, path, params)
+
+    def get_json(
+        self,
+        path: str,
+        params: dict[str, Any],
+        host: str = "www.instagram.com",
+        session: Any = None,
+        response_headers: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        if host != "www.instagram.com":
+            raise NetworkUsed(f"unexpected Instagram request to {host}/{path}")
+        self.requests.append(("web", path, dict(params), self.max_connection_attempts))
+        sess = session if session is not None else self._session
+        self.web_headers.append(dict(sess.headers))
+        if self.web_gate is not None:
+            refusal = self.web_gate(path, params)
+            if refusal is not None:
+                raise refusal
+        return self._answer(self.web_responses, path, params)
 
     def graphql_query(self, query_hash: str, variables: Any, referer: Any = None) -> Any:
         self.requests.append(("graphql", query_hash, dict(variables), self.max_connection_attempts))
@@ -297,7 +342,7 @@ class FakeIgContext:
     def _refuse(self, *args: Any, **kwargs: Any) -> Any:
         raise NetworkUsed("unexpected Instagram request")
 
-    get_json = head = _refuse
+    head = _refuse
 
     def error(self, *args: Any, **kwargs: Any) -> None:
         return None
@@ -306,15 +351,44 @@ class FakeIgContext:
         return None
 
 
+#: Placeholder cookies ``InstaloaderContext.login`` puts into a fresh jar (no domain).
+LOGIN_PLACEHOLDERS = {
+    "sessionid": "",
+    "mid": "",
+    "ig_pr": "1",
+    "ig_vw": "1920",
+    "ig_cb": "1",
+    "csrftoken": "",
+    "s_network": "",
+    "ds_user_id": "",
+}
+
+
 class FakeLoader:
     """Stand-in for ``instaloader.Instaloader`` (login/session methods only).
 
+    The answer of the session check depends on where the session came from:
+    the session file (``session_user`` / ``check_error``) or a password login /
+    imported session (``new_user`` / ``new_check_error``). With
+    ``feed_api = "iphone"`` the check is the user-info endpoint on
+    ``i.instagram.com`` (the username is compared); with ``"web"`` it is the
+    first page of the saved feed on ``www.instagram.com``: the session state
+    gates every web feed request (logged out / ``check_error`` is raised), the
+    page itself comes from ``context.web_responses[IG_SAVED_FEED]`` (default:
+    an empty first page). The web feed does not name the viewer, so any
+    ``session_user`` other than ``None`` is a usable web session.
+
     Args:
-        session_user: Username the session check (user-info endpoint) returns;
+        session_user: Username the check of the session file returns;
             ``None`` answers like a logged-out session (403 ``login_required``).
-        check_error: Raised by the session check instead (e.g. a throttle).
+        check_error: Raised by the check of the session file instead (e.g. a throttle).
         session_cookies: Cookies the loaded session file contains.
         login_error / two_factor_error: Raised by the password / 2FA login.
+        login_cookies: Cookies Instagram sets on a password / 2FA login (domain
+            ``.instagram.com``; default: a full login). instaloader's empty
+            placeholders (no domain) are always in the jar as well.
+        new_user / new_check_error: Answer of the check of a session created by
+            a password login or :meth:`load_session` (``None`` user: logged out).
     """
 
     def __init__(
@@ -325,38 +399,91 @@ class FakeLoader:
         session_cookies: dict[str, str] | None = None,
         login_error: BaseException | None = None,
         two_factor_error: BaseException | None = None,
+        login_cookies: dict[str, str] | None = None,
+        new_user: str | None = "me",
+        new_check_error: BaseException | None = None,
     ) -> None:
         self.context = FakeIgContext()
         self.session_user = session_user
+        self.check_error = check_error
         self.login_error = login_error
         self.two_factor_error = two_factor_error
         self.session_cookies = dict(SESSION_COOKIES if session_cookies is None else session_cookies)
-        self.cookies: dict[str, str] = {}
+        self.login_cookies = dict(SESSION_COOKIES if login_cookies is None else login_cookies)
+        self.new_user = new_user
+        self.new_check_error = new_check_error
+        #: ``file`` (session file or nothing loaded) or ``new`` (login / imported session).
+        self.origin = "file"
         self.loaded: list[tuple[str, str]] = []
+        self.imported: list[tuple[str, dict[str, Any]]] = []
         self.logins: list[str] = []
         self.two_factor_codes: list[str] = []
         self.saved: list[str] = []
-        if check_error is not None:
-            self.context.iphone_responses[IG_USER_INFO] = check_error
-        elif session_user is None:
-            self.context.iphone_responses[IG_USER_INFO] = lambda _params: ig_error(LOGGED_OUT_403)
-        else:
-            self.context.iphone_responses[IG_USER_INFO] = {
-                "user": {"pk": int(IG_USER_ID), "username": session_user},
-                "status": "ok",
-            }
+        self.context.iphone_responses[IG_USER_INFO] = self._user_info
+        self.context.web_responses[IG_SAVED_FEED] = saved_page([])
+        self.context.web_gate = self._web_session
+
+    def _session_state(self) -> tuple[str | None, BaseException | None]:
+        if self.origin == "file":
+            return self.session_user, self.check_error
+        return self.new_user, self.new_check_error
+
+    def _user_info(self, _params: dict[str, Any]) -> Any:
+        user, error = self._session_state()
+        if error is not None:
+            return error
+        if user is None:
+            return ig_error(LOGGED_OUT_403)
+        return {"user": {"pk": int(IG_USER_ID), "username": user}, "status": "ok"}
+
+    def _web_session(self, path: str, _params: dict[str, Any]) -> BaseException | None:
+        if path != IG_SAVED_FEED:
+            return None
+        user, error = self._session_state()
+        if error is not None:
+            return error
+        if user is None:
+            return ig_error(LOGGED_OUT_403, IG_SAVED_FEED)
+        return None
+
+    def check_requests(self) -> list[tuple[str, str, dict[str, Any], int]]:
+        """Session-check requests (iPhone user info, or the first web feed page)."""
+        return [
+            r
+            for r in self.context.requests
+            if r[:2] == ("iphone", IG_USER_INFO)
+            or (r[:2] == ("web", IG_SAVED_FEED) and "max_id" not in r[2])
+        ]
 
     def load_session_from_file(self, username: str, filename: str) -> None:
         self.loaded.append((username, filename))
         self.context.username = username
         self.context.is_logged_in = True
-        self.cookies = dict(self.session_cookies)
+        self.context.set_cookies(self.session_cookies)
+
+    def load_session(self, username: str, session_data: dict[str, Any]) -> None:
+        if not session_data.get("csrftoken"):
+            raise KeyError("csrftoken")  # instaloader reads it for X-CSRFToken
+        self.imported.append((username, dict(session_data)))
+        self.origin = "new"
+        self.context.username = username
+        self.context.is_logged_in = True
+        self.context.set_cookies(session_data)
 
     def save_session(self) -> dict[str, str]:
-        return dict(self.cookies)
+        import requests
+
+        return dict(requests.utils.dict_from_cookiejar(self.context._session.cookies))
 
     def test_login(self) -> str | None:
         raise AssertionError("test_login() uses a legacy query_hash and must not be called")
+
+    def _logged_in_jar(self) -> None:
+        """A fresh jar with instaloader's placeholders plus the cookies Instagram set."""
+        self.context.set_cookies(LOGIN_PLACEHOLDERS)
+        for name, value in self.login_cookies.items():
+            self.context._session.cookies.set(name, value, domain=".instagram.com", path="/")
+        self.origin = "new"
 
     def login(self, user: str, passwd: str) -> None:
         self.logins.append(user)
@@ -364,14 +491,14 @@ class FakeLoader:
             raise self.login_error
         self.context.username = user
         self.context.is_logged_in = True
-        self.cookies = dict(SESSION_COOKIES)
+        self._logged_in_jar()
 
     def two_factor_login(self, code: str) -> None:
         self.two_factor_codes.append(code)
         if self.two_factor_error is not None:
             raise self.two_factor_error
         self.context.is_logged_in = True
-        self.cookies = dict(SESSION_COOKIES)
+        self._logged_in_jar()
 
     def save_session_to_file(self, filename: str) -> None:
         self.saved.append(filename)

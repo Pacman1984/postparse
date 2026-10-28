@@ -15,7 +15,8 @@ events):
 * Errors become failed jobs with an ``error_code``: typed collector errors
   (:class:`AuthRequired`, :class:`RateLimited`), reports whose
   ``stopped_reason`` signals a hard stop (``auth_required``,
-  ``rate_limited``, ``suspected_block``, ``backend_unavailable``) and any
+  ``rate_limited``, ``feed_unavailable``, ``suspected_block``,
+  ``backend_unavailable``) and any
   other exception (``internal_error``).
 * The response cache is invalidated after every job, because even a partial
   run may have committed data.
@@ -69,7 +70,7 @@ CoroFactory = Callable[[ProgressSink], Awaitable[Any]]
 
 #: Report ``stopped_reason`` values that turn a returned report into a failed job.
 FAILURE_STOP_REASONS: frozenset[str] = frozenset(
-    {"auth_required", "rate_limited", "suspected_block", "backend_unavailable"}
+    {"auth_required", "rate_limited", "feed_unavailable", "suspected_block", "backend_unavailable"}
 )
 
 _PROCESSED_KEYS = ("processed", "handled", "classified", "summarized")
@@ -77,12 +78,19 @@ _PROCESSED_KEYS = ("processed", "handled", "classified", "summarized")
 
 def error_code_for(exc: BaseException) -> str:
     """Map an exception raised by a service to a job ``error_code``."""
-    from postparse.collectors.base import AuthRequired, CredentialsMissing, RateLimited
+    from postparse.collectors.base import (
+        AuthRequired,
+        CredentialsMissing,
+        InstagramFeedUnavailable,
+        RateLimited,
+    )
 
     if isinstance(exc, CredentialsMissing):
         return "credentials_missing"
     if isinstance(exc, AuthRequired):
         return "auth_required"
+    if isinstance(exc, InstagramFeedUnavailable):
+        return "feed_unavailable"
     if isinstance(exc, RateLimited):
         return "rate_limited"
     name = type(exc).__name__

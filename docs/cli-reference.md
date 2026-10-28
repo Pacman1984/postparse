@@ -124,8 +124,11 @@ postparse check instagram --login
 `--import-session` and `--login` cannot be combined (usage error, exit code
 2). The import asks for the `sessionid` cookie (hidden input) and optionally
 the `csrftoken` cookie (Enter generates one), makes exactly one request (the
-session check) and saves the session file only when Instagram confirms the
-session of `INSTAGRAM_USERNAME`; otherwise nothing is saved (exit code 1).
+session check: with `instagram.feed_api = "web"`, the default, the first page
+of the saved feed, as the web app requests it when the saved page is opened;
+with `"iphone"` the user info on `i.instagram.com`) and saves the session file
+only when Instagram confirms the session; otherwise nothing is saved (exit
+code 1).
 See [Operations](operations.md#instagram-logging-in-checkpoint-2fa-soft-block).
 
 ### `postparse check llm`

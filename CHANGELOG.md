@@ -12,21 +12,31 @@ All notable changes to PostParse are documented here. The format follows
   the user's logged-in browser without a password. The `sessionid` cookie is
   read from a hidden terminal prompt (`csrftoken` optional, generated when
   empty; a `:`-decoded copy is normalized to `%3A`), verified with exactly one
-  request and saved only when Instagram confirms the session of
-  `INSTAGRAM_USERNAME` (`InstagramCollector.import_session`). Needs an
+  request (with `feed_api = "web"` the first saved-feed page, see below) and
+  saved only when Instagram confirms the session (`InstagramCollector.import_session`). Needs an
   interactive terminal; cannot be combined with `--login`. The value is never
   shown or logged. Messages that tell how to log in now recommend it first and
   `--login` as the alternative. See docs/operations.md.
 
 ### Changed
 
-- **Session check over the web API**: with `instagram.feed_api = "web"` (the
-  default) the session check asks `https://www.instagram.com/api/v1/users/<id>/info/`
-  with the same web headers as the saved feed (one shared web client, also the
-  `X-IG-WWW-Claim`), instead of `i.instagram.com` with instaloader's iPad
-  headers: one client identity per run, and a browser session is never sent
-  with iPad headers to `i.instagram.com`. `feed_api = "iphone"` keeps the
-  private-API check.
+- **Session check over the web API, with the saved feed's first page**: with
+  `instagram.feed_api = "web"` (the default) the session check requests the
+  first page of the saved feed (`https://www.instagram.com/api/v1/feed/saved/posts/`),
+  exactly as the feed walk does and as the Instagram web app does when the
+  saved page is opened (same web client and headers, saved page as
+  `Referer`, single attempt), instead of `i.instagram.com` with instaloader's
+  iPad headers: one client identity per run, and a browser session is never
+  sent with iPad headers to `i.instagram.com`. An intermediate version asked
+  `www.instagram.com/api/v1/users/<id>/info/`, which the web app does not
+  normally call; Instagram answered a fresh `--import-session` there with 429.
+  The checked page is reused as the walk's first page, so `extract instagram
+  --limit 1 --stop-after-known 1` with a valid session makes exactly one
+  request (an import makes one as well). A 200 answer with `"status": "fail"`
+  to that page raises `InstagramFeedUnavailable` (not "logged out"); nothing is
+  saved. The feed does not name the viewer, so in web mode the account is the
+  one the `sessionid` belongs to; `feed_api = "iphone"` keeps the user-info
+  check with the username comparison.
 
 - **No automatic Instagram password login**: `extract instagram` (also with
   `--transcribe`), `transcribe run` re-fetches and all API jobs never log in

@@ -336,7 +336,11 @@ def test_check_instagram_import_session_saves_the_browser_session(ig_import) -> 
     assert "instagram import: browser session imported and verified" in text
     assert "user_agent" in text and "Do not log out of Instagram in that browser" in text
     assert "(input hidden)" in text
-    assert loader.logins == [] and len(loader.context.requests) == 1  # exactly one request
+    # Exactly one request: the first page of the saved feed (as the web app asks for it).
+    assert [r[:3] for r in loader.context.requests] == [
+        ("web", "api/v1/feed/saved/posts/", {"count": "50"})
+    ]
+    assert loader.logins == []
     assert loader.imported[0][1]["sessionid"] == BROWSER_SID
     assert len(loader.imported[0][1]["csrftoken"]) == 32  # generated (Enter)
     assert ig_import["session"].read_text() == "fake-session"
@@ -362,19 +366,32 @@ def test_check_instagram_import_session_needs_no_password(ig_import) -> None:
     assert ig_import["session"].read_text() == "fake-session"
 
 
+class _FeedApiConfig:
+    """ConfigManager stand-in that only sets ``instagram.feed_api``."""
+
+    def __init__(self, feed_api: str) -> None:
+        self.feed_api = feed_api
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self.feed_api if key == "instagram.feed_api" else default
+
+
 @pytest.mark.parametrize(
-    ("loader_kwargs", "why"),
+    ("loader_kwargs", "why", "feed_api"),
     [
-        ({"new_user": None}, "session logged out: login_required"),
-        ({"new_user": "someone_else"}, "the session belongs to another account"),
+        ({"new_user": None}, "session logged out: login_required", "web"),
+        ({"new_user": None}, "session logged out: login_required", "iphone"),
+        # Only the iPhone check (user info) names the viewer.
+        ({"new_user": "someone_else"}, "the session belongs to another account", "iphone"),
     ],
-    ids=["logged-out", "other-user"],
+    ids=["logged-out", "logged-out-iphone", "other-user-iphone"],
 )
 def test_check_instagram_import_session_unusable_saves_nothing(
-    ig_import, loader_kwargs: dict, why: str
+    ig_import, monkeypatch: pytest.MonkeyPatch, loader_kwargs: dict, why: str, feed_api: str
 ) -> None:
-    from tests.unit.collectors.fakes import FakeLoader
+    from tests.unit.collectors.fakes import IG_SAVED_FEED, IG_USER_INFO, FakeLoader
 
+    monkeypatch.setattr(check_mod, "_config", lambda ctx: _FeedApiConfig(feed_api))
     loader = FakeLoader(**loader_kwargs)
     ig_import["loader"] = loader
     result = ig_import["invoke"](f"{BROWSER_SID}\n{BROWSER_CSRF}\n")
@@ -383,6 +400,45 @@ def test_check_instagram_import_session_unusable_saves_nothing(
     assert "The imported session is not usable" in text and why in text
     assert "nothing was saved" in text
     assert loader.saved == [] and loader.logins == []
+    expected = ("web", IG_SAVED_FEED) if feed_api == "web" else ("iphone", IG_USER_INFO)
+    assert [r[:2] for r in loader.context.requests] == [expected]
+    assert ig_import["session"].read_text() == "original-session"
+    _assert_no_cookie_values(result.output)
+
+
+#: A 200 answer with ``"status": "fail"`` (not a statement about the session).
+FEED_FAIL_200 = (
+    '200 OK - "fail" status, message "We\'re sorry, but something went wrong. Please try again."'
+)
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        ("429 Too Many Requests", "Instagram did not confirm the session after the session import"),
+        (
+            '400 Bad Request - "fail" status, message "checkpoint_required"',
+            "asks for a confirmation of the saved session (Instagram: checkpoint_required)",
+        ),
+        (FEED_FAIL_200, "Instagram refused the saved feed (web API)"),
+    ],
+    ids=["429", "checkpoint", "fail-status"],
+)
+def test_check_instagram_import_session_failed_check_saves_nothing(
+    ig_import, status: str, expected: str
+) -> None:
+    from tests.unit.collectors.fakes import IG_SAVED_FEED, FakeLoader, ig_error
+
+    loader = FakeLoader(new_check_error=ig_error(status, IG_SAVED_FEED))
+    ig_import["loader"] = loader
+    result = ig_import["invoke"](f"{BROWSER_SID}\n{BROWSER_CSRF}\n")
+    assert result.exit_code == 1, result.output
+    text = " ".join(result.output.split())
+    verdict = text.split("instagram import:", 1)[1]  # after the instructions
+    assert expected in verdict
+    assert "session logged out" not in verdict and "https://" not in verdict
+    assert loader.saved == [] and loader.logins == []
+    assert [r[:2] for r in loader.context.requests] == [("web", IG_SAVED_FEED)]  # one request
     assert ig_import["session"].read_text() == "original-session"
     _assert_no_cookie_values(result.output)
 

@@ -164,9 +164,11 @@ class InstagramSessionCheckFailed(InstagramRateLimited):
 class InstagramFeedUnavailable(RateLimited):
     """Instagram refused the saved-feed request with a ``"fail"`` status.
 
-    The session was verified before (no password login is attempted), so the
-    answer (typically "We're sorry, but something went wrong") is about the way
-    the feed was requested, not about the login. The page is not retried. A
+    The answer (typically "We're sorry, but something went wrong") is about the
+    way the feed was requested, not about the login, so no password login is
+    attempted. With ``instagram.feed_api = "web"`` the session check itself is
+    the feed's first page, so it can also be raised by the check (then nothing
+    is saved). The page is not retried. A
     :class:`RateLimited` subclass: like a throttle it means "stop now, retry
     later", and everything committed so far is kept.
 

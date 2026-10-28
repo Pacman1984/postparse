@@ -191,11 +191,18 @@ postparse db reindex
      `<digits>%3A...`; a copy with `:` instead of `%3A` is accepted too) and
      paste it into the hidden prompt. The `csrftoken` prompt is optional
      (Enter generates one).
-  4. postparse makes exactly **one** request (the session check) and saves
-     the session file (`data/sessions/instagram_<username>`, or `--session`)
-     only when Instagram confirms the session of `INSTAGRAM_USERNAME`; a
-     logged-out session, a session of another account or a throttled check
-     saves nothing and leaves an existing session file alone.
+  4. postparse makes exactly **one** request (the session check: with
+     `instagram.feed_api = "web"`, the default, the first page of the saved
+     feed, `www.instagram.com/api/v1/feed/saved/posts/`, the request the web
+     app itself makes when the saved page is opened) and saves the session
+     file (`data/sessions/instagram_<username>`, or `--session`) only when
+     Instagram confirms the session; a logged-out session, a confirmation
+     request, a throttled check or a refused feed saves nothing and leaves an
+     existing session file alone. The feed does not name the viewer, so in
+     web mode the account is the one the `sessionid` belongs to (its leading
+     number is the `ds_user_id`): copy the cookie of the `INSTAGRAM_USERNAME`
+     account. With `feed_api = "iphone"` the check asks the user info on
+     `i.instagram.com` and rejects a session of another account.
   5. Set `[instagram] user_agent` in `config/config.toml` to the User-Agent of
      that browser (e.g. from `navigator.userAgent` in the browser console), so
      the session is used with the same browser identity.
@@ -237,17 +244,19 @@ postparse db reindex
   retry the extract. Do not
   delete the session file just because a run failed.
 * **"Instagram did not confirm the saved session"**: exit code 3. The session
-  check (one request to `api/v1/users/<id>/info/`, a single attempt; with
-  `instagram.feed_api = "web"`, the default, on `www.instagram.com` with the
-  same web headers as the feed, with `"iphone"` on `i.instagram.com`, so a run
+  check (one request, a single attempt; with `instagram.feed_api = "web"`, the
+  default, the first page of the saved feed on `www.instagram.com`, exactly as
+  the feed walk and the web app request it, with the saved page as `Referer`;
+  with `"iphone"` `api/v1/users/<id>/info/` on `i.instagram.com`, so a run
   uses one client identity and a browser session is never sent with iPad
-  headers to `i.instagram.com`) was throttled (401 "Please wait a few minutes", 429) or Instagram
-  was unreachable. This says nothing about the session itself, so **no password
+  headers to `i.instagram.com`) was throttled (401 "Please wait a few
+  minutes", 429) or Instagram was unreachable. This says nothing about the session itself, so **no password
   login is attempted** and the session file is left untouched; nothing was
   collected or lost. Wait a few hours and retry. Even `check instagram
   --login` only logs in with the password when the check positively says the
-  session is logged out (login redirect, `login_required`, session of another
-  account, no `sessionid` cookie) or when there is no session file; a
+  session is logged out (login redirect, `login_required`, with `"iphone"` a
+  session of another account, no `sessionid` cookie) or when there is no
+  session file; a
   throttled check never leads to a password login. Do not delete a session
   file just because of this message.
 * **Session outcome on the console**: every `extract instagram` run prints
@@ -255,11 +264,19 @@ postparse db reindex
   and the reason. `check instagram --login` prints the warning "No usable
   Instagram session (<reason>); logging in with the password now ..." before
   a password login, so it is never silent.
+* **Request count in web mode**: the page the session check fetched is the
+  first page of the saved-feed walk (it is not requested again; later pages
+  follow with `max_id`). `extract instagram --limit 1 --stop-after-known 1`
+  with a valid session therefore makes exactly **one** request; an import
+  makes one; a `transcribe run` re-fetch makes the check (one feed page) plus
+  one request per post.
 * **"Instagram refused the saved feed ... something went wrong"**: exit code 3
-  (`stopped_reason` / job `error_code` `feed_unavailable`). The session check
-  passed, so the session is fine and no password login is attempted; Instagram
-  answered the feed request (`api/v1/feed/saved/posts/`) with HTTP 200 and
-  `"status": "fail"`. Everything committed before is kept. Feed pages get a
+  (`stopped_reason` / job `error_code` `feed_unavailable`). No password login
+  is attempted; Instagram answered the feed request
+  (`api/v1/feed/saved/posts/`) with HTTP 200 and `"status": "fail"`, which is
+  not a statement about the session (in web mode this can already be the
+  session check's page: then nothing is saved and nothing collected).
+  Everything committed before is kept. Feed pages get a
   single attempt (only network errors such as timeouts are retried, up to
   `instagram.max_connection_attempts`), so a refusal costs one request. The
   answer depends on how the feed is requested, so the API is configurable:

@@ -10,13 +10,11 @@ from instaloader.exceptions import AbortDownloadException, TooManyRequestsExcept
 
 from postparse.cli.main import cli
 from postparse.collectors.base import InstagramFeedUnavailable
-from postparse.collectors.instagram.collector import iter_saved_feed
 from postparse.config import Settings
 from postparse.core.db import Database
 from postparse.services.extraction import ExtractionService
 from tests.unit.collectors.fakes import (
     IG_SAVED_FEED,
-    IG_USER_INFO,
     THROTTLED_401,
     FakeLoader,
     FakeTelegramClient,
@@ -24,10 +22,12 @@ from tests.unit.collectors.fakes import (
     SleepRecorder,
     client_factory,
     ig_error,
+    ig_iphone_media,
     ig_node,
     ig_post,
     loader_factory,
     no_sleep,
+    saved_page,
     tg_text,
 )
 
@@ -191,21 +191,41 @@ def test_instagram_feed_refused_exit_3_keeps_progress(env, tmp_path: Path) -> No
 
 
 def test_instagram_feed_fail_status_from_the_web_feed_exit_3(env) -> None:
-    """The real feed iterator against the fake context: one request, typed error."""
+    """The web session check is the first feed page: one request, typed error."""
     loader = FakeLoader(session_user="me")
     loader.context.web_responses[IG_SAVED_FEED] = ig_error(FEED_FAIL, IG_SAVED_FEED)
     env["loader"] = loader
-    env["feed"] = lambda ldr: iter_saved_feed(ldr.context, "web", "me")
+    env["feed"] = None  # the collector's own saved-feed walk
 
     result = invoke(["instagram"], SECRETS)
 
     assert result.exit_code == 3, result.output
-    assert [r[:2] for r in loader.context.requests] == [
-        ("web", IG_USER_INFO),  # the session check uses the web API as well
-        ("web", IG_SAVED_FEED),
-    ]
-    assert "something went wrong" in " ".join(result.output.split())
+    assert [r[:2] for r in loader.context.requests] == [("web", IG_SAVED_FEED)]
+    text = " ".join(result.output.split())
+    assert "something went wrong" in text and "feed refused by Instagram" in text
+    assert "logged out" not in text
+    assert loader.logins == [] and loader.saved == []
+    assert env["session"].read_text() == "original-session"
+
+
+def test_instagram_valid_web_session_is_exactly_one_request(env, tmp_path: Path) -> None:
+    """``--limit 1 --stop-after-known 1``: the check's feed page is the walk's page 1."""
+    loader = FakeLoader(session_user="me")
+    loader.context.web_responses[IG_SAVED_FEED] = saved_page(
+        [ig_iphone_media("n1"), ig_iphone_media("n2")], next_max_id="c1"
+    )
+    env["loader"] = loader
+    env["feed"] = None  # the collector's own saved-feed walk
+
+    result = invoke(["instagram", "--limit", "1", "--stop-after-known", "1"], SECRETS)
+
+    assert result.exit_code == 0, result.output
+    assert loader.context.requests == [("web", IG_SAVED_FEED, {"count": "50"}, 1)]
+    with Database.open(Settings(data_dir=tmp_path / "data").db_path).read() as conn:
+        codes = [r[0] for r in conn.execute("SELECT external_id FROM items")]
+    assert codes == ["n1"]  # a post of page 1 was processed
     assert loader.logins == []
+    assert_no_secrets(result.output)
 
 
 def test_instagram_prints_verified_session(env) -> None:

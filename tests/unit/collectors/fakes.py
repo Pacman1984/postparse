@@ -264,6 +264,9 @@ class FakeIgContext:
     ``web_responses`` (``get_json`` with ``host="www.instagram.com"``) map a
     path to a response dict, an exception to raise, or a callable
     ``params -> dict | exception``. Any other request raises :class:`NetworkUsed`.
+    ``web_gate(path, params)`` (optional) runs before a web answer: an
+    exception it returns is raised instead (the session state of
+    :class:`FakeLoader`).
     ``_session`` is a real (never used for I/O) ``requests.Session`` holding the
     loaded cookies, as in instaloader.
     """
@@ -280,6 +283,7 @@ class FakeIgContext:
         self._session = requests.Session()
         self.iphone_responses: dict[str, Any] = {}
         self.web_responses: dict[str, Any] = {}
+        self.web_gate: Any = None
         #: ``(kind, path or query id, params, max_connection_attempts)`` per request.
         self.requests: list[tuple[str, str, dict[str, Any], int]] = []
         #: Request headers of each ``get_json`` call (same order as the "web" requests).
@@ -321,6 +325,10 @@ class FakeIgContext:
         self.requests.append(("web", path, dict(params), self.max_connection_attempts))
         sess = session if session is not None else self._session
         self.web_headers.append(dict(sess.headers))
+        if self.web_gate is not None:
+            refusal = self.web_gate(path, params)
+            if refusal is not None:
+                raise refusal
         return self._answer(self.web_responses, path, params)
 
     def graphql_query(self, query_hash: str, variables: Any, referer: Any = None) -> Any:
@@ -359,10 +367,16 @@ LOGIN_PLACEHOLDERS = {
 class FakeLoader:
     """Stand-in for ``instaloader.Instaloader`` (login/session methods only).
 
-    The session check (user-info endpoint, answered on both hosts) depends on
-    where the session came from: the session file (``session_user`` /
-    ``check_error``) or a password login / imported session (``new_user`` /
-    ``new_check_error``).
+    The answer of the session check depends on where the session came from:
+    the session file (``session_user`` / ``check_error``) or a password login /
+    imported session (``new_user`` / ``new_check_error``). With
+    ``feed_api = "iphone"`` the check is the user-info endpoint on
+    ``i.instagram.com`` (the username is compared); with ``"web"`` it is the
+    first page of the saved feed on ``www.instagram.com``: the session state
+    gates every web feed request (logged out / ``check_error`` is raised), the
+    page itself comes from ``context.web_responses[IG_SAVED_FEED]`` (default:
+    an empty first page). The web feed does not name the viewer, so any
+    ``session_user`` other than ``None`` is a usable web session.
 
     Args:
         session_user: Username the check of the session file returns;
@@ -406,22 +420,40 @@ class FakeLoader:
         self.two_factor_codes: list[str] = []
         self.saved: list[str] = []
         self.context.iphone_responses[IG_USER_INFO] = self._user_info
-        self.context.web_responses[IG_USER_INFO] = self._user_info
+        self.context.web_responses[IG_SAVED_FEED] = saved_page([])
+        self.context.web_gate = self._web_session
+
+    def _session_state(self) -> tuple[str | None, BaseException | None]:
+        if self.origin == "file":
+            return self.session_user, self.check_error
+        return self.new_user, self.new_check_error
 
     def _user_info(self, _params: dict[str, Any]) -> Any:
-        if self.origin == "file":
-            user, error = self.session_user, self.check_error
-        else:
-            user, error = self.new_user, self.new_check_error
+        user, error = self._session_state()
         if error is not None:
             return error
         if user is None:
             return ig_error(LOGGED_OUT_403)
         return {"user": {"pk": int(IG_USER_ID), "username": user}, "status": "ok"}
 
+    def _web_session(self, path: str, _params: dict[str, Any]) -> BaseException | None:
+        if path != IG_SAVED_FEED:
+            return None
+        user, error = self._session_state()
+        if error is not None:
+            return error
+        if user is None:
+            return ig_error(LOGGED_OUT_403, IG_SAVED_FEED)
+        return None
+
     def check_requests(self) -> list[tuple[str, str, dict[str, Any], int]]:
-        """Session-check requests (user-info endpoint, either host)."""
-        return [r for r in self.context.requests if r[1] == IG_USER_INFO]
+        """Session-check requests (iPhone user info, or the first web feed page)."""
+        return [
+            r
+            for r in self.context.requests
+            if r[:2] == ("iphone", IG_USER_INFO)
+            or (r[:2] == ("web", IG_SAVED_FEED) and "max_id" not in r[2])
+        ]
 
     def load_session_from_file(self, username: str, filename: str) -> None:
         self.loaded.append((username, filename))
